@@ -70,7 +70,7 @@ export default function Dashboard() {
               <span className="badge badge-green">+18.2%</span>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <AreaChart data={revenueData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
@@ -100,7 +100,7 @@ export default function Dashboard() {
               <p className="text-xs text-gray-500 mt-0.5">Monthly outbound</p>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <BarChart data={revenueData.slice(-6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barSize={18}>
               <CartesianGrid stroke="rgba(255,255,255,0.04)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />

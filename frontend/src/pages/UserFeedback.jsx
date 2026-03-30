@@ -63,7 +63,7 @@ export default function UserFeedback() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Sentiment Analysis</h3>
           <p className="text-xs text-gray-500 mb-4">Monthly positive / neutral / negative breakdown</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <BarChart data={sentimentData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="30%">
               <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -80,7 +80,7 @@ export default function UserFeedback() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Feedback Categories</h3>
           <div className="flex items-center gap-6">
-            <ResponsiveContainer width={180} height={180}>
+            <ResponsiveContainer width={180} height={180} minWidth={0}>
               <PieChart>
                 <Pie data={categories} cx="50%" cy="50%" innerRadius={55} outerRadius={80}
                   paddingAngle={3} dataKey="value">

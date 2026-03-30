@@ -66,7 +66,7 @@ export default function LinkedInAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Daily Lead Scraping</h3>
           <p className="text-xs text-gray-500 mb-4">Scraped leads and posts per day</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <BarChart data={dailyLeads} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="30%">
               <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -82,7 +82,7 @@ export default function LinkedInAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Profile Scraping Success Rate</h3>
           <p className="text-xs text-gray-500 mb-4">% of successful profile scrapes</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <LineChart data={profileSuccess} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" />
               <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -101,7 +101,7 @@ export default function LinkedInAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Industry Distribution</h3>
           <div className="flex items-center gap-6">
-            <ResponsiveContainer width={180} height={180}>
+            <ResponsiveContainer width={180} height={180} minWidth={0}>
               <PieChart>
                 <Pie data={industryData} cx="50%" cy="50%" innerRadius={55} outerRadius={80}
                   paddingAngle={3} dataKey="value">
@@ -126,7 +126,7 @@ export default function LinkedInAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Lead Source Breakdown</h3>
           <div className="flex items-center gap-6">
-            <ResponsiveContainer width={180} height={180}>
+            <ResponsiveContainer width={180} height={180} minWidth={0}>
               <PieChart>
                 <Pie data={sourceData} cx="50%" cy="50%" innerRadius={55} outerRadius={80}
                   paddingAngle={3} dataKey="value">
