@@ -1,0 +1,143 @@
+import logging
+import asyncio
+import json
+import os
+import redis.asyncio as redis
+from contextlib import asynccontextmanager
+from fastapi import FastAPI,Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# Rate Limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# --- Placeholders for future modules ---
+# from app.core.config import settings
+# from app.core.socket_manager import manager
+# from app.database.core import engine, Base
+# from app.api import auth, agents, webhooks
+
+# Initialize Logger
+logger = logging.getLogger("rdl_sales_logger")
+
+# Initialize Rate Limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# Initialize Redis Client (Connects to your rdl_redis container)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+r_client = redis.from_url(f"redis://{REDIS_HOST}:{REDIS_PORT}/0", decode_responses=True)
+
+# ─────────────────────────────────────────────────────────────
+# 1. THE REDIS LISTENER (For Real-Time AI & Call Monitoring)
+# ─────────────────────────────────────────────────────────────
+async def global_redis_listener():
+    """
+    Listens for live updates from LiveKit or the LangGraph AI Agents.
+    Broadcasts these events to the React frontend via WebSockets.
+    """
+    logger.info("🔌 Redis Listener: Connecting...")
+    pubsub = r_client.pubsub()
+    await pubsub.subscribe("live_call_events")
+    logger.info("✅ Redis Listener: Subscribed to 'live_call_events'")
+    
+    try:
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                raw_data = message["data"]
+                logger.info(f"📥 [REDIS-LISTENER] Received: {raw_data}")
+
+                try:
+                    data_json = json.loads(raw_data)
+                    # Once we build the socket manager, we will uncomment this to send data to React:
+                    # await manager.broadcast(data_json)
+                except json.JSONDecodeError:
+                    logger.error(f"❌ Redis Listener: Could not parse JSON: {raw_data}")
+                    
+    except asyncio.CancelledError:
+        logger.info("🔌 Redis Listener: Task cancelled.")
+    except Exception as e:
+        logger.error(f"❌ Redis Listener Error: {e}")
+
+# ─────────────────────────────────────────────────────────────
+# 2. LIFESPAN (Startup & Shutdown)
+# ─────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- STARTUP ---
+    logger.info("🚀 RDL AI Sales Backend starting up...")
+    
+    # Start the background Redis listener
+    redis_task = asyncio.create_task(global_redis_listener())
+    
+    # Initialize Database Tables (Uncomment when models are ready)
+    # try:
+    #     Base.metadata.create_all(bind=engine)
+    #     logger.info("✅ PostgreSQL & pgvector tables verified.")
+    # except Exception as e:
+    #     logger.error(f"❌ Database connection failed: {e}")
+        
+    yield  # Application runs here...
+    
+    # --- SHUTDOWN ---
+    logger.info("🛑 Shutting down AI Backend...")
+    
+    # Cancel Listener safely
+    redis_task.cancel()
+    try:
+        await redis_task
+    except asyncio.CancelledError:
+        pass
+        
+    # Close Redis Connection
+    await r_client.close()
+
+# ─────────────────────────────────────────────────────────────
+# APP INITIALIZATION
+# ─────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="RDL AI Sales Gateway",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Attach Rate Limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security & Compression Middleware
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1000) # Compresses JSON responses > 1KB
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─────────────────────────────────────────────────────────────
+# ROUTERS (To be enabled later)
+# ─────────────────────────────────────────────────────────────
+# app.include_router(auth.router, tags=["Authentication"], prefix="/api/auth")
+# app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
+# app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
+
+# ─────────────────────────────────────────────────────────────
+# HEALTH CHECKS
+# ─────────────────────────────────────────────────────────────
+@app.get("/health", tags=["System"])
+def health_check():
+    return {"status": "UP", "redis_listener": "running"}
+
+@app.get("/")
+@limiter.limit("5/minute") # Example: Limit root to 5 requests per minute per IP
+def root(request): # Request parameter is required for slowapi
+    return {"message": "Welcome to the RDL AI Sales API", "docs_url": "/docs"}
+
+# Start Prometheus metrics
+Instrumentator().instrument(app).expose(app)

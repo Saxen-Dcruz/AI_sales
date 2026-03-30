@@ -1,0 +1,34 @@
+# --- Project Specific ---
+.env.local
+.env.prod 
+knowledge_base/
+assets/
+*.log
+data/
+
+# --- Python / Environment ---
+.venv/
+env/
+venv/
+ENV/
+bin/
+lib/
+include/
+
+# --- Caching ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- OS / IDE ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Databases (SQLite local testing) ---
+*.sqlite3
+*.db
