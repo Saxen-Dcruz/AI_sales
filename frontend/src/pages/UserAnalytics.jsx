@@ -55,7 +55,7 @@ export default function UserAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Daily Signups</h3>
           <p className="text-xs text-gray-500 mb-4">New user registrations this month</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <AreaChart data={signupData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="signGrad" x1="0" y1="0" x2="0" y2="1">
@@ -75,7 +75,7 @@ export default function UserAnalytics() {
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">User Engagement</h3>
           <p className="text-xs text-gray-500 mb-4">Sessions and avg duration per day</p>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={220} minWidth={0}>
             <BarChart data={engagementData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="35%">
               <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />

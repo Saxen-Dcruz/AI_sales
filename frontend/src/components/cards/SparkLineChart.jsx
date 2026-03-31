@@ -3,7 +3,7 @@ import { ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts'
 export function SparkLineChart({ data, color }) {
   const chartData = data.map((v, i) => ({ v, i }))
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
       <AreaChart data={chartData} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
         <defs>
           <linearGradient id={`spark-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">

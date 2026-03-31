@@ -136,8 +136,8 @@ export default function Sidebar({ open, mobileOpen, onMobileClose }) {
 
       {/* Bottom user section */}
       <div className="p-3 border-t border-gray-200">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer">
-          <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white"
+        <NavLink to="/settings" onClick={onMobileClose} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-gray-100 transition-colors cursor-pointer w-full text-left">
+          <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white shadow-sm"
             style={{ background: 'linear-gradient(135deg, #2563eb, #3b82f6)' }}>
             AD
           </div>
@@ -154,7 +154,7 @@ export default function Sidebar({ open, mobileOpen, onMobileClose }) {
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
+        </NavLink>
       </div>
     </div>
   )
