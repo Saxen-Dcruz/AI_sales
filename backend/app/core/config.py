@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     LINKEDIN_EMAIL: str | None = None
     LINKEDIN_PASSWORD: str | None = None
 
+
+    # --- LangSmith Tracing ---
+    LANGCHAIN_TRACING_V2: bool = False
+    LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"
+    LANGCHAIN_API_KEY: Optional[str] = None
+    LANGCHAIN_PROJECT: str = "default"
+    
+
     # --- Mount the Agent Settings ---
     # This automatically includes all your YAML configurations!
     AGENT: AgentSettings = AgentSettings()
