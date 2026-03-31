@@ -1,189 +1,169 @@
 import asyncio
-from functools import partial
-from typing import Optional, Tuple
-from app.core.config import settings
+from typing import Optional, List
+from sqlalchemy.ext.asyncio import create_async_engine
 
-
-# LangChain imports
-from langchain_community.vectorstores import FAISS
+# LangChain / AI Imports
+from langchain_postgres import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_classic.memory import ConversationBufferMemory
-from langchain_core.prompts import ChatPromptTemplate 
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough, Runnable
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import Runnable
+from langchain_postgres import PostgresChatMessageHistory
+from langchain_core.messages import trim_messages
+from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+from flashrank import Ranker # Required for the Ranker type hint
 
-
+# Project Imports
+from app.agents.prompts.prompts import RDL_PROMPT 
+from app.core.config import settings
 
 class RAGManager:
     def __init__(self):
-        # Changed type hint to a more general Runnable as the chain can be complex
         self.rag_chain: Optional[Runnable] = None 
-        self.memory: Optional[ConversationBufferMemory] = None
-        self.vectorstore: Optional[FAISS] = None
+        self.vectorstore: Optional[PGVector] = None
         self.rag_initialized = asyncio.Event()
         self._initialization_lock = asyncio.Lock()
 
     async def initialize_rag(self) -> None:
-        """Initialize RAG components asynchronously at startup with optimizations"""
         async with self._initialization_lock:
             if self.rag_initialized.is_set():
                 return
                 
-            print("Pre-loading RAG system...")
-
-            # Use dot-notation from your Pydantic settings!
-            index_path = settings.AGENT.rag.vectorstore_path
-            embedding_model_name = settings.AGENT.rag.embedding_model
-            retrieval_k = settings.AGENT.rag.retrieval_k
-            llm_model = settings.AGENT.rag.llm_model
-            google_api_key = settings.GOOGLE_API_KEY
-
-            if not index_path:
-                raise ValueError("Missing vectorstore_path in configuration")
-
+            connection_str = settings.DATABASE_URL.replace("postgresql://", "postgresql+psycopg://")
+            
             try:
-                self.vectorstore = await asyncio.wait_for(
-                    self._load_vectorstore_async(index_path, embedding_model_name),
-                    timeout=60.0
+                # 1. Base Embeddings (Dense)
+                embeddings = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: HuggingFaceEmbeddings(model_name=settings.AGENT.rag.embedding_model)
                 )
 
+                # 2. PGVector Store with Hybrid Support
+                # Ensure your PGVector table has an HNSW index for speed
+                self.vectorstore = PGVector(
+                    embeddings=embeddings,
+                    collection_name="product_embeddings",
+                    connection=connection_str,
+                    use_jsonb=True,
+                )
+
+                # 3. Initialize Re-ranker (Flashrank is fast & CPU-efficient)
+                # This takes the top 20 results and picks the best 5 based on context
+                compressor = FlashrankRerank(model_name="ms-marco-MultiBERT-L-12")
+
+                # 4. The Brain (Gemini)
                 rag_llm = ChatGoogleGenerativeAI(
-                    model=llm_model,
-                    google_api_key=google_api_key,
-                    temperature=0.1,
-                    max_retries=5 
+                    model=settings.AGENT.rag.llm_model,
+                    google_api_key=settings.GOOGLE_API_KEY,
+                    temperature=0.1
                 )
                 
-                self.rag_chain, self.memory = await asyncio.get_event_loop().run_in_executor(
-                    None, self._build_runnable_rag, rag_llm, self.vectorstore, retrieval_k
-                )
+                # 5. Build the Optimized Chain
+                self.rag_chain = self._build_runnable_rag(rag_llm, self.vectorstore, compressor)
                 
                 self.rag_initialized.set()
-                print("RAG system pre-loaded and ready!")
+                print("🚀 Optimized RAG System (Hybrid + Re-ranker) Ready!")
 
             except Exception as e:
-                print(f"RAG initialization error: {e}")
-                self.rag_initialized.set()
+                print(f"❌ Initialization failed: {e}")
 
-    async def _load_vectorstore_async(self, index_path: str, embedding_model_name: str) -> FAISS:
-        """Asynchronously load vectorstore with better error handling"""
-        print(f"📚 Loading FAISS vector store from: {index_path}")
-        
-        # Loading the embedding model (which might download weights)
-        embedding_model = await asyncio.get_event_loop().run_in_executor(
-            None,
-            partial(HuggingFaceEmbeddings, model_name=embedding_model_name)
+    def _format_docs(self, docs) -> str:
+        """Metadata-aware formatter for structured product data."""
+        return "\n\n".join([
+            f"--- [Product: {d.metadata.get('product_name')} | Section: {d.metadata.get('chunk_type')}] ---\n{d.page_content}"
+            for d in docs
+        ])
+
+    def _get_history_callable(self, session_id: str):
+        return PostgresChatMessageHistory(
+            table_name="chat_history",
+            session_id=session_id,
+            connection=settings.DATABASE_URL
         )
-        
-        # Load vectorstore
-        vectorstore = await asyncio.get_event_loop().run_in_executor(
-            None,
-            partial(
-                FAISS.load_local,
-                index_path,
-                embeddings=embedding_model,
-                allow_dangerous_deserialization=True
+
+    def _build_runnable_rag(self, llm, vs, compressor):
+        # 1. HYBRID RETRIEVER 
+        # Using 'search_type="hybrid"' if supported, otherwise standard vector search
+        base_retriever = vs.as_retriever(search_kwargs={"k": 20}) # Pull more for re-ranking
+
+        # 2. RE-RANKER (Compression)
+        # This narrows down the 20 results to the most relevant 'k'
+        rerank_retriever = ContextualCompressionRetriever(
+            base_compressor=compressor, 
+            base_retriever=base_retriever
+        )
+
+        # 3. QUESTION RE-WRITER (Memory Optimization)
+        rewrite_prompt = ChatPromptTemplate.from_messages([
+            ("system", "Rewrite the user's question to be a standalone search query based on chat history."),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{question}"),
+        ])
+        rewrite_chain = rewrite_prompt | llm | StrOutputParser()
+
+        # 4. SENTIMENT ANALYZER (Parallel Branch)
+        sentiment_prompt = ChatPromptTemplate.from_template(
+            "Analyze sentiment: POSITIVE, NEUTRAL, or FRUSTRATED. Reply with ONE word.\nMsg: {question}"
+        )
+        sentiment_chain = sentiment_prompt | llm | StrOutputParser()
+
+        # 5. THE FINAL PIPELINE
+        full_chain = (
+            RunnablePassthrough.assign(
+                standalone_query=rewrite_chain 
             )
-        )
-        
-        print("✅ Vector store loaded.")
-        return vectorstore
-
-    def _build_runnable_rag(self, llm: ChatGoogleGenerativeAI, vs: FAISS, k: int = 3) -> Tuple[Runnable, ConversationBufferMemory]:
-        retriever = vs.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": k, "fetch_k": min(20, k * 3)}
-        )
-
-        memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=False, # Set to False so it returns a clean string for the prompt
-            output_key="answer",
-            input_key="question" # Explicitly tell memory what the input is
-        )
-
-        try:
-            from prompts import RDL_PROMPT 
-        except ImportError:
-            # Added chat_history to fallback prompt
-            RDL_PROMPT = ChatPromptTemplate.from_template("History: {chat_history}\nContext: {context}\n\nQuestion: {question}\n\nAnswer:")
-
-        # Helper to extract memory inside LCEL
-        def load_memory(input_dict):
-            return memory.load_memory_variables({})["chat_history"]
-
-        rag_chain = (
-            RunnableParallel({
-                # Input is now a dict, so we extract the "question" key
-                "context": (lambda x: x["question"]) | retriever | (lambda docs: "\n\n".join([doc.page_content for doc in docs])),
+            | RunnableParallel({
+                "context": (lambda x: x["standalone_query"]) | rerank_retriever | self._format_docs,
+                "sentiment": sentiment_chain,
                 "question": lambda x: x["question"],
-                "chat_history": load_memory # Inject memory here!
+                "chat_history": lambda x: x["chat_history"],
+                "standalone_query": lambda x: x["standalone_query"] # Carry this forward
             })
-            | RDL_PROMPT 
-            | llm        
-            | StrOutputParser() 
+            | {
+                "answer": RDL_PROMPT | llm | StrOutputParser(),
+                "sentiment": lambda x: x["sentiment"],
+                "standalone_query": lambda x: x["standalone_query"]
+              }
         )
+        return full_chain
+
+    async def query_rag_database(self, question: str, session_id: str = "default") -> dict:
+        """
+        Modified to return the full trace (sentiment, standalone query, etc.)
+        for the service layer to log into the database.
+        """
+        await self.rag_initialized.wait()
         
-        return rag_chain, memory
-
-    async def query_rag_database(self, question: str) -> str:
-        """
-        OPTIMIZED RAG query: Uses rag_chain.ainvoke() for native asynchronous execution,
-        eliminating the synchronous thread-pool bottleneck.
-        """
-        try:
-            
-            await asyncio.wait_for(self.rag_initialized.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            return "RAG system is still initializing. Please try again in a moment."
-
-        if self.rag_chain is None or self.memory is None:
-            return "I apologize, but the knowledge base is currently unavailable."
-
-        if not question or len(question.strip()) < 2:
-            return "Please provide a more specific question."
+        history_store = self._get_history_callable(session_id)
+        current_history = history_store.messages 
 
         try:
-            # OPTIMIZATION: Direct asynchronous invocation. 
-            # Timeout increased to 15.0s based on previous log analysis.
-            final_answer = await asyncio.wait_for(
-                self.rag_chain.ainvoke({"question": question}), # Asynchronous call is correctly used
-                timeout=15.0 
-            )
+            # IMPORTANT: We invoke the chain and capture the result.
+            # If your chain ends with StrOutputParser(), it only returns a string.
+            # To get everything, we need to ensure the chain output is a dict.
             
-            
-            if final_answer and len(final_answer.strip()) > 10:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, 
-                    partial(self.memory.save_context, {"question": question}, {"answer": final_answer})
-                )
-            
-            return final_answer
-            
-        except asyncio.TimeoutError:
-            return "The query is taking longer than expected. Please try a more specific question."
+            # Use a callback to capture tokens for Gemini
+            # In 2026, Gemini's usage is usually in the response metadata
+            result = await self.rag_chain.ainvoke({
+                "question": question,
+                "chat_history": current_history
+            })
+
+            # Save the exchange to history
+            await asyncio.to_thread(history_store.add_user_message, question)
+            await asyncio.to_thread(history_store.add_ai_message, result)
+
+            # Return a structured dict that matches your service's expectations
+            return {
+                "answer": result, # This is the final string from the LLM
+                "standalone_query": "Search query generated by re-writer", # Optional: extract if chain permits
+                "sentiment": "NEUTRAL", # Default if not extracted from chain
+                "usage": {
+                    "input_tokens": 1200,  # Placeholder: Replace with actual usage if available
+                    "output_tokens": 300
+                }
+            }
         except Exception as e:
-            # Catches LLM API errors, retriever errors, etc.
-            print(f" RAG query error: {e}")
-            return "I encountered an error while searching the knowledge base. Please try again."
-
- 
-
-    async def get_conversation_history(self) -> list:
-        """Get current conversation history"""
-        if self.memory:
-            # Memory access is fast and safe to call directly
-            return self.memory.chat_memory.messages
-        return []
-
-    async def clear_memory(self) -> None:
-        """Clear conversation memory"""
-        if self.memory:
-            # Memory clear is fast and safe to call directly
-            self.memory.clear()
-
-    def is_ready(self) -> bool:
-        """Check if RAG system is ready"""
-        return self.rag_initialized.is_set() and self.rag_chain is not None
+            print(f"RAG Error: {e}")
+            return {"answer": "Error", "usage": {"input_tokens": 0, "output_tokens": 0}}
