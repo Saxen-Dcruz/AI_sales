@@ -1,23 +1,26 @@
-# Step 1: Build the React App
-FROM node:20-alpine AS build
+# --- STAGE 1: Local Development ---
+FROM node:20-alpine AS development
 WORKDIR /app
-
-# Install dependencies first
+# Install dependencies
 COPY package*.json ./
 RUN npm install
-
-# Copy the rest of the code
+# Copy source code
 COPY . .
+# Start the Vite Dev Server
+CMD ["npm", "run", "dev"]
 
-# Pull in the API URL from docker-compose.yml
+# --- STAGE 2: Production Build ---
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
-
-# Build the production files
 RUN npm run build
 
-# Step 2: Serve with Nginx
-FROM nginx:alpine
+# --- STAGE 3: Nginx Serving (Production Only) ---
+FROM nginx:alpine AS production
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 5173
 CMD ["nginx", "-g", "daemon off;"]
