@@ -96,7 +96,11 @@ export const AddProductService = (data, sucess, error) => {
     return _fetchService('add-product', 'POST', data, sucess, error);
 }
 
-export const ShowProductService = (data, sucess, error) => {
+export const ShowAllProductService = (data, sucess, error) => {
+    return _fetchService('show-product', 'GET', data, sucess, error);
+}
+
+export const ShowOneProductService = (data, sucess, error) => {
     return _fetchService('show-product', 'GET', data, sucess, error);
 }
 
@@ -106,5 +110,10 @@ export const EditProductService = (data, sucess, error) => {
 
 export const DeleteProductService = (data, sucess, error) => {
     return _fetchService('delete-product', 'DELETE', data, sucess, error);
+}
+
+
+export const ToggleActiveInactiveService = (data, sucess, error) => {
+    return _fetchService('toggle-active-inactive', 'PUT', data, sucess, error);
 }
 

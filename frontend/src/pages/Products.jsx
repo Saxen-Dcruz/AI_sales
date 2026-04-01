@@ -1,95 +1,282 @@
+import React, { useState, useEffect } from 'react'
+import {
+  Container,
+  Paper,
+  Typography,
+  Box,
+  Button,
+  TextField,
+  InputAdornment,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  IconButton,
+  Chip,
+  FormControl,
+  Select,
+  MenuItem,
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Menu,
+  Tooltip
+} from '@mui/material'
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  MoreVert as MoreVertIcon,
+  Package as PackageIcon,
+  FilterList as FilterListIcon,
+  Refresh as RefreshIcon,
+  CheckCircle as CheckCircleIcon,
+  Block as BlockIcon
+} from '@mui/icons-material'
 import { motion } from 'framer-motion'
-import { Package, Search, Plus, MoreHorizontal } from 'lucide-react'
-
-// Placeholder data
-const products = [
-  { id: 'PRD-001', name: 'AI Voice Caller Starter', category: 'Software', status: 'Active', price: '$49/mo', sales: 124 },
-  { id: 'PRD-002', name: 'Lead Gen Pro', category: 'Software', status: 'Active', price: '$99/mo', sales: 86 },
-  { id: 'PRD-003', name: 'Enterprise Bundle', category: 'Services', status: 'Draft', price: '$499/mo', sales: 0 },
-  { id: 'PRD-004', name: 'Custom Voice Cloning', category: 'Add-on', status: 'Active', price: '$29/mo', sales: 215 },
-]
+import { Link, useNavigate } from 'react-router-dom'
+import { ShowAllProductService, DeleteProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
 export default function Products() {
+  const navigate = useNavigate()
+  const [products, setProducts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('All Categories')
+  
+  // Dialog & Menu states
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState(null)
+  const [anchorEl, setAnchorEl] = useState(null)
+
+  const fetchProducts = () => {
+    setLoading(true)
+    ShowAllProductService(
+      null,
+      (data) => {
+        setProducts(data || [])
+        setLoading(false)
+      },
+      (status, err) => {
+        console.error("Fetch Error:", err)
+        setLoading(false)
+      }
+    )
+  }
+
+  useEffect(() => {
+    fetchProducts()
+  }, [])
+
+  const handleDeleteClick = (product) => {
+    setSelectedProduct(product)
+    setDeleteDialogOpen(true)
+    setAnchorEl(null)
+  }
+
+  const confirmDelete = () => {
+    if (!selectedProduct) return
+    DeleteProductService(
+      { id: selectedProduct.id }, // Assumption: Backend needs ID in body or handles it
+      () => {
+        setProducts(prev => prev.filter(p => p.id !== selectedProduct.id))
+        setDeleteDialogOpen(false)
+      },
+      (status, err) => alert(`Delete failed: ${err}`)
+    )
+  }
+
+  const handleToggleStatus = (product) => {
+    ToggleActiveInactiveService(
+      { id: product.id },
+      () => {
+        setProducts(prev => prev.map(p => 
+          p.id === product.id ? { ...p, status: p.status === 'Active' ? 'Inactive' : 'Active' } : p
+        ))
+      },
+      (status, err) => alert(`Toggle failed: ${err}`)
+    )
+  }
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name?.toLowerCase().includes(search.toLowerCase()) || 
+                          p.id?.toString().includes(search)
+    const matchesCategory = category === 'All Categories' || p.category === category
+    return matchesSearch && matchesCategory
+  })
+
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage your software products and Add-ons</p>
-        </div>
-        <button className="btn-primary flex items-center gap-2">
-          <Plus size={16} />
-          Add Product
-        </button>
-      </div>
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+        
+        {/* Header */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+          <Box>
+            <Typography variant="h4" fontWeight={800} color="text.primary">Products</Typography>
+            <Typography variant="body2" color="text.secondary">Manage your software and services catalog</Typography>
+          </Box>
+          <Button 
+            component={Link} 
+            to="/add-product" 
+            variant="contained" 
+            startIcon={<AddIcon />}
+            sx={{ borderRadius: 3, px: 3, py: 1 }}
+          >
+            Add Product
+          </Button>
+        </Box>
 
-      <div className="glass-card">
-        <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row gap-4 items-center justify-between">
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="Search products..." 
-              className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-gray-900"
-            />
-          </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <select className="bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 w-full sm:w-auto">
-              <option>All Categories</option>
-              <option>Software</option>
-              <option>Services</option>
-              <option>Add-on</option>
-            </select>
-          </div>
-        </div>
+        {/* Filters Area */}
+        <Paper elevation={0} sx={{ p: 2, mb: 3, border: '1px solid', borderColor: 'divider', borderRadius: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <TextField
+            size="small"
+            placeholder="Search products..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            InputProps={{
+              startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>
+            }}
+            sx={{ flexGrow: 1, maxWidth: 400 }}
+          />
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50/50">
-                <th className="p-4 text-xs font-semibold text-gray-500">Product Name</th>
-                <th className="p-4 text-xs font-semibold text-gray-500">Category</th>
-                <th className="p-4 text-xs font-semibold text-gray-500">Price</th>
-                <th className="p-4 text-xs font-semibold text-gray-500">Sales</th>
-                <th className="p-4 text-xs font-semibold text-gray-500">Status</th>
-                <th className="p-4 text-xs font-semibold text-gray-500 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p) => (
-                <tr key={p.id} className="table-row">
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center">
-                        <Package size={18} className="text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900">{p.name}</p>
-                        <p className="text-xs text-gray-500">{p.id}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <span className="text-sm text-gray-600">{p.category}</span>
-                  </td>
-                  <td className="p-4"><span className="text-sm font-medium text-gray-900">{p.price}</span></td>
-                  <td className="p-4"><span className="text-sm text-gray-600">{p.sales}</span></td>
-                  <td className="p-4">
-                    <span className={`badge ${p.status === 'Active' ? 'badge-green' : 'badge-orange'}`}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right">
-                    <button className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
-                      <MoreHorizontal size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </motion.div>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <Select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              startAdornment={<FilterListIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />}
+            >
+              <option value="All Categories">All Categories</option>
+              <option value="Software">Software</option>
+              <option value="Services">Services</option>
+              <option value="Add-on">Add-on</option>
+            </Select>
+          </FormControl>
+
+          <Tooltip title="Refresh List">
+            <IconButton onClick={fetchProducts} size="small"><RefreshIcon /></IconButton>
+          </Tooltip>
+        </Paper>
+
+        {/* Table Container */}
+        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, overflow: 'hidden' }}>
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Table>
+              <TableHead sx={{ bgcolor: 'grey.50' }}>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700 }}>Product Details</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Price</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }} align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredProducts.length > 0 ? (
+                  filteredProducts.map((product) => (
+                    <TableRow key={product.id} hover>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <Box sx={{ p: 1, bgcolor: 'primary.light', borderRadius: 2, color: 'primary.contrastText', display: 'flex' }}>
+                            <PackageIcon fontSize="small" />
+                          </Box>
+                          <Box>
+                            <Typography variant="subtitle2" fontWeight={600}>{product.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">ID: {product.id}</Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell><Typography variant="body2">{product.category}</Typography></TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={600}>
+                          ${product.singlePrice || product.price || '0'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={product.status || 'Active'} 
+                          size="small" 
+                          color={product.status === 'Active' ? 'success' : 'warning'}
+                          variant="tonal"
+                          sx={{ fontWeight: 600 }}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <IconButton size="small" onClick={(e) => {
+                          setAnchorEl(e.currentTarget)
+                          setSelectedProduct(product)
+                        }}>
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center" sx={{ py: 8 }}>
+                      <Typography variant="body2" color="text.secondary">No products found matching your criteria.</Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </TableContainer>
+
+        {/* Action Menu */}
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={() => setAnchorEl(null)}
+          PaperProps={{ elevation: 2, sx: { borderRadius: 2, minWidth: 150 } }}
+        >
+          <MenuItem onClick={() => {
+            navigate(`/edit-product/${selectedProduct.id}`)
+            setAnchorEl(null)
+          }}>
+            <EditIcon sx={{ mr: 1, fontSize: 18 }} />
+            Edit Product
+          </MenuItem>
+          <MenuItem onClick={() => {
+            handleToggleStatus(selectedProduct)
+            setAnchorEl(null)
+          }}>
+            {selectedProduct?.status === 'Active' ? <BlockIcon sx={{ mr: 1, fontSize: 18 }} /> : <CheckCircleIcon sx={{ mr: 1, fontSize: 18 }} />}
+            {selectedProduct?.status === 'Active' ? 'Deactivate' : 'Activate'}
+          </MenuItem>
+          <MenuItem onClick={() => handleDeleteClick(selectedProduct)} sx={{ color: 'error.main' }}>
+            <DeleteIcon sx={{ mr: 1, fontSize: 18 }} />
+            Delete
+          </MenuItem>
+        </Menu>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog 
+          open={deleteDialogOpen} 
+          onClose={() => setDeleteDialogOpen(false)}
+          PaperProps={{ sx: { borderRadius: 3 } }}
+        >
+          <DialogTitle sx={{ fontWeight: 700 }}>Confirm Deletion</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Are you sure you want to delete <strong>{selectedProduct?.name}</strong>? This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, pt: 0 }}>
+            <Button onClick={() => setDeleteDialogOpen(false)} color="inherit">Cancel</Button>
+            <Button onClick={confirmDelete} color="error" variant="contained">Delete Product</Button>
+          </DialogActions>
+        </Dialog>
+
+      </motion.div>
+    </Container>
   )
 }

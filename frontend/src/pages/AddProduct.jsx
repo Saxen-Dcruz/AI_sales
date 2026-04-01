@@ -1,6 +1,34 @@
 import React, { useState, useEffect } from 'react'
+import {
+  Container,
+  Paper,
+  Typography,
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Button,
+  Stack,
+  Box,
+  IconButton,
+  Divider,
+  Alert,
+  CircularProgress,
+  InputAdornment
+} from '@mui/material'
+import {
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  Save as SaveIcon,
+  ArrowBack as ArrowBackIcon,
+  PlaylistAdd as PlaylistAddIcon,
+  Inventory as InventoryIcon,
+  Edit as EditIcon
+} from '@mui/icons-material'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Save, Image as ImageIcon, Plus, Trash2, X } from 'lucide-react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { AddProductService, EditProductService, ShowOneProductService } from '../services/ApiService'
 
 const CATEGORY_MAP = {
   'Software': ['Voice AI', 'Chatbot', 'CRM'],
@@ -9,33 +37,79 @@ const CATEGORY_MAP = {
 }
 
 export default function AddProduct() {
+  const navigate = useNavigate()
+  const { id } = useParams()
+  const isEdit = Boolean(id)
+
+  const [loading, setLoading] = useState(false)
+  const [fetching, setFetching] = useState(isEdit)
+  const [statusMsg, setStatusMsg] = useState({ type: '', text: '' })
+
+  // Core Form State
   const [formData, setFormData] = useState({
+    category: '',
+    subcategory: '',
     name: '',
     orderCode: '',
     brand: '',
-    category: '',
-    subcategory: '',
     singlePrice: '',
     bulkPrice: '',
     description: '',
-    subheading: '',
-    status: 'Draft'
   })
 
+  // Dynamic Fields State
+  const [showSubheading, setShowSubheading] = useState(false)
+  const [subheading, setSubheading] = useState('')
   const [features, setFeatures] = useState([''])
   const [packageItems, setPackageItems] = useState([''])
+
+  useEffect(() => {
+    if (isEdit) {
+      setFetching(true)
+      ShowOneProductService(
+        { id },
+        (data) => {
+          if (data) {
+            setFormData({
+              category: data.category || '',
+              subcategory: data.subcategory || '',
+              name: data.name || '',
+              orderCode: data.orderCode || '',
+              brand: data.brand || '',
+              singlePrice: data.singlePrice || '',
+              bulkPrice: data.bulkPrice || '',
+              description: data.description || '',
+            })
+            if (data.subheading) {
+              setSubheading(data.subheading)
+              setShowSubheading(true)
+            }
+            if (data.features?.length) setFeatures(data.features)
+            if (data.packageContains?.length) setPackageItems(data.packageContains)
+          }
+          setFetching(false)
+        },
+        (status, err) => {
+          setStatusMsg({ type: 'error', text: `Failed to load product: ${err}` })
+          setFetching(false)
+        }
+      )
+    }
+  }, [id, isEdit])
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
       [name]: value,
-      // Reset subcategory if category changes
       ...(name === 'category' ? { subcategory: '' } : {})
     }))
   }
 
-  const handleDynamicChange = (index, value, setter) => {
+  // Dynamic Array Handlers
+  const addDynamicField = (setter) => setter(prev => [...prev, ''])
+  const removeDynamicField = (index, setter) => setter(prev => prev.filter((_, i) => i !== index))
+  const updateDynamicField = (index, value, setter) => {
     setter(prev => {
       const updated = [...prev]
       updated[index] = value
@@ -43,300 +117,202 @@ export default function AddProduct() {
     })
   }
 
-  const addDynamicField = (setter) => {
-    setter(prev => [...prev, ''])
-  }
-
-  const removeDynamicField = (index, setter, currentList) => {
-    if (currentList.length > 1) {
-      setter(prev => prev.filter((_, i) => i !== index))
-    }
-  }
-
   const handleSubmit = (e) => {
     e.preventDefault()
-    const finalData = {
+    
+    // Validation
+    if (!formData.name || !formData.category) {
+      setStatusMsg({ type: 'error', text: 'Product Name and Category are required.' })
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+
+    setLoading(true)
+    setStatusMsg({ type: '', text: '' })
+
+    const payload = {
       ...formData,
+      id: isEdit ? id : undefined,
+      subheading: showSubheading ? subheading : '',
+      singlePrice: parseFloat(formData.singlePrice) || 0,
+      bulkPrice: parseFloat(formData.bulkPrice) || 0,
       features: features.filter(f => f.trim() !== ''),
       packageContains: packageItems.filter(p => p.trim() !== '')
     }
-    console.log('Submitting Product Data:', finalData)
-    // Here we would call the ApiService if available
+
+    const serviceCall = isEdit ? EditProductService : AddProductService
+
+    serviceCall(
+      payload,
+      () => {
+        setLoading(false)
+        setStatusMsg({ type: 'success', text: `Product successfully ${isEdit ? 'updated' : 'created'}! Redirecting...` })
+        setTimeout(() => navigate('/products'), 1500)
+      },
+      (status, error) => {
+        setLoading(false)
+        setStatusMsg({ type: 'error', text: `Error: ${error || 'Failed to save product'}` })
+      }
+    )
+  }
+
+  if (fetching) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 20 }}>
+        <CircularProgress />
+      </Box>
+    )
   }
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 16 }} 
-      animate={{ opacity: 1, y: 0 }} 
-      className="space-y-6 max-w-5xl mx-auto pb-12"
-    >
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Add New Product</h1>
-          <p className="text-sm text-gray-500 mt-1">Configure your product specifications and pricing</p>
-        </div>
-        <div className="flex gap-3">
-          <button className="btn-ghost">Cancel</button>
-          <button onClick={handleSubmit} className="btn-primary flex items-center gap-2">
-            <Save size={16} />
-            Save Product
-          </button>
-        </div>
-      </div>
+    <Container maxWidth="md" sx={{ py: 6 }}>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+        
+        {/* Header Navigation */}
+        <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/products')} sx={{ color: 'text.secondary' }}>
+            Back to Products
+          </Button>
+          <Typography variant="h4" fontWeight={800} color="primary.main">
+            {isEdit ? 'Edit Product' : 'New Product'}
+          </Typography>
+        </Box>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Main Details */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Identity & Classification */}
-          <div className="glass-card p-6 space-y-5">
-            <h2 className="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3">Identity & Classification</h2>
+        {statusMsg.text && (
+          <Alert severity={statusMsg.type} sx={{ mb: 4, borderRadius: 2 }} onClose={() => setStatusMsg({ type: '', text: '' })}>
+            {statusMsg.text}
+          </Alert>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <Stack spacing={4}>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Product Name</label>
-                <input 
-                  type="text" 
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-medium" 
-                  placeholder="e.g. Enterprise Voice AI" 
-                />
-              </div>
+            {/* 1. Identity & Classification */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Typography variant="h6" gutterBottom fontWeight={700} sx={{ mb: 3 }}>
+                Identity & Classification
+              </Typography>
+              <Stack spacing={3}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <FormControl fullWidth size="medium">
+                    <InputLabel>Category</InputLabel>
+                    <Select name="category" value={formData.category} label="Category" onChange={handleInputChange} required>
+                      {Object.keys(CATEGORY_MAP).map(cat => (
+                        <MenuItem key={cat} value={cat}>{cat}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth size="medium" disabled={!formData.category}>
+                    <InputLabel>Subcategory</InputLabel>
+                    <Select name="subcategory" value={formData.subcategory} label="Subcategory" onChange={handleInputChange}>
+                      {formData.category && CATEGORY_MAP[formData.category].map(sub => (
+                        <MenuItem key={sub} value={sub}>{sub}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+                <TextField fullWidth label="Product Name" name="name" value={formData.name} onChange={handleInputChange} required />
+                <AnimatePresence>
+                  {!showSubheading ? (
+                    <Button startIcon={<AddIcon />} size="small" onClick={() => setShowSubheading(true)} sx={{ textTransform: 'none', width: 'fit-content' }}>
+                      Add Subheading
+                    </Button>
+                  ) : (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} style={{ overflow: 'hidden' }}>
+                      <TextField fullWidth label="Product Subheading" value={subheading} onChange={(e) => setSubheading(e.target.value)}
+                        InputProps={{
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <IconButton size="small" onClick={() => setShowSubheading(false)} color="error"><DeleteIcon fontSize="small" /></IconButton>
+                            </InputAdornment>
+                          ),
+                        }}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </Stack>
+            </Paper>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Order Code</label>
-                <input 
-                  type="text" 
-                  name="orderCode"
-                  value={formData.orderCode}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all" 
-                  placeholder="e.g. AI-VOC-001" 
-                />
-              </div>
+            {/* 2. Product Details */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Typography variant="h6" gutterBottom fontWeight={700} sx={{ mb: 3 }}>Product Details</Typography>
+              <Stack spacing={3}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField fullWidth label="Order Code" name="orderCode" value={formData.orderCode} onChange={handleInputChange} />
+                  <TextField fullWidth label="Brand" name="brand" value={formData.brand} onChange={handleInputChange} />
+                </Stack>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField fullWidth label="Single Price" name="singlePrice" type="number" value={formData.singlePrice} onChange={handleInputChange} 
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
+                  <TextField fullWidth label="Bulk Price" name="bulkPrice" type="number" value={formData.bulkPrice} onChange={handleInputChange} 
+                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
+                </Stack>
+              </Stack>
+            </Paper>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Brand</label>
-                <input 
-                  type="text" 
-                  name="brand"
-                  value={formData.brand}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all" 
-                  placeholder="e.g. Lumina AI" 
-                />
-              </div>
+            {/* 3. Description */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Typography variant="h6" gutterBottom fontWeight={700}>Description</Typography>
+              <TextField fullWidth multiline rows={5} name="description" value={formData.description} onChange={handleInputChange} />
+            </Paper>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Status</label>
-                <select 
-                  name="status"
-                  value={formData.status}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all"
-                >
-                  <option value="Draft">Draft</option>
-                  <option value="Active">Active</option>
-                  <option value="Archived">Archived</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Category</label>
-                <select 
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all"
-                >
-                  <option value="">Select Category</option>
-                  {Object.keys(CATEGORY_MAP).map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
+            {/* 4. Features */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+                <Typography variant="h6" fontWeight={700}>Product Features</Typography>
+                <Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setFeatures)} size="small" variant="outlined">Add Feature</Button>
+              </Box>
+              <Stack spacing={2}>
+                <AnimatePresence mode="popLayout">
+                  {features.map((feature, index) => (
+                    <motion.div key={index} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                      <TextField fullWidth size="small" value={feature} onChange={(e) => updateDynamicField(index, e.target.value, setFeatures)}
+                        InputProps={{
+                          endAdornment: features.length > 1 && (
+                            <InputAdornment position="end">
+                              <IconButton size="small" onClick={() => removeDynamicField(index, setFeatures)} color="error"><DeleteIcon fontSize="small" /></IconButton>
+                            </InputAdornment>
+                          ),
+                        }}
+                      />
+                    </motion.div>
                   ))}
-                </select>
-              </div>
+                </AnimatePresence>
+              </Stack>
+            </Paper>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Subcategory</label>
-                <select 
-                  name="subcategory"
-                  value={formData.subcategory}
-                  onChange={handleInputChange}
-                  disabled={!formData.category}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <option value="">Select Subcategory</option>
-                  {formData.category && CATEGORY_MAP[formData.category].map(sub => (
-                    <option key={sub} value={sub}>{sub}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Pricing & Subheading */}
-          <div className="glass-card p-6 space-y-5">
-            <h2 className="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3">Pricing & Subheading</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Single Price ($)</label>
-                <input 
-                  type="number" 
-                  name="singlePrice"
-                  value={formData.singlePrice}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all" 
-                  placeholder="0.00" 
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">Bulk Price ($)</label>
-                <input 
-                  type="number" 
-                  name="bulkPrice"
-                  value={formData.bulkPrice}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all" 
-                  placeholder="0.00" 
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Subheading</label>
-              <input 
-                type="text" 
-                name="subheading"
-                value={formData.subheading}
-                onChange={handleInputChange}
-                className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all" 
-                placeholder="Brief tagline for the product" 
-              />
-            </div>
-          </div>
-
-          {/* Features Dynamic Section */}
-          <div className="glass-card p-6 space-y-5">
-            <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-              <h2 className="text-lg font-semibold text-gray-900">Product Features</h2>
-              <button 
-                type="button"
-                onClick={() => addDynamicField(setFeatures)}
-                className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
-              >
-                <Plus size={16} />
-                Add More
-              </button>
-            </div>
-            
-            <div className="space-y-3">
-              <AnimatePresence>
-                {features.map((feature, index) => (
-                  <motion.div 
-                    key={index}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="flex gap-2"
-                  >
-                    <input 
-                      type="text" 
-                      value={feature}
-                      onChange={(e) => handleDynamicChange(index, e.target.value, setFeatures)}
-                      className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all" 
-                      placeholder={`Feature point ${index + 1}`} 
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => removeDynamicField(index, setFeatures, features)}
-                      className="p-2 text-gray-400 hover:text-red-500 transition-colors"
-                      disabled={features.length === 1}
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column - Image & Package */}
-        <div className="space-y-6">
-          {/* Product Image */}
-          <div className="glass-card p-6 space-y-5">
-            <h2 className="text-sm font-semibold text-gray-900 border-b border-gray-100 pb-3">Product Image</h2>
-            <div className="w-full h-40 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 transition-colors cursor-pointer group">
-              <ImageIcon size={32} className="mb-2 group-hover:text-blue-500 transition-colors" />
-              <span className="text-xs font-medium">Click to upload</span>
-              <span className="text-[10px] mt-1">PNG, JPG up to 5MB</span>
-            </div>
-          </div>
-
-          {/* Description */}
-          <div className="glass-card p-6 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-900 border-b border-gray-100 pb-3">Description</h2>
-            <textarea 
-              rows={6} 
-              name="description"
-              value={formData.description}
-              onChange={handleInputChange}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 focus:outline-none focus:border-blue-500 transition-all resize-none" 
-              placeholder="Detailed product overview..."
-            ></textarea>
-          </div>
-
-          {/* Package Contains Dynamic Section */}
-          <div className="glass-card p-6 space-y-5">
-            <div className="flex justify-between items-center border-b border-gray-100 pb-3">
-              <h2 className="text-sm font-semibold text-gray-900">Package Contains</h2>
-              <button 
-                type="button"
-                onClick={() => addDynamicField(setPackageItems)}
-                className="text-blue-600 hover:text-blue-700 text-xs font-medium flex items-center gap-1"
-              >
-                <Plus size={14} />
-                Add
-              </button>
-            </div>
-            
-            <div className="space-y-2">
-              <AnimatePresence>
+            {/* 5. Package Contains */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+                <Typography variant="h6" fontWeight={700}>Package Includes</Typography>
+                <Button startIcon={<InventoryIcon />} onClick={() => addDynamicField(setPackageItems)} size="small" variant="outlined">Add Item</Button>
+              </Box>
+              <Stack spacing={2}>
                 {packageItems.map((item, index) => (
-                  <motion.div 
-                    key={index}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, x: 10 }}
-                    className="flex gap-2"
-                  >
-                    <input 
-                      type="text" 
-                      value={item}
-                      onChange={(e) => handleDynamicChange(index, e.target.value, setPackageItems)}
-                      className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-900 focus:outline-none focus:border-blue-500 transition-all" 
-                      placeholder="e.g. API Docs" 
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => removeDynamicField(index, setPackageItems, packageItems)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
-                      disabled={packageItems.length === 1}
-                    >
-                      <X size={14} />
-                    </button>
-                  </motion.div>
+                  <TextField key={index} fullWidth size="small" value={item} onChange={(e) => updateDynamicField(index, e.target.value, setPackageItems)}
+                    InputProps={{
+                      endAdornment: packageItems.length > 1 && (
+                        <InputAdornment position="end">
+                          <IconButton size="small" onClick={() => removeDynamicField(index, setPackageItems)} color="error"><DeleteIcon fontSize="small" /></IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
                 ))}
-              </AnimatePresence>
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
+              </Stack>
+            </Paper>
+
+            {/* Submit Actions */}
+            <Box sx={{ pt: 2, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+              <Button onClick={() => navigate('/products')} disabled={loading}>Cancel</Button>
+              <Button type="submit" variant="contained" startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />} disabled={loading} sx={{ borderRadius: 3, px: 6 }}>
+                {loading ? 'Saving...' : (isEdit ? 'Update Product' : 'Create Product')}
+              </Button>
+            </Box>
+          </Stack>
+        </form>
+      </motion.div>
+    </Container>
   )
 }

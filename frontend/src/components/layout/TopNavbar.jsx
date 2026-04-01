@@ -30,7 +30,7 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
   const [showNotifications, setShowNotifications] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [notifications, setNotifications] = useState(dummyNotifications)
-  
+
   const searchInputRef = useRef(null)
   const notificationsRef = useRef(null)
   const profileRef = useRef(null)
@@ -102,20 +102,11 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
       {/* Right */}
       <div className="flex items-center gap-3">
         {/* Search */}
-        <div className="relative hidden md:flex items-center">
-          <Search size={14} className="absolute left-3 text-gray-400 pointer-events-none" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search..."
-            className="w-52 pl-9 pr-4 py-2 text-sm rounded-xl bg-gray-50 border border-gray-200 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all shadow-sm focus:ring-2 focus:ring-blue-500/20"
-          />
-          <kbd className="absolute right-3 text-[10px] text-gray-400 font-mono pointer-events-none bg-white px-1.5 py-0.5 rounded border border-gray-200 shadow-sm">⌘K</kbd>
-        </div>
+
 
         {/* Notifications */}
         <div className="relative" ref={notificationsRef}>
-          <button 
+          <button
             onClick={() => setShowNotifications(!showNotifications)}
             className={`relative p-2 rounded-xl transition-all ${showNotifications ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-900'}`}
           >
@@ -137,7 +128,7 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                 <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50/50">
                   <span className="text-sm font-semibold text-gray-900">Notifications</span>
                   {unreadCount > 0 && (
-                    <button 
+                    <button
                       onClick={markAllAsRead}
                       className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 transition-colors"
                     >
@@ -148,8 +139,8 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                 </div>
                 <div className="max-h-[320px] overflow-y-auto">
                   {notifications.map(notification => (
-                    <div 
-                      key={notification.id} 
+                    <div
+                      key={notification.id}
                       className={`px-4 py-3 border-b border-gray-50/50 hover:bg-gray-50 transition-colors cursor-pointer ${notification.unread ? 'bg-blue-50/30' : ''}`}
                     >
                       <div className="flex justify-between items-start mb-1 gap-2">
@@ -179,15 +170,10 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
           </AnimatePresence>
         </div>
 
-        {/* Status badge */}
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-accent-green/10 border border-accent-green/20">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
-          <span className="text-xs font-medium text-accent-green">Live</span>
-        </div>
 
         {/* User */}
         <div className="relative" ref={profileRef}>
-          <button 
+          <button
             onClick={() => setShowProfile(!showProfile)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${showProfile ? 'bg-gray-100' : 'hover:bg-gray-100'}`}
           >
@@ -212,16 +198,16 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                   <p className="text-xs text-gray-500 mt-0.5">admin@nexusai.io</p>
                 </div>
                 <div className="p-2 space-y-0.5">
-                  <Link 
-                    to="/settings" 
+                  <Link
+                    to="/settings"
                     onClick={() => setShowProfile(false)}
                     className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-xl transition-colors"
                   >
                     <User size={14} className="text-gray-400" />
                     Profile
                   </Link>
-                  <Link 
-                    to="/settings" 
+                  <Link
+                    to="/settings"
                     onClick={() => setShowProfile(false)}
                     className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-xl transition-colors"
                   >
@@ -230,7 +216,7 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                   </Link>
                 </div>
                 <div className="p-2 border-t border-gray-100">
-                  <button 
+                  <button
                     onClick={handleSignOut}
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 rounded-xl transition-colors"
                   >
