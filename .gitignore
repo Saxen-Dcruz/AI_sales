@@ -32,3 +32,6 @@ Thumbs.db
 # --- Databases (SQLite local testing) ---
 *.sqlite3
 *.db
+
+
+service-account.json
