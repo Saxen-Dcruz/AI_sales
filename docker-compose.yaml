@@ -79,9 +79,11 @@ services:
       - "8001:8000"
     volumes:
       - ./backend:/app  
+      - ./service-account.json:/app/service-account.json:ro
     env_file:
       - ./backend/.env.local
     environment:
+      - PYTHONUNBUFFERED=1
       - POSTGRES_SERVER=db
       - REDIS_HOST=redis
       - REDIS_PORT=6379

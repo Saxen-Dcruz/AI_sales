@@ -173,3 +173,6 @@ playwright
 uvicorn[standard]
 linkedin-scraper 
 googlesearch-python
+flashrank
+langchain-postgres
+langchain-google-vertexai
