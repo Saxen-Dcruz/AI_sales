@@ -18,6 +18,8 @@ class Lead(Base):
     location = Column(String)
     current_role = Column(String) 
     about = Column(Text)
+
+    chat_sessions = relationship("ChatSession", back_populates="lead")
     
     # 🆕 CRM Tracking Columns
     status = Column(String, default="Uncontacted") # Uncontacted, In Sequence, Meeting Booked, Closed/Won, Dead

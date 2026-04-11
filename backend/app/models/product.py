@@ -13,7 +13,7 @@ class Product(Base):
     name = Column(String, index=True)
     category = Column(String, index=True)
     
-    # 🆕 NEW: Added Sub-category
+    #  Added Sub-category
     sub_category = Column(String, index=True, nullable=True) 
     
     brand = Column(String)
@@ -22,7 +22,7 @@ class Product(Base):
     product_link = Column(String, nullable=True)
     datasheet_link = Column(String, nullable=True)
     
-    # 🆕 NEW: Added Manual and SDK links
+    #  Added Manual and SDK links
     user_manual_link = Column(String, nullable=True)
     sdk_link = Column(String, nullable=True)
     
@@ -39,6 +39,6 @@ class ProductEmbedding(Base):
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     chunk_type = Column(String) 
     text_content = Column(Text) 
-    embedding = Column(Vector(1024)) 
+    embedding = Column(Vector(3072)) 
 
     product = relationship("Product", back_populates="embeddings")

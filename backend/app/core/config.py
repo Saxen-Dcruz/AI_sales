@@ -3,6 +3,7 @@ from logging.config import dictConfig
 from typing import Any, Optional, Dict, List, Union
 from pydantic import field_validator, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 # --------------------------------------------------------
 # 1. Logging Configuration
@@ -53,9 +54,9 @@ class AgentModels(BaseModel):
 
 class RAGConfig(BaseModel):
     collection_name: str = "rdl_products"
-    embedding_model: str = "models/text-embedding-004"
+    embedding_model: str = "models/gemini-embedding-001"
     retrieval_k: int = 4
-    llm_model: str = "models/gemini-1.5-flash"
+    llm_model: str = "models/gemini-2.5-flash"
 
 class VoiceProcessingConfig(BaseModel):
     noise_cancellation: bool = True
@@ -153,3 +154,12 @@ except Exception as e:
 settings = Settings()
 logger = logging.getLogger("rdl_app_logger")
 logger.info("✅ Unified RDL Platform Configuration Loaded Successfully.")
+
+# 👇 ADD THIS BLOCK FOR LANGSMITH 👇
+# LangChain strictly reads from os.environ, so we must push Pydantic's settings into the system env.
+if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"  # Langchain expects a lowercase string 'true'
+    os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
+    os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+    logger.info(f"🔎 LangSmith Tracing Enabled for project: {settings.LANGCHAIN_PROJECT}")

@@ -1,9 +1,12 @@
 import os
 import json
 import glob
-from sqlalchemy.orm import Session
+import time
 import sys
+import re
 from pathlib import Path
+from sqlalchemy.orm import Session
+from sqlalchemy import text 
 
 # Tell Python where the root 'backend' folder is so it can find 'app'
 backend_dir = str(Path(__file__).resolve().parents[2])
@@ -11,10 +14,13 @@ sys.path.append(backend_dir)
 
 # Import your custom database setup and models
 from app.database.core import SessionLocal, engine 
-from app.models.product import Base, Product, ProductEmbedding
+from app.models.product import Base, Product
+from app.core.config import settings 
 
-# MUST IMPORT 'text' TO RUN RAW SQL
-from sqlalchemy import text 
+# 👇 NEW: LangChain Imports for Vector Ingestion
+from langchain_postgres import PGVector
+from langchain_core.documents import Document
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 print("🏗️ Ensuring database tables exist...")
 
@@ -26,15 +32,10 @@ with engine.connect() as conn:
 # STEP 2: Now that Postgres knows what a vector is, build the tables
 Base.metadata.create_all(bind=engine)
 
-# LangChain for embeddings
-from langchain_huggingface import HuggingFaceEmbeddings
-
 def clean_price(price_str: str) -> float:
     """Converts 'Rs 16,378' or 'Rs 8,231.00' into a clean float."""
     if not price_str:
         return 0.0
-    # Remove everything except digits and decimals
-    import re
     clean_str = re.sub(r'[^\d.]', '', str(price_str))
     return float(clean_str) if clean_str else 0.0
 
@@ -42,10 +43,8 @@ def extract_section_text(product_data: dict, section_name: str) -> str:
     """Extract text from a section if it exists, handling both string and dict values."""
     value = product_data.get(section_name)
     if isinstance(value, dict):
-        # Convert nested dict to string representation
         return json.dumps(value, indent=2)
     elif isinstance(value, list):
-        # Convert list to bullet points
         return '\n'.join([f"- {item}" for item in value])
     elif value:
         return str(value)
@@ -53,18 +52,31 @@ def extract_section_text(product_data: dict, section_name: str) -> str:
 
 def process_knowledge_base():
     # 1. Setup Database and Embedding Model
-    print("🤖 Loading BAAI/bge-m3 embedding model (this may take a moment)...")
-    embedding_model = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
+    print(f"☁️ Loading Google Cloud Embedding Model: {settings.AGENT.rag.embedding_model}...")
+    embedding_model = GoogleGenerativeAIEmbeddings(
+        model=settings.AGENT.rag.embedding_model,
+        google_api_key=settings.GOOGLE_API_KEY
+    )
+    
+    # 👇 NEW: Initialize LangChain's Vector Store for ingestion
+    # We must use the sync psycopg driver for this script
+    sync_connection_str = settings.DATABASE_URL.replace("postgresql+psycopg_async://", "postgresql+psycopg://").replace("postgresql://", "postgresql+psycopg://")
+    
+    vectorstore = PGVector(
+        embeddings=embedding_model,
+        collection_name="product_embeddings",
+        connection=sync_connection_str,
+        use_jsonb=True,
+    )
     
     db: Session = SessionLocal()
     
     # Define the directory containing your JSON files
     directory_path = os.path.join(
         os.environ.get("USERPROFILE", os.environ.get("HOME")), 
-        "Desktop", "AI_SALES", "data","knowledge_base"
+        "Desktop", "AI_SALES", "data", "knowledge_base" 
     )
     
-    # Find all .json files in the directory and subdirectories
     file_paths = glob.glob(os.path.join(directory_path, "**/*.json"), recursive=True)
     
     if not file_paths:
@@ -90,11 +102,9 @@ def process_knowledge_base():
             error_count += 1
             continue
         
-        # Handle both single product and array of products
         products = data if isinstance(data, list) else [data]
         
         for product_data in products:
-            # --- Extract Product Information ---
             product_name = product_data.get("Product_id", "")
             if not product_name:
                 print(f"  ⚠️ Skipping product with no name in {file_path}")
@@ -103,10 +113,9 @@ def process_knowledge_base():
             
             order_code = product_data.get("Order Code", f"TEMP-{hash(product_name)}")
             
-            # --- UPSERT LOGIC (Database Check) ---
+            # --- RELATIONAL DATABASE LOGIC (Keep this for your standard app features) ---
             existing_product = db.query(Product).filter(Product.order_code == order_code).first()
             
-            # Prepare metadata fields (map from JSON to database model)
             category = product_data.get("Category")
             sub_category = product_data.get("Sub-category")
             brand = product_data.get("Brand")
@@ -116,15 +125,10 @@ def process_knowledge_base():
             user_manual_link = product_data.get("User Manual") or product_data.get("User manual Link")
             sdk_link = product_data.get("Learning Center / SDK") or product_data.get("Learning Center SDK")
             
-            # Extract bulk pricing if exists
             bulk_pricing = product_data.get("Bulk Pricing")
-            if bulk_pricing and isinstance(bulk_pricing, list):
-                bulk_pricing_str = "\n".join(bulk_pricing)
-            else:
-                bulk_pricing_str = None
+            bulk_pricing_str = "\n".join(bulk_pricing) if bulk_pricing and isinstance(bulk_pricing, list) else None
             
             if existing_product:
-                # Update existing structured data
                 existing_product.name = product_name
                 existing_product.category = category
                 existing_product.sub_category = sub_category
@@ -135,13 +139,10 @@ def process_knowledge_base():
                 existing_product.user_manual_link = user_manual_link
                 existing_product.sdk_link = sdk_link
                 
-                # Delete old embeddings for this product
-                db.query(ProductEmbedding).filter(ProductEmbedding.product_id == existing_product.id).delete()
                 product = existing_product
                 updated_products += 1
-                print(f"  🔄 Updated: {product_name}")
+                print(f"  🔄 Updated Relational DB: {product_name}")
             else:
-                # Create brand new product
                 product = Product(
                     name=product_name,
                     order_code=order_code,
@@ -156,116 +157,82 @@ def process_knowledge_base():
                     is_active=True
                 )
                 db.add(product)
-                db.flush()
+                db.flush() # Get the product.id immediately
                 new_products += 1
-                print(f"  ✨ Created: {product_name}")
+                print(f"  ✨ Created Relational DB: {product_name}")
             
-            # --- Extract Text for AI & Generate Semantic Chunks ---
-            # Define sections to extract and embed
-            sections_to_embed = [
-                "Description",
-                "Product Description",
-                "Descriptions",
-                "DESCRIPTION",
-                "Features",
-                "FEATURES",
-                "Specifications",
-                "Specification",
-                "Specs",
-                "Applications",
-                "Application",
-                "Benefits",
-                "Advantages",
-                "Operational Benefits",
-                "Scope of Learning Experiments",
-                "Package Contains",
-                "Package Includes",
-                "Note",
-                "Notes",
-                "Optional",
-                "Microcontroller Unit",
-                "Peripheral Features",
-                "Analog Features",
-                "Supported IC",
-                "Specification",
-                "Specifications",
-                "Pin Configuration"
+            # --- VECTOR DATABASE LOGIC (LangChain Integration) ---
+            docs_to_add =[]
+            ids_to_add = []
+
+            sections_to_embed =[
+                "Description", "Product Description", "Descriptions", "DESCRIPTION",
+                "Features", "FEATURES", "Specifications", "Specification", "Specs",
+                "Applications", "Application", "Benefits", "Advantages", "Operational Benefits",
+                "Scope of Learning Experiments", "Package Contains", "Package Includes",
+                "Note", "Notes", "Optional", "Microcontroller Unit", "Peripheral Features",
+                "Analog Features", "Supported IC", "Pin Configuration"
             ]
             
-            # Also handle nested sections like Features as object
+            # 1. Nested Features
             features_obj = product_data.get("Features")
             if features_obj and isinstance(features_obj, dict):
                 for feature_name, feature_value in features_obj.items():
+                    chunk_type = f"feature_{feature_name.lower().replace(' ', '_')}"
                     contextualized_text = f"Product Name: {product_name}\nSection: {feature_name}\n\n{feature_value}"
-                    try:
-                        vector = embedding_model.embed_query(contextualized_text)
-                        new_embedding = ProductEmbedding(
-                            product_id=product.id,
-                            chunk_type=feature_name.lower().replace(" ", "_"),
-                            text_content=contextualized_text,
-                            embedding=vector
-                        )
-                        db.add(new_embedding)
-                        processed_chunks += 1
-                    except Exception as e:
-                        print(f"  ❌ Failed to embed {product_name} ({feature_name}): {e}")
-                        error_count += 1
+                    
+                    docs_to_add.append(Document(
+                        page_content=contextualized_text,
+                        metadata={"product_id": product.id, "product_name": product_name, "chunk_type": chunk_type}
+                    ))
+                    ids_to_add.append(f"{product.id}_{chunk_type}")
             
-            # Process standard sections
+            # 2. Standard Sections
             for section in sections_to_embed:
                 section_text = extract_section_text(product_data, section)
                 if section_text:
+                    chunk_type = section.lower().replace(" ", "_")
                     contextualized_text = f"Product Name: {product_name}\nSection: {section}\n\n{section_text}"
-                    try:
-                        vector = embedding_model.embed_query(contextualized_text)
-                        new_embedding = ProductEmbedding(
-                            product_id=product.id,
-                            chunk_type=section.lower().replace(" ", "_"),
-                            text_content=contextualized_text,
-                            embedding=vector
-                        )
-                        db.add(new_embedding)
-                        processed_chunks += 1
-                    except Exception as e:
-                        print(f"  ❌ Failed to embed {product_name} ({section}): {e}")
-                        error_count += 1
+                    
+                    docs_to_add.append(Document(
+                        page_content=contextualized_text,
+                        metadata={"product_id": product.id, "product_name": product_name, "chunk_type": chunk_type}
+                    ))
+                    ids_to_add.append(f"{product.id}_{chunk_type}")
             
-            # Process bulk pricing if exists
+            # 3. Bulk Pricing
             if bulk_pricing_str:
                 contextualized_text = f"Product Name: {product_name}\nSection: Bulk Pricing\n\n{bulk_pricing_str}"
-                try:
-                    vector = embedding_model.embed_query(contextualized_text)
-                    new_embedding = ProductEmbedding(
-                        product_id=product.id,
-                        chunk_type="bulk_pricing",
-                        text_content=contextualized_text,
-                        embedding=vector
-                    )
-                    db.add(new_embedding)
-                    processed_chunks += 1
-                except Exception as e:
-                    print(f"  ❌ Failed to embed bulk pricing for {product_name}: {e}")
-                    error_count += 1
+                docs_to_add.append(Document(
+                    page_content=contextualized_text,
+                    metadata={"product_id": product.id, "product_name": product_name, "chunk_type": "bulk_pricing"}
+                ))
+                ids_to_add.append(f"{product.id}_bulk_pricing")
             
-            # Process "Frequently Bought Together" if exists
+            # 4. Frequently Bought Together
             fbt = product_data.get("Frequently Bought Together") or product_data.get("FREQUENTLY BOUGHT TOGETHER") or product_data.get("frequently Bought Together")
             if fbt:
                 contextualized_text = f"Product Name: {product_name}\nSection: Frequently Bought Together\n\n{fbt}"
+                docs_to_add.append(Document(
+                    page_content=contextualized_text,
+                    metadata={"product_id": product.id, "product_name": product_name, "chunk_type": "frequently_bought_together"}
+                ))
+                ids_to_add.append(f"{product.id}_frequently_bought_together")
+
+            # 👇 BATCH INSERT TO LANGCHAIN PGVECTOR
+            if docs_to_add:
                 try:
-                    vector = embedding_model.embed_query(contextualized_text)
-                    new_embedding = ProductEmbedding(
-                        product_id=product.id,
-                        chunk_type="frequently_bought_together",
-                        text_content=contextualized_text,
-                        embedding=vector
-                    )
-                    db.add(new_embedding)
-                    processed_chunks += 1
+                    # Passing 'ids' ensures that if we run this script again, it updates existing vectors instead of duplicating!
+                    vectorstore.add_documents(documents=docs_to_add, ids=ids_to_add)
+                    processed_chunks += len(docs_to_add)
+                    print(f"  ✅ Embedded {len(docs_to_add)} chunks for {product_name}")
+                    
+                    # Sleep once per product to respect Google API limits
+                    time.sleep(1.0) 
                 except Exception as e:
-                    print(f"  ❌ Failed to embed FBT for {product_name}: {e}")
+                    print(f"  ❌ Failed to embed vectors for {product_name}: {e}")
                     error_count += 1
 
-    # 3. Final Commit
     print("\n💾 Committing all changes to the database...")
     db.commit()
     db.close()

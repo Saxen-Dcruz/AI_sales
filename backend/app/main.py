@@ -2,6 +2,8 @@ import logging
 import asyncio
 import json
 import os
+from app.database.core import engine, Base
+from fastapi import Request
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
 from fastapi import FastAPI,Request
@@ -9,6 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+
+from app.routers import product
+
+
+import app.models.product
+import app.models.campaign
+import app.models.company
+import app.models.leads
+import app.models.deal
+import app.models.communication
+
 
 # Rate Limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -75,13 +88,13 @@ async def lifespan(app: FastAPI):
     redis_task = asyncio.create_task(global_redis_listener())
     
     # Initialize Database Tables (Uncomment when models are ready)
-    # try:
-    #     Base.metadata.create_all(bind=engine)
-    #     logger.info("✅ PostgreSQL & pgvector tables verified.")
-    # except Exception as e:
-    #     logger.error(f"❌ Database connection failed: {e}")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ PostgreSQL & pgvector tables verified and created.")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
         
-    yield  # Application runs here...
+    yield
     
     # --- SHUTDOWN ---
     logger.info("🛑 Shutting down AI Backend...")
@@ -123,6 +136,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────
 # ROUTERS (To be enabled later)
 # ─────────────────────────────────────────────────────────────
+app.include_router(product.router,tags=["Products"], prefix="/api/v1")
 # app.include_router(auth.router, tags=["Authentication"], prefix="/api/auth")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
@@ -135,9 +149,8 @@ def health_check():
     return {"status": "UP", "redis_listener": "running"}
 
 @app.get("/")
-@limiter.limit("5/minute") # Example: Limit root to 5 requests per minute per IP
-def root(request): # Request parameter is required for slowapi
+@limiter.limit("5/minute")
+def root(request: Request): # Add the type hint
     return {"message": "Welcome to the RDL AI Sales API", "docs_url": "/docs"}
-
 # Start Prometheus metrics
 Instrumentator().instrument(app).expose(app)
