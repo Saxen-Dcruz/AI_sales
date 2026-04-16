@@ -1,10 +1,14 @@
+# --- Claude Config (local only) ---
+.claude/
+
 # --- Project Specific ---
 .env.local
-.env.prod 
+.env.prod
 knowledge_base/
 assets/
 *.log
 data/
+backend/linkedin_profile_context/
 
 # --- Python / Environment ---
 .venv/
@@ -34,4 +38,15 @@ Thumbs.db
 *.db
 
 
+# --- Credentials & Secrets ---
 service-account.json
+client_secrets.json
+client_secret_*.json
+backend/gmail_token.json
+backend/calendar_token.json
+*.token.json
+*_token.json
+*.pem
+*.key
+*.p12
+*.pfx
