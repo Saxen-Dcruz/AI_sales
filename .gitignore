@@ -1,5 +1,6 @@
 # --- Claude Config (local only) ---
 .claude/
+CLAUDE.md
 
 # --- Project Specific ---
 .env.local
