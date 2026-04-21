@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -28,7 +29,7 @@ Respond ONLY with valid JSON in this exact format:
 {
   "label": "<one of the labels above>",
   "confidence": "<high|medium|low>",
-  "reasoning": "<one sentence explaining the classification>",
+  "reasoning": "<one short sentence — your own words only, NO email content or quotes>",
   "transactional_type": "<only if label is Transactional, else null>",
   "transactional_data": {
     "amount": "<if present>",
@@ -36,7 +37,9 @@ Respond ONLY with valid JSON in this exact format:
     "due_date": "<if present>",
     "vendor": "<sender company name if present>"
   }
-}"""
+}
+
+IMPORTANT: The reasoning field must be a plain sentence you write yourself. Never copy email subject text, body text, or any quoted content into the JSON — it will break JSON parsing."""
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
@@ -84,7 +87,22 @@ Body:
         brace_end = raw.rfind("}")
         if brace_start != -1 and brace_end != -1:
             raw = raw[brace_start:brace_end + 1]
-        result = json.loads(raw)
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            # Fallback: extract label and confidence via regex when JSON is malformed
+            # (happens when Gemini embeds unescaped email content in reasoning)
+            label_match = re.search(r'"label"\s*:\s*"([^"]+)"', raw)
+            confidence_match = re.search(r'"confidence"\s*:\s*"([^"]+)"', raw)
+            if not label_match:
+                raise
+            result = {
+                "label": label_match.group(1),
+                "confidence": confidence_match.group(1) if confidence_match else "low",
+                "reasoning": "",
+                "transactional_type": None,
+                "transactional_data": None,
+            }
 
         label_str = result.get("label", "Unclassified")
         try:

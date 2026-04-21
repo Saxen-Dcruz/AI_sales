@@ -61,10 +61,14 @@ def _fetch_rag_context(body: str) -> str:
     """Query the RAG pipeline with the email body to get relevant product context."""
     try:
         import asyncio
-        from app.agents.tools.rag_chain import rag_manager
-        result = asyncio.run(rag_manager.query_rag_database(
-            question=body[:1500],
-            session_id="email_draft",
+        import uuid
+        from app.agents.tools.rag_chain import RAGManager
+        # Append spec signal so budget hits standard tier (not factual 256-token tier)
+        # which would truncate mid-sentence when body contains price-related words
+        question = body[:1500] + "\n\nPlease include complete specifications and product details."
+        result = asyncio.run(RAGManager().query_rag_database(
+            question=question,
+            session_id=str(uuid.uuid4()),
         ))
         return result.get("answer", "")
     except Exception as e:
