@@ -12,9 +12,11 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.routers import product
+from app.routers import product, usage, auth, leads, companies, deals
 
 
+import app.models.user
+import app.models.refresh_token
 import app.models.product
 import app.models.campaign
 import app.models.company
@@ -136,8 +138,12 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────
 # ROUTERS (To be enabled later)
 # ─────────────────────────────────────────────────────────────
-app.include_router(product.router,tags=["Products"], prefix="/api/v1")
-# app.include_router(auth.router, tags=["Authentication"], prefix="/api/auth")
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(product.router, prefix="/api/v1")
+app.include_router(leads.router, prefix="/api/v1")
+app.include_router(companies.router, prefix="/api/v1")
+app.include_router(deals.router, prefix="/api/v1")
+app.include_router(usage.router, prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 

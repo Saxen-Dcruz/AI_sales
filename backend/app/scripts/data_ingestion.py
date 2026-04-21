@@ -72,11 +72,7 @@ def process_knowledge_base():
     db: Session = SessionLocal()
     
     # Define the directory containing your JSON files
-    directory_path = os.path.join(
-        os.environ.get("USERPROFILE", os.environ.get("HOME")), 
-        "Desktop", "AI_SALES", "data", "knowledge_base" 
-    )
-    
+    directory_path = os.getenv("KNOWLEDGE_BASE_PATH", "/data/knowledge_base")
     file_paths = glob.glob(os.path.join(directory_path, "**/*.json"), recursive=True)
     
     if not file_paths:
@@ -183,9 +179,9 @@ def process_knowledge_base():
                     
                     docs_to_add.append(Document(
                         page_content=contextualized_text,
-                        metadata={"product_id": product.id, "product_name": product_name, "chunk_type": chunk_type}
+                        metadata={"product_id": str(product.id), "product_name": product_name, "chunk_type": chunk_type}
                     ))
-                    ids_to_add.append(f"{product.id}_{chunk_type}")
+                    ids_to_add.append(f"{str(product.id)}_{chunk_type}")
             
             # 2. Standard Sections
             for section in sections_to_embed:
@@ -196,28 +192,28 @@ def process_knowledge_base():
                     
                     docs_to_add.append(Document(
                         page_content=contextualized_text,
-                        metadata={"product_id": product.id, "product_name": product_name, "chunk_type": chunk_type}
+                        metadata={"product_id": str(product.id), "product_name": product_name, "chunk_type": chunk_type}
                     ))
-                    ids_to_add.append(f"{product.id}_{chunk_type}")
+                    ids_to_add.append(f"{str(product.id)}_{chunk_type}")
             
             # 3. Bulk Pricing
             if bulk_pricing_str:
                 contextualized_text = f"Product Name: {product_name}\nSection: Bulk Pricing\n\n{bulk_pricing_str}"
                 docs_to_add.append(Document(
                     page_content=contextualized_text,
-                    metadata={"product_id": product.id, "product_name": product_name, "chunk_type": "bulk_pricing"}
+                    metadata={"product_id": str(product.id), "product_name": product_name, "chunk_type": "bulk_pricing"}
                 ))
-                ids_to_add.append(f"{product.id}_bulk_pricing")
-            
+                ids_to_add.append(f"{str(product.id)}_bulk_pricing")
+
             # 4. Frequently Bought Together
             fbt = product_data.get("Frequently Bought Together") or product_data.get("FREQUENTLY BOUGHT TOGETHER") or product_data.get("frequently Bought Together")
             if fbt:
                 contextualized_text = f"Product Name: {product_name}\nSection: Frequently Bought Together\n\n{fbt}"
                 docs_to_add.append(Document(
                     page_content=contextualized_text,
-                    metadata={"product_id": product.id, "product_name": product_name, "chunk_type": "frequently_bought_together"}
+                    metadata={"product_id": str(product.id), "product_name": product_name, "chunk_type": "frequently_bought_together"}
                 ))
-                ids_to_add.append(f"{product.id}_frequently_bought_together")
+                ids_to_add.append(f"{str(product.id)}_frequently_bought_together")
 
             # 👇 BATCH INSERT TO LANGCHAIN PGVECTOR
             if docs_to_add:
@@ -242,6 +238,40 @@ def process_knowledge_base():
     print(f"Existing Products Updated: {updated_products}")
     print(f"Embeddings Generated: {processed_chunks}")
     print(f"Errors Encountered: {error_count}")
+
+    _create_hnsw_index()
+
+
+def _create_hnsw_index():
+    """
+    Build a halfvec HNSW index on the LangChain pgvector embedding table.
+    Must run after ingestion — build time scales with vector count.
+    Uses halfvec functional index because gemini-embedding-001 = 3072 dims and
+    pgvector vector/ivfflat/hnsw are all capped at 2000 dims for the base type.
+    halfvec HNSW (pgvector >= 0.7) supports up to 4000 dims via a cast expression.
+    """
+    print("\nBuilding halfvec HNSW index on langchain_pg_embedding.embedding ...")
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT vector_dims(embedding) FROM langchain_pg_embedding LIMIT 1;"
+        ))
+        row = result.fetchone()
+        if not row or not row[0]:
+            print("No embeddings found — skipping index.")
+            return
+        dim = row[0]
+        print(f"  Detected embedding dimension: {dim}")
+
+        conn.execute(text("SET maintenance_work_mem = '512MB';"))
+        conn.execute(text(f"""
+            CREATE INDEX IF NOT EXISTS idx_langchain_pg_embedding_hnsw_half
+            ON langchain_pg_embedding
+            USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops)
+            WITH (m = 16, ef_construction = 64);
+        """))
+        conn.commit()
+    print("halfvec HNSW index ready.")
+
 
 if __name__ == "__main__":
     process_knowledge_base()
