@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import ApplicationStore from '../../utils/ApplicationStore'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -27,7 +28,23 @@ export default function LoginForm() {
     // Simulate API call
     setTimeout(() => {
       setIsLoading(false)
-      // Accept any input for demo purposes
+      
+      // For demo purposes: Set a mock session so Auth checks pass
+      const mockSession = {
+        accessToken: "mock-demo-token-" + Date.now(),
+        userDetails: {
+          id: 1,
+          email: email || "admin@example.com",
+          userRole: "Admin",
+          companyCode: "DEMO",
+          semesterId: "F26",
+          branch: "Main",
+          instituteid: "INST001"
+        }
+      };
+      
+      ApplicationStore().setStorage("userDetails", mockSession);
+      
       navigate('/dashboard')
     }, 1500)
   }

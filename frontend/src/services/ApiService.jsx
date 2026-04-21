@@ -3,8 +3,12 @@ import ApplicationStore from "../utils/ApplicationStore";
 const successCaseCode = [200, 201];
 
 const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
-    const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails");
-    const END_POINT = process.env.REACT_APP_API_URL || 'http://192.168.1.73:8003/api/';
+    const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
+    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.73:8003/api/';
+    
+    if (!userDetails) {
+        return Promise.reject("Unauthorized: No user details found.");
+    }
     const { id, email, userRole, companyCode, semesterId } = userDetails;
 
     const isFormData = data instanceof FormData;
