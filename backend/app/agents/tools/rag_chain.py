@@ -35,6 +35,20 @@ from app.core.config import settings
 from app.database.core import SessionLocal
 from app.models.product import Product
 
+_KNOWLEDGE_GAP_PHRASES = [
+    "i don't have", "i do not have", "not in my knowledge",
+    "no information", "cannot find", "unable to find",
+    "not available in", "outside my knowledge", "i'm not sure",
+    "i am not sure", "don't have specific", "no specific information",
+    "please contact", "reach out to", "speak with",
+]
+
+
+def _is_knowledge_gap(answer: str) -> bool:
+    """Returns True if the answer signals the knowledge base was insufficient."""
+    lower = answer.lower()
+    return any(phrase in lower for phrase in _KNOWLEDGE_GAP_PHRASES)
+
 
 class RAGManager:
     # LATENCY-D: Redis retrieval cache settings
@@ -516,6 +530,8 @@ class RAGManager:
                 if db_context:
                     all_contexts.append(db_context)
 
+                schedule_call = _is_knowledge_gap(answer_text)
+
                 return {
                     "answer": answer_text,
                     "standalone_query": result.get("standalone_query", ""),
@@ -523,6 +539,7 @@ class RAGManager:
                     "token_tier": token_tier,
                     "reranker_doc_count": len(docs),
                     "contexts": all_contexts,
+                    "schedule_call": schedule_call,
                     "usage": {
                         "input_tokens": usage_cb.input_tokens,
                         "output_tokens": usage_cb.output_tokens,
@@ -641,6 +658,7 @@ class RAGManager:
                     "latency_ms": int((time.perf_counter() - start_time) * 1000),
                     "token_tier": token_tier,
                     "reranker_doc_count": len(docs),
+                    "schedule_call": _is_knowledge_gap(full_answer),
                     "usage": {
                         "input_tokens": usage_cb.input_tokens,
                         "output_tokens": usage_cb.output_tokens,
