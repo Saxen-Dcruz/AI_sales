@@ -126,6 +126,14 @@ class Settings(BaseSettings):
     LINKEDIN_PASSWORD: str | None = None
 
 
+    # --- JWT Auth ---
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Set True in production (HTTPS only). False allows cookies over HTTP in local dev.
+    COOKIE_SECURE: bool = False
+
     # --- LangSmith Tracing ---
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"

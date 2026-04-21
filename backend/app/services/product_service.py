@@ -1,5 +1,6 @@
 import asyncio
 import json
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import BackgroundTasks
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -60,7 +61,11 @@ async def create_product(db: Session, product_in: ProductCreate, background_task
     db_product = Product(**product_data)
     
     db.add(db_product)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError("Order code already exists")
     db.refresh(db_product)
     
     if product_in.sections:

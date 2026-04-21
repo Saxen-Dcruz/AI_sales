@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # 1. POSTGRES DB (Upgraded with pgvector for AI memory & RAG)
   db:
     image: pgvector/pgvector:pg16
     container_name: rdl_db
@@ -9,20 +8,20 @@ services:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=admin
       - POSTGRES_DB=rdl_sales
-    ports:
-      - "5433:5432" 
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - rdl_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d rdl_sales"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # 2. REDIS SERVER (For LiveKit routing)
   redis:
     image: redis:alpine
     container_name: rdl_redis
     command: redis-server --save 60 1 --loglevel warning
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -33,34 +32,23 @@ services:
       timeout: 5s
       retries: 3
 
-  # 3. REDIS EXPORTER
   redis-exporter:
     image: oliver006/redis_exporter:latest
     container_name: rdl_redis_exporter
     environment:
       - REDIS_ADDR=redis:6379
-    ports:
-      - "9121:9121"
     networks:
       - rdl_network
     depends_on:
       - redis
-  
-  # 4. LIVEKIT SERVER (For Real-time AI Voice)
+
   livekit:
     image: livekit/livekit-server:latest
     command: --config /etc/livekit.yaml
-    restart: unless-stopped
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "50000-50100:50000-50100/udp"
     volumes:
       - ./livekit.local.yaml:/etc/livekit.yaml
     networks:
       - rdl_network
-    env_file:
-      - ./backend/.env.local
     environment:
       - LIVEKIT_REDIS_ADDRESS=redis:6379
     healthcheck:
@@ -68,20 +56,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
 
-  # 5. FASTAPI BACKEND 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rdl_backend
-    ports:
-      - "8001:8000"
-    volumes:
-      - ./backend:/app  
-      - ./service-account.json:/app/service-account.json:ro
-    env_file:
-      - ./backend/.env.local
     environment:
       - PYTHONUNBUFFERED=1
       - POSTGRES_SERVER=db
@@ -96,64 +79,46 @@ services:
     networks:
       - rdl_network
     depends_on:
-      livekit:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      db: 
-        condition: service_started
+      livekit:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # 6. FRONTEND (React + Vite Dashboard via Nginx)
   frontend:
     build:
       context: ./frontend
-      target: development 
-      args:
-        - VITE_API_URL=http://localhost:8001/api 
     container_name: rdl_frontend
-    ports:
-      - "5173:5173" 
-    volumes:
-      - ./frontend:/app 
-      - /app/node_modules 
     networks:
       - rdl_network
     depends_on:
       - backend
- 
-  # 7. PROMETHEUS
+
   prometheus:
     image: prom/prometheus:latest
     container_name: rdl_prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
     depends_on:
       - backend
-    networks:      
-      - rdl_network 
+    networks:
+      - rdl_network
 
-  # 8. GRAFANA
   grafana:
     image: grafana/grafana:latest
     container_name: rdl_grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
-    networks:          
-      - rdl_network 
+    networks:
+      - rdl_network
 
 volumes:
   redis_data:

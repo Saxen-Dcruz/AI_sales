@@ -169,6 +169,8 @@ yarl==1.20.1
 zipp==3.23.0
 zstandard==0.25.0
 langchain-google-genai
+google-auth-oauthlib
+google-api-python-client
 playwright
 uvicorn[standard]
 linkedin-scraper 
@@ -178,3 +180,7 @@ langchain-postgres
 pytest 
 httpx
 langchain-google-vertexai
+ragas
+datasets
+bcrypt>=4.0.1,<5.0.0
+email-validator

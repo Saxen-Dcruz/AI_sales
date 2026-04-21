@@ -1,65 +1,58 @@
-import itertools
 import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-BASE = "/api/v1/products"
-
-_counter = itertools.count(1)
+BASE = "/api/v1/companies"
 
 
-def _order_code() -> str:
-    return f"TEST-{next(_counter):06d}"
-
-
-def _payload(order_code: str = None) -> dict:
+def _payload(name: str = None) -> dict:
     return {
-        "Product_id": "Test Development Board",
-        "Order Code": order_code or _order_code(),
-        "Category": "Development Board",
-        "Brand": "TestBrand",
-        "Price": 5000.0,
-        "sections": {"Description": "Test product description.", "Features": "- Feature A"},
+        "name": name or f"Test Company {uuid.uuid4().hex[:6]}",
+        "industry": "Technology",
+        "company_size": "50-200",
+        "headquarters": "Mumbai, India",
     }
 
 
 # ── Success paths ─────────────────────────────────────────────────────────────
 
-def test_create_product(client: TestClient, auth_headers: dict):
+def test_create_company(client: TestClient, auth_headers: dict):
     resp = client.post(f"{BASE}/", json=_payload(), headers=auth_headers)
     assert resp.status_code == 201
     data = resp.json()
-    assert data["Product_id"] == "Test Development Board"
     assert "id" in data
+    assert data["name"] is not None
 
 
-def test_list_products(client: TestClient, auth_headers: dict):
+def test_list_companies(client: TestClient, auth_headers: dict):
     client.post(f"{BASE}/", json=_payload(), headers=auth_headers)
     resp = client.get(f"{BASE}/", headers=auth_headers)
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
-    assert len(resp.json()) >= 1
+    body = resp.json()
+    assert "items" in body
+    assert "total" in body
+    assert body["total"] >= 1
 
 
-def test_get_product(client: TestClient, auth_headers: dict):
+def test_get_company(client: TestClient, auth_headers: dict):
     created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
     resp = client.get(f"{BASE}/{created['id']}", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["id"] == created["id"]
 
 
-def test_update_product(client: TestClient, auth_headers: dict):
+def test_update_company(client: TestClient, auth_headers: dict):
     created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
-    resp = client.put(
+    resp = client.patch(
         f"{BASE}/{created['id']}",
-        json={"Brand": "UpdatedBrand", "Price": 9999.0},
+        json={"industry": "Manufacturing", "company_size": "200-500"},
         headers=auth_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["Brand"] == "UpdatedBrand"
+    assert resp.json()["industry"] == "Manufacturing"
 
 
-def test_delete_product(client: TestClient, auth_headers: dict):
+def test_delete_company(client: TestClient, auth_headers: dict):
     created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
     del_resp = client.delete(f"{BASE}/{created['id']}", headers=auth_headers)
     assert del_resp.status_code == 204
@@ -67,23 +60,46 @@ def test_delete_product(client: TestClient, auth_headers: dict):
     assert get_resp.status_code == 404
 
 
+def test_list_companies_filter_by_industry(client: TestClient, auth_headers: dict):
+    client.post(f"{BASE}/", json={**_payload(), "industry": "Healthcare"}, headers=auth_headers)
+    resp = client.get(f"{BASE}/?industry=Healthcare", headers=auth_headers)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert all(item["industry"] == "Healthcare" for item in items)
+
+
+def test_list_companies_pagination(client: TestClient, auth_headers: dict):
+    resp = client.get(f"{BASE}/?page=1&limit=2", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["items"]) <= 2
+
+
 # ── Validation failures ───────────────────────────────────────────────────────
 
-def test_create_duplicate_order_code(client: TestClient, auth_headers: dict):
-    code = _order_code()
-    client.post(f"{BASE}/", json=_payload(code), headers=auth_headers)
-    resp = client.post(f"{BASE}/", json=_payload(code), headers=auth_headers)
-    assert resp.status_code == 400
+def test_create_company_missing_name(client: TestClient, auth_headers: dict):
+    resp = client.post(f"{BASE}/", json={"industry": "Tech"}, headers=auth_headers)
+    assert resp.status_code == 422
 
 
-def test_get_nonexistent_product(client: TestClient, auth_headers: dict):
+def test_get_nonexistent_company(client: TestClient, auth_headers: dict):
     resp = client.get(f"{BASE}/{uuid.uuid4()}", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_update_nonexistent_company(client: TestClient, auth_headers: dict):
+    resp = client.patch(f"{BASE}/{uuid.uuid4()}", json={"industry": "Tech"}, headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_delete_nonexistent_company(client: TestClient, auth_headers: dict):
+    resp = client.delete(f"{BASE}/{uuid.uuid4()}", headers=auth_headers)
     assert resp.status_code == 404
 
 
 # ── Auth failures ─────────────────────────────────────────────────────────────
 
-def test_list_products_no_auth(client: TestClient):
+def test_list_companies_no_auth(client: TestClient):
     saved = dict(client.cookies)
     client.cookies.clear()
     try:
@@ -94,7 +110,7 @@ def test_list_products_no_auth(client: TestClient):
             client.cookies.set(k, v)
 
 
-def test_create_product_no_auth(client: TestClient):
+def test_create_company_no_auth(client: TestClient):
     saved = dict(client.cookies)
     client.cookies.clear()
     try:

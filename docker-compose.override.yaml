@@ -1,0 +1,60 @@
+version: '3.8'
+
+# Auto-merged by Docker Compose on `docker compose up`.
+# Contains all local dev overrides — ports, code mounts, env files, credentials.
+
+services:
+  db:
+    ports:
+      - "5433:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  redis-exporter:
+    ports:
+      - "9121:9121"
+
+  livekit:
+    restart: unless-stopped
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+    env_file:
+      - ./backend/.env.local
+
+  backend:
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data  
+      - ./service-account.json:/app/service-account.json:ro
+      - ./backend/gmail_token.json:/app/gmail_token.json:ro
+      - ./backend/calendar_token.json:/app/calendar_token.json:ro
+    env_file:
+      - ./backend/.env.local
+
+  frontend:
+    build:
+      target: development
+      args:
+        - VITE_API_URL=http://localhost:8001/api
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
