@@ -29,6 +29,7 @@ export default function App() {
           <Route path="ai-logs" element={<AICallLogs />} />
           <Route path="products" element={<Products />} />
           <Route path="add-product" element={<AddProduct />} />
+          <Route path="edit-product/:id" element={<AddProduct />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

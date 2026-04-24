@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import ApplicationStore from '../../utils/ApplicationStore'
+
+import { LoginService, GetCurrentUserService } from '../../services/ApiService'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -24,12 +27,47 @@ export default function LoginForm() {
 
     setIsLoading(true)
 
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      const response = await LoginService({ email, password })
+      const data = await response.json()
+      
+      if (!response.ok) {
+        setError(data.detail || 'Invalid email or password')
+        setIsLoading(false)
+        return
+      }
+
+      ApplicationStore().setStorage("userDetails", { 
+        accessToken: data.access_token, 
+        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" } 
+      })
+
+      GetCurrentUserService(
+        (userData) => {
+          ApplicationStore().setStorage("userDetails", {
+            accessToken: data.access_token,
+            userDetails: {
+              id: userData.id,
+              email: userData.email,
+              userRole: userData.is_superuser ? "Admin" : "User",
+              companyCode: "RDL",
+              semesterId: "N/A",
+              branch: "Main",
+              instituteid: "INST001"
+            }
+          })
+          setIsLoading(false)
+          navigate('/dashboard')
+        },
+        (status, msg) => {
+          setError(msg || 'Failed to fetch user profile')
+          setIsLoading(false)
+        }
+      )
+    } catch (err) {
+      setError('Network error or server unavailable')
       setIsLoading(false)
-      // Accept any input for demo purposes
-      navigate('/dashboard')
-    }, 1500)
+    }
   }
 
   // Animation variants

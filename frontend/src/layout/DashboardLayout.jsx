@@ -1,12 +1,18 @@
 import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, Navigate } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar'
 import TopNavbar from '../components/layout/TopNavbar'
 import ParticleBackground from '../components/effects/ParticleBackground'
+import ApplicationStore from '../utils/ApplicationStore'
 
 export default function DashboardLayout() {
+  const { userDetails } = ApplicationStore().getStorage("userDetails") || {};
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  if (!userDetails) {
+    return <Navigate to="/login" replace />
+  }
 
   return (
     <div className="relative min-h-screen bg-gray-50 overflow-hidden text-gray-900">
@@ -40,7 +46,7 @@ export default function DashboardLayout() {
 
       {/* Main area */}
       <div
-        className="flex flex-col min-h-screen transition-all duration-300"
+        className="flex flex-col main-content min-h-screen transition-all duration-300"
         style={{ marginLeft: sidebarOpen ? '260px' : '72px' }}
       >
         <TopNavbar
