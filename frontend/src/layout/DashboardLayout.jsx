@@ -46,7 +46,7 @@ export default function DashboardLayout() {
 
       {/* Main area */}
       <div
-        className="flex flex-col min-h-screen transition-all duration-300"
+        className="flex flex-col main-content min-h-screen transition-all duration-300"
         style={{ marginLeft: sidebarOpen ? '260px' : '72px' }}
       >
         <TopNavbar

@@ -55,6 +55,10 @@ export default function AddProduct() {
     singlePrice: '',
     bulkPrice: '',
     description: '',
+    productLink: '',
+    dataSheetLink: '',
+    userManualLink: '',
+    sdkLink: ''
   })
 
   // Dynamic Fields State
@@ -70,22 +74,27 @@ export default function AddProduct() {
         { id },
         (data) => {
           if (data) {
+            const sections = data.sections || {};
             setFormData({
-              category: data.category || '',
-              subcategory: data.subcategory || '',
-              name: data.name || '',
-              orderCode: data.orderCode || '',
-              brand: data.brand || '',
-              singlePrice: data.singlePrice || '',
-              bulkPrice: data.bulkPrice || '',
-              description: data.description || '',
+              category: data.Category || data.category || '',
+              subcategory: data['Sub-category'] || data.sub_category || '',
+              name: data.Product_id || data.name || '',
+              orderCode: data['Order Code'] || data.order_code || '',
+              brand: data.Brand || data.brand || '',
+              singlePrice: data.Price !== undefined ? data.Price : (data.single_price || ''),
+              bulkPrice: data.bulk_price || '',
+              description: sections.description || '',
+              productLink: data['Product Link'] || data.product_link || '',
+              dataSheetLink: data['Data Sheet link'] || data.datasheet_link || '',
+              userManualLink: data['User Manual'] || data.user_manual_link || '',
+              sdkLink: data['Learning Center SDK'] || data.sdk_link || ''
             })
-            if (data.subheading) {
-              setSubheading(data.subheading)
+            if (sections.subheading) {
+              setSubheading(sections.subheading)
               setShowSubheading(true)
             }
-            if (data.features?.length) setFeatures(data.features)
-            if (data.packageContains?.length) setPackageItems(data.packageContains)
+            if (sections.features?.length) setFeatures(sections.features)
+            if (sections.packageContains?.length) setPackageItems(sections.packageContains)
           }
           setFetching(false)
         },
@@ -131,29 +140,54 @@ export default function AddProduct() {
     setStatusMsg({ type: '', text: '' })
 
     const payload = {
-      ...formData,
-      id: isEdit ? id : undefined,
-      subheading: showSubheading ? subheading : '',
-      singlePrice: parseFloat(formData.singlePrice) || 0,
-      bulkPrice: parseFloat(formData.bulkPrice) || 0,
-      features: features.filter(f => f.trim() !== ''),
-      packageContains: packageItems.filter(p => p.trim() !== '')
+      name: formData.name,
+      order_code: formData.orderCode,
+      category: formData.category,
+      sub_category: formData.subcategory,
+      brand: formData.brand,
+      single_price: parseFloat(formData.singlePrice) || 0,
+      bulk_price: parseFloat(formData.bulkPrice) || 0,
+      product_link: formData.productLink || null,
+      datasheet_link: formData.dataSheetLink || null,
+      user_manual_link: formData.userManualLink || null,
+      sdk_link: formData.sdkLink || null,
+      is_active: true,
+      sections: {
+        description: formData.description,
+        subheading: showSubheading ? subheading : '',
+        features: features.filter(f => f.trim() !== ''),
+        packageContains: packageItems.filter(p => p.trim() !== '')
+      }
     }
 
-    const serviceCall = isEdit ? EditProductService : AddProductService
-
-    serviceCall(
-      payload,
-      () => {
-        setLoading(false)
-        setStatusMsg({ type: 'success', text: `Product successfully ${isEdit ? 'updated' : 'created'}! Redirecting...` })
-        setTimeout(() => navigate('/products'), 1500)
-      },
-      (status, error) => {
-        setLoading(false)
-        setStatusMsg({ type: 'error', text: `Error: ${error || 'Failed to save product'}` })
-      }
-    )
+    if (isEdit) {
+      EditProductService(
+        id,
+        payload,
+        () => {
+          setLoading(false)
+          setStatusMsg({ type: 'success', text: `Product successfully updated! Redirecting...` })
+          setTimeout(() => navigate('/products'), 1500)
+        },
+        (status, error) => {
+          setLoading(false)
+          setStatusMsg({ type: 'error', text: `Error: ${error || 'Failed to save product'}` })
+        }
+      )
+    } else {
+      AddProductService(
+        payload,
+        () => {
+          setLoading(false)
+          setStatusMsg({ type: 'success', text: `Product successfully created! Redirecting...` })
+          setTimeout(() => navigate('/products'), 1500)
+        },
+        (status, error) => {
+          setLoading(false)
+          setStatusMsg({ type: 'error', text: `Error: ${error || 'Failed to save product'}` })
+        }
+      )
+    }
   }
 
   if (fetching) {
@@ -247,6 +281,21 @@ export default function AddProduct() {
                     InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
                   <TextField fullWidth label="Bulk Price" name="bulkPrice" type="number" value={formData.bulkPrice} onChange={handleInputChange} 
                     InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
+                </Stack>
+              </Stack>
+            </Paper>
+
+            {/* Documentation Links */}
+            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
+              <Typography variant="h6" gutterBottom fontWeight={700} sx={{ mb: 3 }}>Resource Links</Typography>
+              <Stack spacing={3}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField fullWidth label="Product Webpage URL" name="productLink" value={formData.productLink} onChange={handleInputChange} />
+                  <TextField fullWidth label="Data Sheet URL" name="dataSheetLink" value={formData.dataSheetLink} onChange={handleInputChange} />
+                </Stack>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField fullWidth label="User Manual URL" name="userManualLink" value={formData.userManualLink} onChange={handleInputChange} />
+                  <TextField fullWidth label="Learning Center SDK URL" name="sdkLink" value={formData.sdkLink} onChange={handleInputChange} />
                 </Stack>
               </Stack>
             </Paper>

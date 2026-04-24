@@ -4,8 +4,8 @@ const successCaseCode = [200, 201];
 
 const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
     const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
-    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.73:8003/api/';
-    
+    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.73:8003/api/v1/';
+
     if (!userDetails) {
         return Promise.reject("Unauthorized: No user details found.");
     }
@@ -69,9 +69,9 @@ const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack
 
 export const
     LoginService = (data) => {
-        const PATH = 'login';
-        // const END_POINT = 'http://192.168.1.73:8003/api/';
-        const END_POINT = 'http://192.168.1.73:8003/api/';
+        const PATH = 'auth/login';
+        // const END_POINT = 'http://192.168.1.73:8003/api/v1/';
+        const END_POINT = 'http://192.168.1.73:8003/api/v1/';
         const SERVICE_METHOD = 'POST';
         const headers = {
             Accept: 'application/json',
@@ -93,27 +93,31 @@ export const
 
 
 export const LogoutService = (data, sucess, error) => {
-    return _fetchService('logout', 'POST', data, sucess, error);
+    return _fetchService('auth/logout', 'POST', data, sucess, error);
+}
+
+export const GetCurrentUserService = (sucess, error) => {
+    return _fetchService('auth/me', 'GET', null, sucess, error);
 }
 
 export const AddProductService = (data, sucess, error) => {
-    return _fetchService('add-product', 'POST', data, sucess, error);
+    return _fetchService('products/', 'POST', data, sucess, error);
 }
 
 export const ShowAllProductService = (data, sucess, error) => {
-    return _fetchService('show-product', 'GET', data, sucess, error);
+    return _fetchService('products/', 'GET', data, sucess, error);
 }
 
 export const ShowOneProductService = (data, sucess, error) => {
-    return _fetchService('show-product', 'GET', data, sucess, error);
+    return _fetchService(`products/${data.id}`, 'GET', null, sucess, error);
 }
 
-export const EditProductService = (data, sucess, error) => {
-    return _fetchService('edit-product', 'PUT', data, sucess, error);
+export const EditProductService = (id, data, sucess, error) => {
+    return _fetchService(`products/${id}`, 'PUT', data, sucess, error);
 }
 
-export const DeleteProductService = (data, sucess, error) => {
-    return _fetchService('delete-product', 'DELETE', data, sucess, error);
+export const DeleteProductService = (id, sucess, error) => {
+    return _fetchService(`products/${id}`, 'DELETE', null, sucess, error);
 }
 
 

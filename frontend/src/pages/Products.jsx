@@ -25,7 +25,9 @@ import {
   DialogContentText,
   DialogActions,
   Menu,
-  Tooltip
+  Tooltip,
+  Stack,
+  Divider
 } from '@mui/material'
 import {
   Search as SearchIcon,
@@ -37,7 +39,8 @@ import {
   FilterList as FilterListIcon,
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
-  Block as BlockIcon
+  Block as BlockIcon,
+  Visibility as VisibilityIcon
 } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { Link, useNavigate } from 'react-router-dom'
@@ -54,13 +57,23 @@ export default function Products() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [anchorEl, setAnchorEl] = useState(null)
+  
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [selectedProductForView, setSelectedProductForView] = useState(null)
 
   const fetchProducts = () => {
     setLoading(true)
     ShowAllProductService(
       null,
       (data) => {
-        setProducts(data || [])
+        const mappedData = (data || []).map(p => ({
+          ...p,
+          name: p.Product_id || p.name || 'Unnamed Product',
+          category: p.Category || p.category || 'Uncategorized',
+          price: p.Price !== undefined ? p.Price : (p.singlePrice || 0),
+          status: p.is_active !== undefined ? (p.is_active ? 'Active' : 'Inactive') : (p.status || 'Active')
+        }))
+        setProducts(mappedData)
         setLoading(false)
       },
       (status, err) => {
@@ -83,7 +96,7 @@ export default function Products() {
   const confirmDelete = () => {
     if (!selectedProduct) return
     DeleteProductService(
-      { id: selectedProduct.id }, // Assumption: Backend needs ID in body or handles it
+      selectedProduct.id,
       () => {
         setProducts(prev => prev.filter(p => p.id !== selectedProduct.id))
         setDeleteDialogOpen(false)
@@ -211,6 +224,14 @@ export default function Products() {
                         />
                       </TableCell>
                       <TableCell align="right">
+                        <Tooltip title="View Details">
+                          <IconButton size="small" onClick={() => {
+                            setSelectedProductForView(product)
+                            setViewDialogOpen(true)
+                          }} color="primary" sx={{ mr: 1 }}>
+                            <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <IconButton size="small" onClick={(e) => {
                           setAnchorEl(e.currentTarget)
                           setSelectedProduct(product)
@@ -274,6 +295,98 @@ export default function Products() {
           <DialogActions sx={{ p: 2, pt: 0 }}>
             <Button onClick={() => setDeleteDialogOpen(false)} color="inherit">Cancel</Button>
             <Button onClick={confirmDelete} color="error" variant="contained">Delete Product</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* View Details Dialog */}
+        <Dialog 
+          open={viewDialogOpen} 
+          onClose={() => setViewDialogOpen(false)}
+          PaperProps={{ sx: { borderRadius: 3, maxWidth: 500, width: '100%' } }}
+        >
+          <DialogTitle sx={{ fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            Product Details
+            <Chip 
+              label={selectedProductForView?.status || 'Active'} 
+              size="small" 
+              color={selectedProductForView?.status === 'Active' ? 'success' : 'warning'}
+            />
+          </DialogTitle>
+          <Divider />
+          <DialogContent>
+            {selectedProductForView && (
+              <Stack spacing={3}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Product Name & System ID</Typography>
+                  <Typography variant="subtitle1" fontWeight={600}>{selectedProductForView.name}</Typography>
+                  <Typography variant="caption" color="text.disabled" sx={{ wordBreak: 'break-all' }}>{selectedProductForView.id}</Typography>
+                </Box>
+                <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Order Code</Typography>
+                    <Typography variant="body1">{selectedProductForView['Order Code'] || '-'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Brand</Typography>
+                    <Typography variant="body1">{selectedProductForView.Brand || '-'}</Typography>
+                  </Box>
+                </Stack>
+                
+                <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Category</Typography>
+                    <Typography variant="body1">{selectedProductForView.category}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Sub-category</Typography>
+                    <Typography variant="body1">{selectedProductForView['Sub-category'] || '-'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Price</Typography>
+                    <Typography variant="body1" fontWeight={600} color="primary.main">
+                      ${selectedProductForView.price}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Bulk Price</Typography>
+                    <Typography variant="body1" fontWeight={600} color="primary.dark">
+                      ${selectedProductForView.bulk_price || '0'}
+                    </Typography>
+                  </Box>
+                </Stack>
+
+                {(selectedProductForView['Product Link'] || selectedProductForView['Data Sheet link'] || selectedProductForView['User Manual'] || selectedProductForView['Learning Center SDK']) && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" gutterBottom>External References</Typography>
+                    <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 1 }}>
+                      {selectedProductForView['Product Link'] && <Chip size="small" label="Product Link" component="a" href={selectedProductForView['Product Link']} target="_blank" clickable color="info" variant="outlined" />}
+                      {selectedProductForView['Data Sheet link'] && <Chip size="small" label="Data Sheet" component="a" href={selectedProductForView['Data Sheet link']} target="_blank" clickable color="info" variant="outlined" />}
+                      {selectedProductForView['User Manual'] && <Chip size="small" label="User Manual" component="a" href={selectedProductForView['User Manual']} target="_blank" clickable color="info" variant="outlined" />}
+                      {selectedProductForView['Learning Center SDK'] && <Chip size="small" label="Learning Center SDK" component="a" href={selectedProductForView['Learning Center SDK']} target="_blank" clickable color="info" variant="outlined" />}
+                    </Stack>
+                  </Box>
+                )}
+                {selectedProductForView.sections?.description && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Description</Typography>
+                    <Typography variant="body2">{selectedProductForView.sections.description}</Typography>
+                  </Box>
+                )}
+                {selectedProductForView.sections?.features?.length > 0 && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Features</Typography>
+                    <Box component="ul" sx={{ mt: 0.5, pl: 2, mb: 0 }}>
+                      {selectedProductForView.sections.features.map((f, i) => (
+                        <Typography component="li" variant="body2" key={i}>{f}</Typography>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+              </Stack>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ p: 2, pt: 0 }}>
+            <Button onClick={() => setViewDialogOpen(false)} variant="contained" color="primary">Close</Button>
           </DialogActions>
         </Dialog>
 

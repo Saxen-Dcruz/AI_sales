@@ -4,6 +4,8 @@ import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
 
+import { LoginService, GetCurrentUserService } from '../../services/ApiService'
+
 export default function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,28 +27,47 @@ export default function LoginForm() {
 
     setIsLoading(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false)
+    try {
+      const response = await LoginService({ email, password })
+      const data = await response.json()
       
-      // For demo purposes: Set a mock session so Auth checks pass
-      const mockSession = {
-        accessToken: "mock-demo-token-" + Date.now(),
-        userDetails: {
-          id: 1,
-          email: email || "admin@example.com",
-          userRole: "Admin",
-          companyCode: "DEMO",
-          semesterId: "F26",
-          branch: "Main",
-          instituteid: "INST001"
+      if (!response.ok) {
+        setError(data.detail || 'Invalid email or password')
+        setIsLoading(false)
+        return
+      }
+
+      ApplicationStore().setStorage("userDetails", { 
+        accessToken: data.access_token, 
+        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" } 
+      })
+
+      GetCurrentUserService(
+        (userData) => {
+          ApplicationStore().setStorage("userDetails", {
+            accessToken: data.access_token,
+            userDetails: {
+              id: userData.id,
+              email: userData.email,
+              userRole: userData.is_superuser ? "Admin" : "User",
+              companyCode: "RDL",
+              semesterId: "N/A",
+              branch: "Main",
+              instituteid: "INST001"
+            }
+          })
+          setIsLoading(false)
+          navigate('/dashboard')
+        },
+        (status, msg) => {
+          setError(msg || 'Failed to fetch user profile')
+          setIsLoading(false)
         }
-      };
-      
-      ApplicationStore().setStorage("userDetails", mockSession);
-      
-      navigate('/dashboard')
-    }, 1500)
+      )
+    } catch (err) {
+      setError('Network error or server unavailable')
+      setIsLoading(false)
+    }
   }
 
   // Animation variants
