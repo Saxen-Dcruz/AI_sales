@@ -164,10 +164,10 @@ export default function Products() {
               onChange={(e) => setCategory(e.target.value)}
               startAdornment={<FilterListIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />}
             >
-              <option value="All Categories">All Categories</option>
-              <option value="Software">Software</option>
-              <option value="Services">Services</option>
-              <option value="Add-on">Add-on</option>
+              <MenuItem value="All Categories">All Categories</MenuItem>
+              <MenuItem value="Software">Software</MenuItem>
+              <MenuItem value="Services">Services</MenuItem>
+              <MenuItem value="Add-on">Add-on</MenuItem>
             </Select>
           </FormControl>
 
