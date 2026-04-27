@@ -174,7 +174,7 @@ google-api-python-client
 playwright
 uvicorn[standard]
 linkedin-scraper
-duckduckgo-search>=6.0.0
+ddgs
 googlesearch-python
 flashrank
 langchain-postgres

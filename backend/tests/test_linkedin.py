@@ -129,7 +129,7 @@ def test_ddgs_search_extracts_linkedin_urls():
     mock_ddgs_instance.__exit__ = MagicMock(return_value=False)
     mock_ddgs_instance.text.return_value = fake_results
     # Patch at the duckduckgo_search module level since it's a local import inside the function
-    with patch("duckduckgo_search.DDGS", return_value=mock_ddgs_instance):
+    with patch("ddgs.DDGS", return_value=mock_ddgs_instance):
         urls = _ddgs_search("test query", max_results=10)
     assert "https://www.linkedin.com/company/rdltech" in urls
     assert "https://www.linkedin.com/company/abc-pharma" in urls
@@ -154,26 +154,66 @@ def test_google_search_extracts_linkedin_urls():
     assert all("/dir/" not in u for u in urls)
 
 
+def test_bing_search_extracts_linkedin_urls():
+    """_bing_search must extract linkedin.com/company/ URLs from Bing HTML."""
+    from app.scripts.linkedin.sourcing import _bing_search
+    import requests as req_mod
+    fake_html = '''
+    <html><body>
+    <a href="https://www.linkedin.com/company/rdltech/">RDL</a>
+    <a href="https://www.linkedin.com/company/pharma-co/?trk=abc">Pharma</a>
+    <a href="https://www.linkedin.com/dir/noise">Noise</a>
+    <a href="https://example.com/other">Other</a>
+    </body></html>
+    '''
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = fake_html
+    with patch("requests.get", return_value=mock_resp):
+        urls = _bing_search("test query", max_results=5)
+    assert any("linkedin.com/company/" in u for u in urls)
+    assert all("/dir/" not in u for u in urls)
+
+
 def test_search_with_fallback_uses_ddgs_first():
-    """Primary path: DDGS returns results → Google NOT called."""
+    """Primary path: DDGS returns results → Bing and Google NOT called."""
     from app.scripts.linkedin.sourcing import _search_with_fallback
-    ddgs_results = [{"href": f"https://linkedin.com/company/co{i}"} for i in range(10)]
     with (
-        patch("app.scripts.linkedin.sourcing._ddgs_search", return_value=[f"https://linkedin.com/company/co{i}" for i in range(10)]) as mock_ddgs,
+        patch("app.scripts.linkedin.sourcing._ddgs_search",
+              return_value=[f"https://linkedin.com/company/co{i}" for i in range(10)]) as mock_ddgs,
+        patch("app.scripts.linkedin.sourcing._bing_search") as mock_bing,
         patch("app.scripts.linkedin.sourcing._google_search") as mock_google,
     ):
         urls = _search_with_fallback("test query")
     mock_ddgs.assert_called_once()
+    mock_bing.assert_not_called()
     mock_google.assert_not_called()
     assert len(urls) == 10
 
 
-def test_search_with_fallback_triggers_google_when_ddgs_returns_few():
-    """If DDGS returns < 5 results, Google fallback must be invoked."""
+def test_search_with_fallback_tries_bing_before_google():
+    """DDGS < 5 results → Bing tried next, Google only if Bing also < 5."""
+    from app.scripts.linkedin.sourcing import _search_with_fallback
+    with (
+        patch("app.scripts.linkedin.sourcing._ddgs_search", return_value=["https://linkedin.com/company/ddgs-1"]),
+        patch("app.scripts.linkedin.sourcing._bing_search",
+              return_value=[f"https://linkedin.com/company/bing-{i}" for i in range(8)]) as mock_bing,
+        patch("app.scripts.linkedin.sourcing._google_search") as mock_google,
+    ):
+        urls = _search_with_fallback("test query")
+    mock_bing.assert_called_once()
+    mock_google.assert_not_called()      # Bing returned enough — Google skipped
+    assert len(urls) >= 8
+
+
+def test_search_with_fallback_triggers_google_when_ddgs_and_bing_return_few():
+    """If DDGS and Bing both return < 5, Google fallback must be invoked."""
     from app.scripts.linkedin.sourcing import _search_with_fallback
     with (
         patch("app.scripts.linkedin.sourcing._ddgs_search", return_value=["https://linkedin.com/company/only-one"]),
-        patch("app.scripts.linkedin.sourcing._google_search", return_value=["https://linkedin.com/company/google-result"]) as mock_google,
+        patch("app.scripts.linkedin.sourcing._bing_search", return_value=["https://linkedin.com/company/bing-one"]),
+        patch("app.scripts.linkedin.sourcing._google_search",
+              return_value=["https://linkedin.com/company/google-result"]) as mock_google,
     ):
         urls = _search_with_fallback("test query")
     mock_google.assert_called_once()
@@ -223,7 +263,7 @@ def test_find_decision_makers_returns_linkedin_in_urls():
     mock_ddgs_instance.__enter__ = MagicMock(return_value=mock_ddgs_instance)
     mock_ddgs_instance.__exit__ = MagicMock(return_value=False)
     mock_ddgs_instance.text.return_value = fake
-    with patch("duckduckgo_search.DDGS", return_value=mock_ddgs_instance):
+    with patch("ddgs.DDGS", return_value=mock_ddgs_instance):
         urls = find_decision_makers("ACME Corp", max_results=10, delay_min=0, delay_max=0,
                                     roles=["CEO"])
     assert all("linkedin.com/in/" in u for u in urls)

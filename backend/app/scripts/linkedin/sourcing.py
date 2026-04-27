@@ -281,14 +281,10 @@ TARGET_ROLES = [
 # ── Search backends ────────────────────────────────────────────────────────────
 
 def _ddgs_search(query: str, max_results: int = 100) -> list[str]:
-    """DuckDuckGo search — returns list of LinkedIn URLs."""
+    """DuckDuckGo search via the `ddgs` package (renamed from duckduckgo_search)."""
     urls = []
     try:
-        # duckduckgo-search package: import path changed across versions
-        try:
-            from duckduckgo_search import DDGS
-        except ImportError:
-            from ddgs import DDGS  # older alias
+        from ddgs import DDGS
         with DDGS() as ddgs_client:
             results = ddgs_client.text(query, max_results=max_results)
             if results:
@@ -301,12 +297,51 @@ def _ddgs_search(query: str, max_results: int = 100) -> list[str]:
     return urls
 
 
+def _bing_search(query: str, max_results: int = 50) -> list[str]:
+    """
+    Bing scrape fallback — uses requests with a browser User-Agent.
+    Less aggressive rate-limiting than Google on server IPs.
+    """
+    import re
+    import requests
+
+    urls = []
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        fetched = 0
+        offset = 0
+        while fetched < max_results:
+            params = {"q": query, "count": 10, "first": offset}
+            resp = requests.get("https://www.bing.com/search", params=params,
+                                headers=headers, timeout=10)
+            if resp.status_code != 200:
+                break
+            found = re.findall(r'href="(https://[^"]*linkedin\.com/company/[^"?/][^"]*)"', resp.text)
+            new = [u.split("?")[0].rstrip("/") for u in found
+                   if "/dir/" not in u and u not in urls]
+            urls.extend(new)
+            fetched += len(new)
+            if not new:
+                break
+            offset += 10
+            time.sleep(random.uniform(2, 4))
+    except Exception as e:
+        logger.warning(f"[BING] Error on query '{query[:60]}': {e}")
+    return list(set(urls))
+
+
 def _google_search(query: str, max_results: int = 100) -> list[str]:
-    """Google Search fallback via googlesearch-python."""
+    """Google Search via googlesearch-python. Works best from residential IPs."""
     urls = []
     try:
         from googlesearch import search
-        for url in search(query, num_results=max_results, sleep_interval=2):
+        for url in search(query, num_results=max_results, sleep_interval=3):
             clean = url.split("?")[0].rstrip("/")
             if "linkedin.com/company/" in clean and "/dir/" not in clean:
                 urls.append(clean)
@@ -316,10 +351,19 @@ def _google_search(query: str, max_results: int = 100) -> list[str]:
 
 
 def _search_with_fallback(query: str, max_results: int = 100) -> list[str]:
-    """Try DDGS first; fall back to Google if DDGS returns < 5 results."""
+    """
+    Priority: DDGS → Bing → Google.
+    Falls through to the next backend only when the previous returns < 5 results.
+    Bing is preferred over Google as second choice since it rate-limits less
+    aggressively on server/Docker IPs.
+    """
     urls = _ddgs_search(query, max_results)
     if len(urls) < 5:
-        logger.info(f"[SEARCH] DDGS returned {len(urls)} — falling back to Google")
+        logger.info(f"[SEARCH] DDGS {len(urls)} results — trying Bing")
+        bing_urls = _bing_search(query, min(max_results, 50))
+        urls = list(set(urls + bing_urls))
+    if len(urls) < 5:
+        logger.info(f"[SEARCH] Bing {len(urls)} results — trying Google")
         google_urls = _google_search(query, max_results)
         urls = list(set(urls + google_urls))
     return urls
