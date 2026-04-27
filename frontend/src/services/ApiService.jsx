@@ -4,7 +4,7 @@ const successCaseCode = [200, 201];
 
 const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
     const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
-    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.73:8003/api/v1/';
+    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.104:8003/api/v1/';
 
     if (!userDetails) {
         return Promise.reject("Unauthorized: No user details found.");
@@ -70,8 +70,8 @@ const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack
 export const
     LoginService = (data) => {
         const PATH = 'auth/login';
-        // const END_POINT = 'http://192.168.1.73:8003/api/v1/';
-        const END_POINT = 'http://192.168.1.73:8003/api/v1/';
+        // const END_POINT = 'http://192.168.1.104:8003/api/v1/';
+        const END_POINT = 'http://192.168.1.104:8003/api/v1/';
         const SERVICE_METHOD = 'POST';
         const headers = {
             Accept: 'application/json',
