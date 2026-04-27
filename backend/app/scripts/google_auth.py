@@ -36,17 +36,29 @@ CALENDAR_SCOPES = [
 
 
 def generate_token(scopes: list[str], token_path: Path, no_browser: bool, port: int = 8080) -> None:
+    # Delete old token first — forces Google to re-issue a refresh_token
+    if token_path.exists():
+        token_path.unlink()
+
     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS), scopes)
 
     if no_browser:
         creds = flow.run_console()
     else:
-        creds = flow.run_local_server(port=port)
+        # prompt='consent' forces the consent screen even if already authorized
+        # This guarantees Google returns a refresh_token every time
+        creds = flow.run_local_server(port=port, prompt="consent", access_type="offline")
+
+    if not creds.refresh_token:
+        raise RuntimeError(
+            "No refresh_token received. Go to https://myaccount.google.com/permissions, "
+            "revoke access for this app, then re-run this script."
+        )
 
     with open(token_path, "wb") as f:
         pickle.dump(creds, f)
 
-    print(f"Token saved: {token_path}")
+    print(f"Token saved: {token_path} (refresh_token: ✓)")
 
 
 def main() -> None:

@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.routers import product, usage, auth, leads, companies, deals
+from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls
 
 
 import app.models.user
@@ -23,6 +23,12 @@ import app.models.company
 import app.models.leads
 import app.models.deal
 import app.models.communication
+import app.models.usage
+import app.models.calendar_event
+import app.models.product_knowledge
+import app.models.call
+import app.models.blocked_time
+import app.models.email_sequence
 
 
 # Rate Limiting
@@ -88,6 +94,13 @@ async def lifespan(app: FastAPI):
     
     # Start the background Redis listener
     redis_task = asyncio.create_task(global_redis_listener())
+
+    # Start Gmail inbox poller
+    from app.services.gmail_poller import start_poller
+    try:
+        start_poller()
+    except Exception as e:
+        logger.warning(f"Gmail poller failed to start: {e}")
     
     # Initialize Database Tables (Uncomment when models are ready)
     try:
@@ -101,6 +114,10 @@ async def lifespan(app: FastAPI):
     # --- SHUTDOWN ---
     logger.info("🛑 Shutting down AI Backend...")
     
+    # Stop Gmail poller
+    from app.services.gmail_poller import stop_poller
+    stop_poller()
+
     # Cancel Listener safely
     redis_task.cancel()
     try:
@@ -144,6 +161,9 @@ app.include_router(leads.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
 app.include_router(deals.router, prefix="/api/v1")
 app.include_router(usage.router, prefix="/api/v1")
+app.include_router(gmail.router, prefix="/api/v1")
+app.include_router(calendar.router, prefix="/api/v1")
+app.include_router(calls.router, prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 
