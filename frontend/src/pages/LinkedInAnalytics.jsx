@@ -45,7 +45,7 @@ export default function LinkedInAnalytics() {
   return (
     <motion.div variants={pageVar} initial="initial" animate="animate" className="space-y-6">
       {/* Stat row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Leads Scraped Today', value: '490', change: '+12%', color: 'text-primary-400' },
           { label: 'Posts Generated', value: '78', change: '+8%', color: 'text-accent-cyan' },

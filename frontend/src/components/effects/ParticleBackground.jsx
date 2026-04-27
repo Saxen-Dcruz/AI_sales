@@ -60,7 +60,6 @@ export default function ParticleBackground() {
       const material = new THREE.ShaderMaterial({
         vertexShader: `
           attribute float size;
-          attribute vec3 color;
           varying vec3 vColor;
           void main() {
             vColor = color;

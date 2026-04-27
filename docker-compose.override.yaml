@@ -31,7 +31,9 @@ services:
     volumes:
       - ./backend:/app
       - ./data:/data  
-      - ./service-account.json:/app/service-account.json:ro
+      - ./backend/service-account.json:/app/service-account.json:ro
+      - ./backend/gmail_token.json:/app/gmail_token.json:ro
+      - ./backend/calendar_token.json:/app/calendar_token.json:ro
     env_file:
       - ./backend/.env.local
 

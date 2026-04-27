@@ -13,7 +13,7 @@ services:
     networks:
       - rdl_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d rdl_sales"]
+      test: [ "CMD-SHELL", "pg_isready -U admin -d rdl_sales" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,7 +27,7 @@ services:
     networks:
       - rdl_network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -52,7 +52,7 @@ services:
     environment:
       - LIVEKIT_REDIS_ADDRESS=redis:6379
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7880/"]
+      test: [ "CMD", "wget", "--no-verbose", "--spider", "http://localhost:7880/" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -65,9 +65,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rdl_backend
+    ports:
+      - "8003:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - POSTGRES_SERVER=db
+      - POSTGRES_PORT=5432
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
@@ -86,7 +89,7 @@ services:
       livekit:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,6 +126,7 @@ services:
 volumes:
   redis_data:
   postgres_data:
+
 
 networks:
   rdl_network:
