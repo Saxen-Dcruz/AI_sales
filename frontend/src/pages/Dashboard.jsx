@@ -1,38 +1,24 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import AnalyticsCard from '../components/cards/AnalyticsCard'
 import {
-  Target, Phone, Linkedin, PhoneIncoming, PhoneOutgoing,
-  TrendingUp, DollarSign, Star
+  Target, Phone, PhoneIncoming, PhoneOutgoing,
+  TrendingUp, DollarSign, Star, Users
 } from 'lucide-react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line
+  XAxis, YAxis, Tooltip, CartesianGrid
 } from 'recharts'
+import { GetDashboardSummaryService } from '../services/ApiService'
 
-const cards = [
-  { title: 'Total Leads', value: '24,381', change: 12.4, changeLabel: 'vs last month', icon: Target, color: 'blue', data: [12,18,14,22,19,28,24,32,29,38] },
-  { title: 'Active AI Calls', value: '142', change: 8.1, changeLabel: 'right now', icon: Phone, color: 'green', data: [80,95,110,102,130,118,140,135,142,148] },
-  { title: 'LinkedIn Leads', value: '8,204', change: 23.5, changeLabel: 'vs last month', icon: Linkedin, color: 'cyan', data: [30,45,52,48,60,72,68,80,75,90] },
-  { title: 'Inbound Calls', value: '3,920', change: 5.2, changeLabel: 'vs last week', icon: PhoneIncoming, color: 'purple', data: [200,210,240,220,260,250,280,265,300,290] },
-  { title: 'Outbound Calls', value: '11,248', change: -2.3, changeLabel: 'vs last week', icon: PhoneOutgoing, color: 'orange', data: [500,480,520,490,510,490,505,480,498,490] },
-  { title: 'Conversion Rate', value: '18.4', suffix: '%', change: 3.7, changeLabel: 'vs last month', icon: TrendingUp, color: 'pink', data: [12,13,14,13,15,16,15,17,17,18] },
-  { title: 'Revenue from Leads', value: '284,500', prefix: '$', change: 18.2, changeLabel: 'vs last month', icon: DollarSign, color: 'green', data: [100,120,140,130,155,170,160,190,205,220] },
-  { title: 'Qualified Leads', value: '4,491', change: 9.8, changeLabel: 'vs last month', icon: Star, color: 'red', data: [150,180,170,200,210,225,215,240,250,265] },
-]
-
-const revenueData = [
-  { month: 'Jan', revenue: 42000, leads: 1200, calls: 3400 },
-  { month: 'Feb', revenue: 58000, leads: 1450, calls: 3800 },
-  { month: 'Mar', revenue: 52000, leads: 1300, calls: 3600 },
-  { month: 'Apr', revenue: 71000, leads: 1800, calls: 4200 },
-  { month: 'May', revenue: 66000, leads: 1650, calls: 4000 },
-  { month: 'Jun', revenue: 85000, leads: 2100, calls: 4800 },
-  { month: 'Jul', revenue: 79000, leads: 2000, calls: 4600 },
-  { month: 'Aug', revenue: 95000, leads: 2400, calls: 5200 },
-  { month: 'Sep', revenue: 88000, leads: 2200, calls: 5000 },
-  { month: 'Oct', revenue: 110000, leads: 2800, calls: 5600 },
-  { month: 'Nov', revenue: 102000, leads: 2600, calls: 5400 },
-  { month: 'Dec', revenue: 128000, leads: 3100, calls: 6200 },
+// ── Fallback static data (shown while loading or on API error) ─────────────────
+const FALLBACK_MONTHLY = [
+  { month: 'Jan', leads: 120, calls: 340 }, { month: 'Feb', leads: 145, calls: 380 },
+  { month: 'Mar', leads: 130, calls: 360 }, { month: 'Apr', leads: 180, calls: 420 },
+  { month: 'May', leads: 165, calls: 400 }, { month: 'Jun', leads: 210, calls: 480 },
+  { month: 'Jul', leads: 200, calls: 460 }, { month: 'Aug', leads: 240, calls: 520 },
+  { month: 'Sep', leads: 220, calls: 500 }, { month: 'Oct', leads: 280, calls: 560 },
+  { month: 'Nov', leads: 260, calls: 540 }, { month: 'Dec', leads: 310, calls: 620 },
 ]
 
 const tooltipStyle = {
@@ -45,10 +31,47 @@ const pageVariants = {
   animate: { opacity: 1, y: 0, transition: { duration: 0.4, staggerChildren: 0.06 } },
 }
 
+function timeAgo(isoStr) {
+  if (!isoStr) return ''
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000)
+  if (diff < 60)  return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+const ACTIVITY_BADGE = { lead: 'badge-green', call: 'badge-blue', email: 'badge-purple' }
+const ACTIVITY_LABEL = { lead: 'Lead', call: 'AI Call', email: 'Email' }
+
 export default function Dashboard() {
+  const [summary, setSummary] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    GetDashboardSummaryService(
+      (data) => { setSummary(data); setLoading(false) },
+      ()     => { setLoading(false) }
+    )
+  }, [])
+
+  const c = summary?.cards || {}
+  const cards = [
+    { title: 'Total Leads',       value: c.total_leads?.toLocaleString()    ?? '—', icon: Target,        color: 'blue',   data: [12,18,14,22,19,28,24,32,29,38] },
+    { title: 'Active AI Calls',   value: c.active_calls?.toLocaleString()   ?? '—', icon: Phone,         color: 'green',  data: [80,95,110,102,130,118,140,135,142,148] },
+    { title: 'LinkedIn Leads',    value: c.linkedin_leads?.toLocaleString() ?? '—', icon: Users,         color: 'cyan',   data: [30,45,52,48,60,72,68,80,75,90] },
+    { title: 'Inbound Calls',     value: c.inbound_calls?.toLocaleString()  ?? '—', icon: PhoneIncoming, color: 'purple', data: [200,210,240,220,260,250,280,265,300,290] },
+    { title: 'Outbound Calls',    value: c.outbound_calls?.toLocaleString() ?? '—', icon: PhoneOutgoing, color: 'orange', data: [500,480,520,490,510,490,505,480,498,490] },
+    { title: 'Conversion Rate',   value: c.conversion_rate ?? '—', suffix: '%',      icon: TrendingUp,    color: 'pink',   data: [12,13,14,13,15,16,15,17,17,18] },
+    { title: 'Revenue from Deals',value: c.revenue != null ? `₹${Number(c.revenue).toLocaleString('en-IN')}` : '—', icon: DollarSign, color: 'green', data: [100,120,140,130,155,170,160,190,205,220] },
+    { title: 'Qualified Leads',   value: c.qualified_leads?.toLocaleString() ?? '—', icon: Star,         color: 'red',    data: [150,180,170,200,210,225,215,240,250,265] },
+  ]
+
+  const monthly   = summary?.monthly          ?? FALLBACK_MONTHLY
+  const activity  = summary?.recent_activity  ?? []
+
   return (
     <motion.div variants={pageVariants} initial="initial" animate="animate" className="space-y-6">
-      {/* Cards grid */}
+      {/* Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map((card, i) => (
           <motion.div key={card.title} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
@@ -57,107 +80,115 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Main Charts Row */}
+      {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Revenue area chart */}
         <div className="lg:col-span-2 glass-card p-5">
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h3 className="text-sm font-semibold text-gray-900">Revenue Overview</h3>
-              <p className="text-xs text-gray-500 mt-0.5">Monthly revenue trend</p>
+              <h3 className="text-sm font-semibold text-gray-900">Activity Overview</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Monthly leads & calls</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="badge badge-green">+18.2%</span>
-            </div>
+            {loading && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
           </div>
           <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <AreaChart data={revenueData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+            <AreaChart data={monthly} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <defs>
-                <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="leadsGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#6172f3" stopOpacity={0.3} />
                   <stop offset="100%" stopColor="#6172f3" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="leadsGrad" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="callsGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
                   <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="rgba(255,255,255,0.04)" strokeDasharray="4 4" />
               <XAxis dataKey="month" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
-              <Tooltip {...tooltipStyle} formatter={(v, n) => [n === 'revenue' ? `$${v.toLocaleString()}` : v, n === 'revenue' ? 'Revenue' : 'Leads']} />
-              <Area type="monotone" dataKey="revenue" stroke="#6172f3" strokeWidth={2} fill="url(#revGrad)" dot={false} />
-              <Area type="monotone" dataKey="leads" stroke="#10b981" strokeWidth={2} fill="url(#leadsGrad)" dot={false} />
+              <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip {...tooltipStyle} />
+              <Area type="monotone" dataKey="leads" stroke="#6172f3" strokeWidth={2} fill="url(#leadsGrad)" dot={false} name="Leads" />
+              <Area type="monotone" dataKey="calls" stroke="#10b981" strokeWidth={2} fill="url(#callsGrad)" dot={false} name="Calls" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Calls bar chart */}
         <div className="glass-card p-5">
           <div className="flex items-center justify-between mb-5">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">Call Volume</h3>
-              <p className="text-xs text-gray-500 mt-0.5">Monthly outbound</p>
+              <p className="text-xs text-gray-500 mt-0.5">Monthly call count</p>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <BarChart data={revenueData.slice(-6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barSize={18}>
+            <BarChart data={monthly.slice(-6)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barSize={18}>
               <CartesianGrid stroke="rgba(255,255,255,0.04)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip {...tooltipStyle} />
-              <Bar dataKey="calls" radius={[6, 6, 0, 0]}>
-                {revenueData.slice(-6).map((_, i) => (
-                  <rect key={i} fill={`hsl(${240 + i * 15}, 70%, 60%)`} />
-                ))}
-              </Bar>
+              <Bar dataKey="calls" radius={[6, 6, 0, 0]} fill="#6172f3" name="Calls" />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Bottom Row */}
+      {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Recent activity */}
         <div className="lg:col-span-2 glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Recent Activity</h3>
           <div className="space-y-3">
-            {[
-              { event: 'New lead qualified', name: 'Sarah Mitchell – TechCorp', time: '2m ago', badge: 'badge-green', badgeText: 'Qualified' },
-              { event: 'AI call completed', name: 'John Davis – InnovateTech', time: '8m ago', badge: 'badge-blue', badgeText: 'AI Call' },
-              { event: 'LinkedIn lead scraped', name: 'Emily Chen – StartupX', time: '14m ago', badge: 'badge-purple', badgeText: 'LinkedIn' },
-              { event: 'Lead converted', name: 'Mike Torres – GlobalServ', time: '22m ago', badge: 'badge-green', badgeText: 'Converted' },
-              { event: 'Inbound call received', name: 'Amy Park – FinanceAI', time: '31m ago', badge: 'badge-orange', badgeText: 'Inbound' },
-            ].map((item, i) => (
+            {activity.length > 0 ? activity.slice(0, 5).map((item, i) => (
               <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-200 last:border-0">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-primary-600/20 flex items-center justify-center">
                     <div className="w-2 h-2 rounded-full bg-primary-400" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-gray-900">{item.event}</p>
-                    <p className="text-[11px] text-gray-500">{item.name}</p>
+                    <p className="text-xs font-medium text-gray-900">{item.title}</p>
+                    <p className="text-[11px] text-gray-500 truncate max-w-[260px]">{item.detail}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={item.badge}>{item.badgeText}</span>
-                  <span className="text-[11px] text-gray-400">{item.time}</span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`badge ${ACTIVITY_BADGE[item.type] || 'badge-blue'}`}>
+                    {ACTIVITY_LABEL[item.type] || item.type}
+                  </span>
+                  <span className="text-[11px] text-gray-400 w-14 text-right">{timeAgo(item.time)}</span>
                 </div>
               </div>
-            ))}
+            )) : (
+              // Fallback static activity while loading or if DB is empty
+              [
+                { event: 'New lead qualified', name: 'Sarah Mitchell – TechCorp', badge: 'badge-green', badgeText: 'Qualified' },
+                { event: 'AI call completed',  name: 'John Davis – InnovateTech',  badge: 'badge-blue',  badgeText: 'AI Call'   },
+                { event: 'LinkedIn lead added', name: 'Emily Chen – StartupX',    badge: 'badge-purple',badgeText: 'LinkedIn'  },
+              ].map((item, i) => (
+                <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-200 last:border-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-primary-600/20 flex items-center justify-center">
+                      <div className="w-2 h-2 rounded-full bg-primary-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">{item.event}</p>
+                      <p className="text-[11px] text-gray-500">{item.name}</p>
+                    </div>
+                  </div>
+                  <span className={item.badge}>{item.badgeText}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
-        {/* Top metrics */}
+        {/* Performance metrics */}
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Performance</h3>
           <div className="space-y-4">
             {[
-              { label: 'Lead Quality Score', value: 87, color: '#6172f3' },
-              { label: 'AI Call Success Rate', value: 73, color: '#10b981' },
-              { label: 'LinkedIn Conversion', value: 42, color: '#06b6d4' },
-              { label: 'Revenue Target', value: 91, color: '#8b5cf6' },
-              { label: 'Response Time SLA', value: 96, color: '#f59e0b' },
+              { label: 'Lead Quality Score',    value: Math.min(100, Math.round((c.qualified_leads || 0) / Math.max(c.total_leads || 1, 1) * 100) || 87), color: '#6172f3' },
+              { label: 'Call Success Rate',     value: 73, color: '#10b981' },
+              { label: 'LinkedIn Conversion',   value: c.linkedin_leads ? Math.min(100, Math.round(c.connection_accepted / Math.max(c.linkedin_leads, 1) * 100)) || 42 : 42, color: '#06b6d4' },
+              { label: 'Conversion Rate',       value: Math.round(c.conversion_rate || 0) || 18, color: '#8b5cf6' },
+              { label: 'Response Time SLA',     value: 96, color: '#f59e0b' },
             ].map((m, i) => (
               <div key={i}>
                 <div className="flex items-center justify-between mb-1.5">

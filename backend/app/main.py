@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin
+from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard
 
 
 import app.models.user
@@ -165,7 +165,8 @@ app.include_router(usage.router, prefix="/api/v1")
 app.include_router(gmail.router, prefix="/api/v1")
 app.include_router(calendar.router, prefix="/api/v1")
 app.include_router(calls.router,    prefix="/api/v1")
-app.include_router(linkedin.router, prefix="/api/v1")
+app.include_router(linkedin.router,   prefix="/api/v1")
+app.include_router(dashboard.router,  prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 

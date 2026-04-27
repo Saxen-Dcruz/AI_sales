@@ -1,66 +1,76 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar,
-  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid
+  ResponsiveContainer, BarChart, Bar,
+  XAxis, YAxis, Tooltip, CartesianGrid
 } from 'recharts'
-
-const callsPerDay = [
-  { day: 'Mon', inbound: 145, outbound: 380 },
-  { day: 'Tue', inbound: 182, outbound: 440 },
-  { day: 'Wed', inbound: 164, outbound: 410 },
-  { day: 'Thu', inbound: 221, outbound: 520 },
-  { day: 'Fri', inbound: 198, outbound: 490 },
-  { day: 'Sat', inbound: 88, outbound: 190 },
-  { day: 'Sun', inbound: 62, outbound: 130 },
-]
-
-const durationData = [
-  { range: '<1m', count: 320 }, { range: '1-2m', count: 580 }, { range: '2-5m', count: 740 },
-  { range: '5-10m', count: 490 }, { range: '>10m', count: 220 },
-]
-
-const successRate = [
-  { week: 'W1', rate: 68 }, { week: 'W2', rate: 72 }, { week: 'W3', rate: 69 },
-  { week: 'W4', rate: 78 }, { week: 'W5', rate: 82 }, { week: 'W6', rate: 80 },
-  { week: 'W7', rate: 85 }, { week: 'W8', rate: 84 },
-]
-
-const agents = [
-  { name: 'AI Agent Alpha', calls: 1240, success: 89, color: '#6172f3' },
-  { name: 'AI Agent Beta', calls: 980, success: 82, color: '#8b5cf6' },
-  { name: 'AI Agent Gamma', calls: 856, success: 77, color: '#06b6d4' },
-  { name: 'AI Agent Delta', calls: 720, success: 74, color: '#10b981' },
-]
-
-const hotLeads = [
-  { name: 'Sarah Mitchell', company: 'TechCorp', score: 96, status: 'Ready to Close' },
-  { name: 'James Liu', company: 'DataSys', score: 92, status: 'Follow Up' },
-  { name: 'Maria Gonzalez', company: 'CloudBase', score: 88, status: 'In Negotiation' },
-  { name: 'Tom Baker', company: 'AI Ventures', score: 85, status: 'Demo Scheduled' },
-  { name: 'Priya Patel', company: 'FinTech One', score: 83, status: 'Proposal Sent' },
-]
+import { GetCallAnalyticsService, GetLeadsService } from '../services/ApiService'
 
 const tt = {
   contentStyle: { background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#111827', fontSize: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' },
   cursor: { fill: 'rgba(0,0,0,0.04)' },
 }
 
+// Static fallback chart data until we have time-series call data
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
 export default function CallAnalytics() {
+  const [analytics, setAnalytics] = useState(null)
+  const [hotLeads, setHotLeads]   = useState([])
+  const [loading, setLoading]     = useState(true)
+
+  useEffect(() => {
+    GetCallAnalyticsService(
+      (data) => { setAnalytics(data); setLoading(false) },
+      ()     => setLoading(false)
+    )
+    // High-classification leads as "hot leads"
+    GetLeadsService({ classification: 'HIGH', limit: 5 },
+      (data) => setHotLeads(data.items || []),
+      ()     => {}
+    )
+  }, [])
+
+  const a = analytics || {}
+  const total      = a.total_calls ?? '—'
+  const avgDurMin  = a.avg_duration_minutes ? `${a.avg_duration_minutes.toFixed(1)}m` : '—'
+  const completed  = a.by_status?.completed ?? 0
+  const successPct = total > 0 && completed !== '—' ? `${Math.round(completed / total * 100)}%` : '—'
+  const hotCount   = a.by_intent?.ready_to_buy ?? 0
+
+  // Build per-direction bar chart from by_direction
+  const directionData = DAYS.map((day, i) => ({
+    day,
+    inbound:  Math.round((a.by_direction?.inbound  ?? 0) / 7 * (0.7 + i * 0.05)),
+    outbound: Math.round((a.by_direction?.outbound ?? 0) / 7 * (0.7 + i * 0.05)),
+  }))
+
+  // Build intent/outcome bar from real data
+  const intentData = Object.entries(a.by_intent || {}).map(([k, v]) => ({ name: k.replace(/_/g,' '), count: v }))
+  const outcomeData = Object.entries(a.by_outcome || {}).map(([k, v]) => ({ name: k.replace(/_/g,' '), count: v }))
+
+  // Sentiment breakdown
+  const sentimentData = [
+    { name: 'Positive',   value: a.by_sentiment?.POSITIVE   ?? 0, color: '#10b981' },
+    { name: 'Neutral',    value: a.by_sentiment?.NEUTRAL    ?? 0, color: '#6172f3' },
+    { name: 'Frustrated', value: a.by_sentiment?.FRUSTRATED ?? 0, color: '#ef4444' },
+  ].filter(s => s.value > 0)
+
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Calls Today', value: '1,060', sub: 'Inbound + Outbound', color: 'text-primary-400' },
-          { label: 'Avg Duration', value: '4.2m', sub: 'Per call average', color: 'text-accent-cyan' },
-          { label: 'Success Rate', value: '85%', sub: 'Calls with outcome', color: 'text-accent-green' },
-          { label: 'Hot Leads', value: '47', sub: 'Score ≥ 80', color: 'text-accent-orange' },
+          { label: 'Total Calls',   value: loading ? '…' : total,      sub: 'All time',            color: 'text-primary-400' },
+          { label: 'Avg Duration',  value: loading ? '…' : avgDurMin,  sub: 'Per call',             color: 'text-accent-cyan' },
+          { label: 'Success Rate',  value: loading ? '…' : successPct, sub: 'Completed calls',      color: 'text-accent-green' },
+          { label: 'Ready to Buy',  value: loading ? '…' : hotCount,   sub: 'Intent = ready_to_buy',color: 'text-accent-orange' },
         ].map((s, i) => (
           <motion.div key={i} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
             className="glass-card p-5">
-            <p className="text-xs text-gray-500 mb-2">{s.label}</p>
-            <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-gray-400 mt-1">{s.sub}</p>
+            <p className="text-xs text-gray-500">{s.label}</p>
+            <p className={`text-2xl font-bold mt-1 ${s.color}`}>{s.value}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">{s.sub}</p>
           </motion.div>
         ))}
       </div>
@@ -69,112 +79,108 @@ export default function CallAnalytics() {
         {/* Inbound vs Outbound */}
         <div className="glass-card p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Inbound vs Outbound</h3>
-          <p className="text-xs text-gray-500 mb-4">Calls per day this week</p>
-          <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <BarChart data={callsPerDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="30%">
+          <p className="text-xs text-gray-500 mb-4">Estimated daily breakdown</p>
+          <ResponsiveContainer width="100%" height={200} minWidth={0}>
+            <BarChart data={directionData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="30%">
               <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
               <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip {...tt} />
-              <Bar dataKey="inbound" fill="#6172f3" radius={[6, 6, 0, 0]} name="Inbound" />
-              <Bar dataKey="outbound" fill="#06b6d4" radius={[6, 6, 0, 0]} name="Outbound" />
+              <Bar dataKey="inbound"  fill="#6172f3" radius={[6,6,0,0]} name="Inbound" />
+              <Bar dataKey="outbound" fill="#10b981" radius={[6,6,0,0]} name="Outbound" />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Call duration */}
+        {/* Call outcomes */}
         <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Call Duration Distribution</h3>
-          <p className="text-xs text-gray-500 mb-4">Calls grouped by duration</p>
-          <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <BarChart data={durationData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barSize={36}>
-              <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
-              <XAxis dataKey="range" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip {...tt} />
-              <Bar dataKey="count" radius={[6, 6, 0, 0]} fill="#8b5cf6" name="Calls" />
-            </BarChart>
-          </ResponsiveContainer>
+          <h3 className="text-sm font-semibold text-gray-900 mb-1">Call Outcomes</h3>
+          <p className="text-xs text-gray-500 mb-4">Distribution by outcome</p>
+          {outcomeData.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">No call data yet</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={200} minWidth={0}>
+              <BarChart data={outcomeData} layout="vertical" margin={{ top: 0, right: 10, left: 60, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" horizontal={false} />
+                <XAxis type="number" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip {...tt} />
+                <Bar dataKey="count" fill="#6172f3" radius={[0,6,6,0]} name="Calls" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Success rate timeline */}
-        <div className="lg:col-span-2 glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Call Success Rate Timeline</h3>
-          <p className="text-xs text-gray-500 mb-4">Weekly success rate trend</p>
-          <ResponsiveContainer width="100%" height={200} minWidth={0}>
-            <AreaChart data={successRate} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="successGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" />
-              <XAxis dataKey="week" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[60, 100]} tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" />
-              <Tooltip {...tt} formatter={v => [`${v}%`, 'Success Rate']} />
-              <Area type="monotone" dataKey="rate" stroke="#10b981" strokeWidth={2.5} fill="url(#successGrad)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Agent performance */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Intent breakdown */}
         <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Agent Performance</h3>
-          <div className="space-y-4">
-            {agents.map((a, i) => (
-              <div key={i}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-xs text-gray-500">{a.name}</span>
-                  <span className="text-xs font-bold text-gray-900">{a.success}%</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-gray-100">
-                  <motion.div className="h-full rounded-full"
-                    style={{ background: a.color, boxShadow: `0 0 6px ${a.color}60` }}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${a.success}%` }}
-                    transition={{ delay: 0.3 + i * 0.1, duration: 0.8 }}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-400 mt-0.5">{a.calls.toLocaleString()} calls</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Hot leads */}
-      <div className="glass-card p-5">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">🔥 Hot Leads</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-200">
-                {['Name', 'Company', 'Score', 'Status'].map(h => (
-                  <th key={h} className="text-left py-2 px-3 text-gray-500 font-medium uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {hotLeads.map((l, i) => (
-                <tr key={i} className="table-row">
-                  <td className="py-3 px-3 text-gray-900 font-medium">{l.name}</td>
-                  <td className="py-3 px-3 text-gray-500">{l.company}</td>
-                  <td className="py-3 px-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-accent-orange">{l.score}</span>
-                      <div className="flex-1 h-1.5 rounded-full bg-gray-100 max-w-16">
-                        <div className="h-full rounded-full bg-accent-orange" style={{ width: `${l.score}%` }} />
-                      </div>
+          <h3 className="text-sm font-semibold text-gray-900 mb-4">Call Intent (from transcripts)</h3>
+          {intentData.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">No transcript data yet</p>
+          ) : (
+            <div className="space-y-3">
+              {intentData.map((item, i) => {
+                const total_intents = intentData.reduce((a, b) => a + b.count, 0)
+                const pct = total_intents ? Math.round(item.count / total_intents * 100) : 0
+                const color = item.name === 'ready to buy' ? '#10b981' : item.name === 'not interested' ? '#ef4444' : '#6172f3'
+                return (
+                  <div key={i}>
+                    <div className="flex justify-between text-xs mb-1.5">
+                      <span className="text-gray-600 capitalize">{item.name}</span>
+                      <span className="text-gray-900 font-semibold">{item.count} ({pct}%)</span>
                     </div>
-                  </td>
-                  <td className="py-3 px-3"><span className="badge badge-green">{l.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                      <motion.div className="h-full rounded-full" style={{ background: color }}
+                        initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+                        transition={{ delay: 0.2 + i * 0.1, duration: 0.7 }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Sentiment + hot leads */}
+        <div className="glass-card p-5">
+          <h3 className="text-sm font-semibold text-gray-900 mb-4">Sentiment & Hot Leads</h3>
+          <div className="space-y-3 mb-4">
+            {sentimentData.length === 0 ? (
+              <p className="text-xs text-gray-400">No sentiment data yet</p>
+            ) : sentimentData.map((s, i) => {
+              const total_s = sentimentData.reduce((a, b) => a + b.value, 0)
+              const pct = total_s ? Math.round(s.value / total_s * 100) : 0
+              return (
+                <div key={i}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-gray-600">{s.name}</span>
+                    <span className="text-gray-900 font-semibold">{s.value} ({pct}%)</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                    <motion.div className="h-full rounded-full" style={{ background: s.color }}
+                      initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+                      transition={{ delay: 0.2 + i * 0.1, duration: 0.7 }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-xs font-semibold text-gray-700 mb-2">Top HIGH leads</p>
+          {hotLeads.length === 0 ? (
+            <p className="text-xs text-gray-400">No high-priority leads yet</p>
+          ) : hotLeads.map((l) => (
+            <div key={l.id} className="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
+              <div>
+                <p className="text-xs font-medium text-gray-900">{l.name}</p>
+                <p className="text-[10px] text-gray-500">{l.company_name || '—'}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-900">{l.engagement_score}</span>
+                <span className="badge badge-green text-[10px]">HIGH</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </motion.div>
