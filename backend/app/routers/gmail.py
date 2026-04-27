@@ -1,8 +1,12 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+logger = logging.getLogger("rdl_app_logger")
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user, get_db
@@ -12,10 +16,17 @@ from app.schema.gmail import (
     ApproveDraftRequest,
     EmailListResponse,
     EmailOut,
+    EmailSLAAnalytics,
+    GapNotificationListResponse,
+    GapNotificationOut,
+    GapResolveRequest,
     ResolveEmailRequest,
     SendEmailRequest,
+    SequenceCreate,
+    SequenceOut,
 )
-from app.services import gmail_service
+from app.services import gmail_service, product_knowledge_service
+from app.services import email_sequence_service
 from app.services.email_router_service import process_inbound_email
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
@@ -68,6 +79,201 @@ def list_emails(
     return EmailListResponse(items=items, total=total, page=page, limit=limit)
 
 
+@router.get("/gaps", response_model=GapNotificationListResponse)
+def list_rag_gaps(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """
+    Returns all draft-ready Sales emails where the RAG pipeline could not answer
+    at least one customer question. Used by the dashboard to show the sales team
+    what information needs to be manually filled in before sending.
+    """
+    rows = (
+        db.query(Email)
+        .filter(
+            Email.label == EmailLabel.SALES,
+            Email.followup_gaps.isnot(None),
+            Email.status == EmailStatus.DRAFT_READY,
+        )
+        .order_by(Email.received_at.desc())
+        .all()
+    )
+    items = [
+        GapNotificationOut(
+            email_id=r.id,
+            gmail_draft_id=r.gmail_draft_id,
+            customer_email=r.sender,
+            subject=r.subject,
+            received_at=r.received_at,
+            gaps=r.followup_gaps or [],
+        )
+        for r in rows
+    ]
+    return GapNotificationListResponse(items=items, total=len(items))
+
+
+@router.get("/analytics", response_model=EmailSLAAnalytics)
+def get_email_analytics(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Email pipeline analytics: SLA compliance, auto-send rate, competitor mentions."""
+    from sqlalchemy import case, extract
+
+    all_emails = db.query(Email).all()
+    sales = [e for e in all_emails if e.label == EmailLabel.SALES]
+
+    auto_sent = sum(1 for e in sales if e.status == EmailStatus.REPLIED and not e.needs_human)
+    drafted = sum(1 for e in sales if e.followup_gaps and e.status == EmailStatus.REPLIED)
+    pending = sum(1 for e in all_emails if e.needs_human and e.status == EmailStatus.PENDING_HUMAN)
+    auto_sent_rate = round(auto_sent / len(sales) * 100, 1) if sales else 0.0
+
+    # Avg reply time for replied Sales emails
+    replied = [
+        e for e in sales
+        if e.status == EmailStatus.REPLIED and e.received_at
+    ]
+    # Use updated_at as proxy for reply time (when status changed to replied)
+    reply_minutes = []
+    for e in replied:
+        if hasattr(e, 'updated_at') and e.updated_at and e.received_at:
+            diff = (e.updated_at - e.received_at).total_seconds() / 60
+            if 0 < diff < 1440:  # ignore if >24h (likely manual)
+                reply_minutes.append(diff)
+    avg_reply = round(sum(reply_minutes) / len(reply_minutes), 1) if reply_minutes else 0.0
+
+    # SLA breach: Sales emails not replied within 2 hours
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    sla_breached = sum(
+        1 for e in sales
+        if e.status in (EmailStatus.DRAFT_READY, EmailStatus.PENDING_HUMAN, EmailStatus.CLASSIFIED)
+        and e.received_at
+        and (now - e.received_at).total_seconds() > 7200
+    )
+
+    competitor_mentions = sum(1 for e in all_emails if e.competitor_mention)
+
+    by_label = {}
+    for e in all_emails:
+        lbl = e.label.value if e.label else "Unclassified"
+        by_label[lbl] = by_label.get(lbl, 0) + 1
+
+    return EmailSLAAnalytics(
+        total_sales_emails=len(sales),
+        auto_sent=auto_sent,
+        drafted_for_review=drafted,
+        pending_human=pending,
+        auto_sent_rate_pct=auto_sent_rate,
+        avg_reply_minutes=avg_reply,
+        sla_breached=sla_breached,
+        competitor_mentions=competitor_mentions,
+        by_label=by_label,
+    )
+
+
+@router.post("/sequences", response_model=SequenceOut, status_code=status.HTTP_201_CREATED)
+def create_sequence(
+    payload: SequenceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a drip email sequence for a lead. Steps are sent automatically at day_offset intervals."""
+    steps = [s.model_dump() for s in payload.steps]
+    seq = email_sequence_service.create_sequence(
+        db=db,
+        lead_id=payload.lead_id,
+        name=payload.name,
+        steps=steps,
+        created_by=current_user.email,
+    )
+    return seq
+
+
+@router.get("/sequences", response_model=list[SequenceOut])
+def list_sequences(
+    lead_id: Optional[UUID] = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return email_sequence_service.list_sequences(db, lead_id=lead_id)
+
+
+@router.post("/sequences/{sequence_id}/pause", status_code=status.HTTP_204_NO_CONTENT)
+def pause_sequence(
+    sequence_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    email_sequence_service.pause_sequence(db, sequence_id)
+
+
+@router.post("/sequences/{sequence_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_sequence(
+    sequence_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    email_sequence_service.cancel_sequence(db, sequence_id)
+
+
+@router.post("/{email_id}/gaps/resolve", response_model=EmailOut)
+def resolve_gap(
+    email_id: UUID,
+    payload: GapResolveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Sales person fills in the answer for a specific RAG gap.
+    The answer is embedded into the RAG vector store immediately so future
+    emails about the same product get a complete answer.
+    The gap is marked resolved in the email record.
+    """
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    gaps: list[dict] = list(email.followup_gaps or [])
+    if payload.gap_index < 0 or payload.gap_index >= len(gaps):
+        raise HTTPException(status_code=400, detail=f"gap_index {payload.gap_index} out of range (0–{len(gaps)-1})")
+
+    gap = gaps[payload.gap_index]
+    if gap.get("resolved"):
+        raise HTTPException(status_code=400, detail="Gap already resolved")
+
+    # Embed the answer into the product knowledge base
+    product_id_str = gap.get("product_id")
+    category = payload.category or gap.get("topic", "general")
+
+    if product_id_str:
+        try:
+            from uuid import UUID as _UUID
+            product_knowledge_service.add_entry(
+                db=db,
+                product_id=_UUID(product_id_str),
+                category=category,
+                content=f"Q: {gap['question']}\nA: {payload.answer}",
+                added_by=current_user.email,
+            )
+            product_knowledge_service.update_coverage_score(db, product_id_str)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to embed knowledge: {e}")
+
+    # Mark gap resolved
+    gaps[payload.gap_index] = {
+        **gap,
+        "resolved": True,
+        "answer": payload.answer,
+        "resolved_by": current_user.email,
+    }
+    email.followup_gaps = gaps
+    db.commit()
+    db.refresh(email)
+    return email
+
+
 @router.get("/{email_id}", response_model=EmailOut)
 def get_email(
     email_id: UUID,
@@ -99,6 +305,34 @@ def resolve_email(
     email.status = EmailStatus.REPLIED
     db.commit()
     db.refresh(email)
+
+    # Send resolution confirmation to the customer
+    try:
+        sender_email_addr = gmail_service.extract_email_address(email.sender)
+        display_name = email.sender.split("<")[0].strip() or sender_email_addr.split("@")[0]
+        first_name = display_name.split()[0].title() if display_name else "Customer"
+        resolution_subject = email.subject if email.subject.startswith("Re:") else f"Re: {email.subject}"
+        resolution_body = (
+            f"Dear {first_name},\n\n"
+            "Thank you for your patience. Your query has been reviewed and addressed by our team.\n\n"
+        )
+        if payload.note:
+            resolution_body += f"{payload.note}\n\n"
+        resolution_body += (
+            "If you have any further questions, please don't hesitate to reach out.\n\n"
+            "Best regards,\nRDL Technologies Support Team"
+        )
+        gmail_svc = gmail_service.get_gmail_service()
+        gmail_service.send_email(
+            gmail_svc,
+            to=sender_email_addr,
+            subject=resolution_subject,
+            body=resolution_body,
+            thread_id=email.gmail_thread_id,
+        )
+    except Exception as e:
+        logger.warning(f"[GMAIL] Failed to send resolution confirmation: {e}")
+
     return email
 
 

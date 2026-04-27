@@ -18,6 +18,54 @@ CALENDAR_TOKEN_PATH = Path("calendar_token.json")
 CALENDAR_ID = "primary"
 
 
+def auto_log_completed_meetings(db) -> int:
+    """
+    Check for CalendarEvents whose end_time has passed and status=SCHEDULED.
+    Auto-create a Call record for each completed Google Meet so it appears in the
+    call log and can have a transcript/outcome added later.
+    Returns number of meetings logged.
+    """
+    from app.models.call import Call, CallDirection, CallStatus
+    from app.database.core import SessionLocal
+
+    now = datetime.now(timezone.utc)
+    events = (
+        db.query(CalendarEvent)
+        .filter(
+            CalendarEvent.status == EventStatus.SCHEDULED,
+            CalendarEvent.end_time < now,
+        )
+        .all()
+    )
+    logged = 0
+    for event in events:
+        # Mark event completed
+        event.status = EventStatus.COMPLETED
+
+        # Only create call if not already logged
+        existing = db.query(Call).filter(
+            Call.livekit_room == event.google_event_id
+        ).first()
+        if not existing:
+            duration = int((event.end_time - event.start_time).total_seconds())
+            call = Call(
+                lead_id=event.lead_id,
+                direction=CallDirection.OUTBOUND,
+                status=CallStatus.COMPLETED,
+                livekit_room=event.google_event_id,   # reuse field as event reference
+                started_at=event.start_time,
+                ended_at=event.end_time,
+                duration_seconds=duration,
+                notes=f"Google Meet — auto-logged from calendar event.\nMeet link: {event.meet_link or 'N/A'}",
+            )
+            db.add(call)
+            logged += 1
+            logger.info(f"[CALENDAR] Auto-logged meeting as call: {event.title}")
+
+    db.commit()
+    return logged
+
+
 def _load_credentials():
     if not CALENDAR_TOKEN_PATH.exists():
         raise FileNotFoundError(f"Calendar token not found at {CALENDAR_TOKEN_PATH}. Run app/scripts/google_auth.py first.")
@@ -133,22 +181,33 @@ def _send_invite_email(
     description: str,
 ) -> None:
     try:
+        from zoneinfo import ZoneInfo
+        ist = ZoneInfo("Asia/Kolkata")
         gmail_svc = get_gmail_service()
-        time_str = start_time.strftime("%A, %d %B %Y at %I:%M %p IST")
+        time_str = start_time.astimezone(ist).strftime("%A, %d %B %Y at %I:%M %p IST")
         duration_mins = int((end_time - start_time).total_seconds() / 60)
-        meet_section = f"\nJoin Google Meet: {meet_link}" if meet_link else ""
+
         body = (
             f"Dear {to.split('@')[0].replace('.', ' ').title()},\n\n"
-            f"We'd like to schedule a call with you.\n\n"
-            f"Title: {title}\n"
-            f"Date & Time: {time_str}\n"
-            f"Duration: {duration_mins} minutes"
-            f"{meet_section}\n\n"
-            f"{description}\n\n"
-            f"Please confirm your availability by accepting the calendar invite.\n\n"
-            f"Best regards,\nRDL Technologies Sales Team"
+            f"Thank you for your interest in RDL Technologies. "
+            f"We are pleased to confirm your meeting with our sales team.\n\n"
+            f"**Meeting Details**\n\n"
+            f"Title    : {title}\n"
+            f"Date     : {time_str}\n"
+            f"Duration : {duration_mins} minutes\n"
         )
-        send_email(gmail_svc, to=to, subject=f"Meeting Scheduled: {title}", body=body)
+        if meet_link:
+            body += f"Join     : {meet_link}\n"
+        body += (
+            f"\nA Google Calendar invite has been sent to this email address. "
+            f"Please accept the invite to add this meeting to your calendar.\n\n"
+            f"If the time does not work for you, please reply to this email and we will reschedule.\n\n"
+            f"Looking forward to speaking with you.\n\n"
+            f"Best regards,\n"
+            f"RDL Technologies Sales Team\n"
+            f"developer20@rdltech.in"
+        )
+        send_email(gmail_svc, to=to, subject=f"Meeting Confirmed: {title}", body=body)
         logger.info(f"[CALENDAR] Invite email sent to {to}")
     except Exception as e:
         logger.error(f"[CALENDAR] Failed to send invite email to {to}: {e}")
@@ -172,15 +231,129 @@ def cancel_event(db: Session, event: CalendarEvent) -> CalendarEvent:
     return event
 
 
-def next_available_slot(hours_from_now: int = 24) -> datetime:
-    """Return a naive next-business-day slot: 24h from now, rounded to next 10:00 AM IST."""
-    now = datetime.now(timezone.utc)
-    candidate = now + timedelta(hours=hours_from_now)
-    # Round to 10:00 AM IST (UTC+5:30 = UTC+5.5h) on that day
+def _is_slot_free(cal_svc, start: datetime, end: datetime) -> bool:
+    """Return True if the primary calendar has no events in [start, end]."""
+    try:
+        result = cal_svc.freebusy().query(body={
+            "timeMin": start.isoformat(),
+            "timeMax": end.isoformat(),
+            "items": [{"id": "primary"}],
+        }).execute()
+        busy = result.get("calendars", {}).get("primary", {}).get("busy", [])
+        return len(busy) == 0
+    except Exception as e:
+        logger.warning(f"[CALENDAR] freebusy check failed: {e} — assuming free")
+        return True
+
+
+def find_next_free_slot(duration_minutes: int = 30, hours_from_now: int = 24) -> datetime:
+    """
+    Find the next free slot on the primary Google Calendar.
+    Checks 10 AM, 11 AM, 2 PM, 3 PM, 4 PM IST on weekdays for up to 14 days.
+    Falls back to 10 AM next business day if the calendar API fails.
+    """
     from zoneinfo import ZoneInfo
     ist = ZoneInfo("Asia/Kolkata")
-    local = candidate.astimezone(ist).replace(hour=10, minute=0, second=0, microsecond=0)
-    # If already past 10 AM on that day, push to next day
-    if local <= candidate.astimezone(ist):
+    # Mon–Sat, 9 AM–7 PM IST — hourly slots, prefer morning slots first
+    PREFERRED_HOURS = [9, 10, 11, 14, 15, 16, 17, 18]
+
+    try:
+        cal_svc = get_calendar_service()
+    except Exception:
+        return next_available_slot(hours_from_now)
+
+    # Load recurring blocked hours from DB
+    blocked_windows: list[tuple[int, int, int]] = []  # (day_of_week, start_hour, end_hour)
+    try:
+        from app.database.core import SessionLocal
+        from app.models.blocked_time import BlockedTime
+        with SessionLocal() as _db:
+            blocks = _db.query(BlockedTime).filter(BlockedTime.is_active == True).all()
+            blocked_windows = [(b.day_of_week, b.start_hour, b.end_hour) for b in blocks]
+    except Exception:
+        pass
+
+    now_ist = datetime.now(timezone.utc).astimezone(ist)
+    earliest = now_ist + timedelta(hours=hours_from_now)
+    start_date = earliest.date()
+
+    for day_offset in range(21):
+        check_date = start_date + timedelta(days=day_offset)
+        if check_date.weekday() == 6:  # skip Sunday only — Mon-Sat are working days
+            continue
+        for hour in PREFERRED_HOURS:
+            # Check recurring blocks
+            if any(
+                bday == check_date.weekday() and bstart <= hour < bend
+                for bday, bstart, bend in blocked_windows
+            ):
+                continue
+            slot_start = datetime(check_date.year, check_date.month, check_date.day,
+                                  hour, 0, 0, tzinfo=ist)
+            if slot_start <= earliest:
+                continue
+            slot_end = slot_start + timedelta(minutes=duration_minutes)
+            if _is_slot_free(cal_svc, slot_start, slot_end):
+                logger.info(f"[CALENDAR] Free slot found: {slot_start.isoformat()}")
+                return slot_start.astimezone(timezone.utc)
+
+    logger.warning("[CALENDAR] No free slot found in 14 days — using fallback")
+    return next_available_slot(hours_from_now)
+
+
+def next_available_slot(hours_from_now: int = 24) -> datetime:
+    """Fallback: next 10 AM IST on a Mon–Sat working day without checking the calendar."""
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    candidate = (datetime.now(timezone.utc) + timedelta(hours=hours_from_now)).astimezone(ist)
+    local = candidate.replace(hour=10, minute=0, second=0, microsecond=0)
+    if local <= candidate:
+        local = local + timedelta(days=1)
+    # Skip Sunday
+    while local.weekday() == 6:
         local = local + timedelta(days=1)
     return local.astimezone(timezone.utc)
+
+
+def reschedule_event(
+    db: Session,
+    event: CalendarEvent,
+    new_start_time: Optional[datetime] = None,
+) -> CalendarEvent:
+    """
+    Reschedule an existing calendar event.
+    If new_start_time is None, finds the next free slot automatically.
+    Patches Google Calendar (sendUpdates='all' notifies all attendees),
+    updates the DB row with the new time and any new meet_link.
+    """
+    duration_minutes = int((event.end_time - event.start_time).total_seconds() / 60)
+
+    if new_start_time is None:
+        new_start_time = find_next_free_slot(duration_minutes=duration_minutes)
+
+    new_end_time = new_start_time + timedelta(minutes=duration_minutes)
+
+    cal_svc = get_calendar_service()
+    updated = cal_svc.events().patch(
+        calendarId=CALENDAR_ID,
+        eventId=event.google_event_id,
+        body={
+            "start": {"dateTime": new_start_time.isoformat(), "timeZone": "Asia/Kolkata"},
+            "end":   {"dateTime": new_end_time.isoformat(),   "timeZone": "Asia/Kolkata"},
+        },
+        sendUpdates="all",
+    ).execute()
+
+    event.start_time = new_start_time
+    event.end_time = new_end_time
+    new_meet = _extract_meet_link(updated)
+    if new_meet:
+        event.meet_link = new_meet
+    event.calendar_link = updated.get("htmlLink", event.calendar_link)
+    event.status = EventStatus.SCHEDULED
+
+    db.commit()
+    db.refresh(event)
+
+    logger.info(f"[CALENDAR] Rescheduled '{event.title}' → {new_start_time.isoformat()} | meet={event.meet_link}")
+    return event

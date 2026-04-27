@@ -168,7 +168,7 @@ class RAGManager:
                 # Bare answer chains — used by stream_rag_database for true token streaming.
                 self.answer_chain_factual  = RDL_PROMPT | _make_llm(256)  | StrOutputParser()
                 self.answer_chain_standard = RDL_PROMPT | _make_llm(512)  | StrOutputParser()
-                self.answer_chain_expanded = RDL_PROMPT | _make_llm(1024) | StrOutputParser()
+                self.answer_chain_expanded = RDL_PROMPT | _make_llm(4096) | StrOutputParser()
 
                 # Full chains (smart-rewrite + answer) — used by query_rag_database (ainvoke path).
                 self.rag_chain_factual  = self._build_runnable_rag(self.answer_chain_factual)
@@ -178,10 +178,13 @@ class RAGManager:
                 # Cache product names for query-time product detection
                 def _load_catalog():
                     with SessionLocal() as session:
-                        return session.query(Product.id, Product.name).filter(Product.is_active == True).all()
+                        return session.query(Product.id, Product.name, Product.order_code).filter(Product.is_active == True).all()
 
                 catalog = await asyncio.to_thread(_load_catalog)
-                self._product_catalog = [{"id": p.id, "name": p.name} for p in catalog]
+                self._product_catalog = [
+                    {"id": p.id, "name": p.name, "order_code": p.order_code or ""}
+                    for p in catalog
+                ]
                 print(f"✅ Product catalog cached ({len(self._product_catalog)} products).")
 
                 self.rag_initialized.set()
@@ -302,9 +305,9 @@ class RAGManager:
             if p.category:
                 parts.append(f"Category: {p.category}")
             if p.product_link:
-                parts.append(f"Product Link: {p.product_link}")
-            if p.datasheet_link:
-                parts.append(f"Datasheet: {p.datasheet_link}")
+                parts.append(f"Product Page URL: {p.product_link}")
+            # Always emit the Datasheet field so the LLM knows whether it exists
+            parts.append(f"Datasheet URL: {p.datasheet_link}" if p.datasheet_link else "Datasheet URL: not available")
             lines.append(" | ".join(parts))
 
         return "\n".join(lines)
@@ -462,6 +465,29 @@ class RAGManager:
     # PUBLIC ENTRY POINTS
     # -------------------------------------------------------------------------
 
+    async def fetch_contexts_only(self, question: str) -> str:
+        """
+        Retrieve relevant chunks + DB enrichment WITHOUT running the answer LLM.
+        Used by the email/call draft pipeline — the draft LLM does its own generation,
+        so we only need the raw retrieved text, not a RAG-generated answer.
+        Saves ~20s vs query_rag_database() which generates a full 4096-token answer.
+        """
+        await self._ensure_initialized()
+        try:
+            docs = await self._cached_retrieve(question)
+            product_ids = list({
+                d.metadata["product_id"] for d in docs
+                if d.metadata.get("product_id")
+            })
+            db_context = await self._fetch_structured_db_context(product_ids)
+            parts = [d.page_content for d in docs]
+            if db_context:
+                parts.append(db_context)
+            return "\n\n---\n\n".join(parts)
+        except Exception as e:
+            print(f"[FETCH_CONTEXTS] Error: {e}")
+            return ""
+
     async def query_rag_database(self, question: str, session_id: str = "default") -> dict:
         await self._ensure_initialized()
 
@@ -547,7 +573,7 @@ class RAGManager:
                 }
 
             except Exception as e:
-                print(f"RAG Error: {e}")
+                uprint(f"RAG Error: {e}")
                 return {
                     "answer": f"Error occurred: {e}",
                     "standalone_query": "Error",

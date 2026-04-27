@@ -5,6 +5,7 @@ from typing import Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from langsmith import traceable
 
 from app.core.config import settings
 from app.models.communication import EmailLabel
@@ -13,10 +14,10 @@ logger = logging.getLogger("rdl_app_logger")
 
 _SYSTEM_PROMPT = """You are an email classification assistant for RDL Technologies, a B2B electronics company.
 
-Classify the incoming email into EXACTLY ONE of these labels:
+Classify the incoming email into EXACTLY ONE of these labels and also detect competitor mentions.
 
-- Sales: Inquiry about products, pricing, availability, purchase intent, RFQ, quotation request, partnership/reseller inquiry, demo request
-- Support: Technical help, troubleshooting, how-to questions, product usage issues from existing customers
+- Sales: Inquiry about products, pricing, availability, purchase intent, RFQ, quotation request, partnership/reseller inquiry, demo request, OR any question about product specifications, features, technical parameters, memory, compatibility, or capabilities from someone who does NOT already own the product. When in doubt between Sales and Support, choose Sales.
+- Support: Technical help, troubleshooting, or how-to questions ONLY from customers who clearly already own the product — look for phrases like "my device", "I purchased", "I own a", "not working", "stopped working", "error", "my unit". A plain spec question with no ownership context is Sales, not Support.
 - Grievance: Complaints, dissatisfaction, escalations, returns, refund requests, threats of escalation, negative feedback
 - Transactional: Invoices, receipts, order confirmations, shipping notifications, payment confirmations, account alerts, subscription renewals
 - Promotional: Newsletters, marketing emails, advertisements, offers from other companies, event invitations
@@ -36,7 +37,8 @@ Respond ONLY with valid JSON in this exact format:
     "reference_number": "<invoice/order/ref number if present>",
     "due_date": "<if present>",
     "vendor": "<sender company name if present>"
-  }
+  },
+  "competitor_mention": "<name of competitor brand or product if mentioned, else null>"
 }
 
 IMPORTANT: The reasoning field must be a plain sentence you write yourself. Never copy email subject text, body text, or any quoted content into the JSON — it will break JSON parsing."""
@@ -51,6 +53,7 @@ def _build_llm() -> ChatGoogleGenerativeAI:
     )
 
 
+@traceable(run_type="chain", name="classify_email")
 def classify_email(
     subject: str,
     body: str,
@@ -116,6 +119,7 @@ Body:
             "reasoning": result.get("reasoning", ""),
             "transactional_type": result.get("transactional_type"),
             "transactional_data": result.get("transactional_data"),
+            "competitor_mention": result.get("competitor_mention"),
         }
 
     except Exception as e:
@@ -126,4 +130,5 @@ Body:
             "reasoning": f"Classification error: {e}",
             "transactional_type": None,
             "transactional_data": None,
+            "competitor_mention": None,
         }

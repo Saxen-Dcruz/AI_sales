@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -5,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.company import Company
 from app.models.deal import Deal
 from app.schema.deal import DealCreate, DealUpdate
+
+logger = logging.getLogger("rdl_app_logger")
 
 
 def create_deal(db: Session, payload: DealCreate) -> Deal:
@@ -42,10 +45,52 @@ def update_deal(db: Session, deal_id: UUID, payload: DealUpdate) -> Optional[Dea
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
         return None
+
+    prev_stage = deal.stage
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(deal, field, value)
     db.commit()
     db.refresh(deal)
+
+    stage_changed = payload.stage is not None and payload.stage != prev_stage
+
+    # Recalculate lead score when stage or probability changes
+    if deal.lead_id and (stage_changed or payload.win_probability is not None):
+        try:
+            from app.services.lead_scoring_service import update_lead_score
+            update_lead_score(db, deal.lead_id)
+        except Exception as e:
+            logger.warning(f"[DEAL] Lead score update failed: {e}")
+
+    # Auto-schedule meeting when stage moves into a positive signal
+    if stage_changed and deal.lead_id:
+        try:
+            from app.services.deal_signal_service import evaluate_deal_signal
+            from app.models.leads import Lead
+            lead = db.query(Lead).filter(Lead.id == deal.lead_id).first()
+            if lead and lead.email and evaluate_deal_signal(db, deal):
+                from app.services.calendar_service import create_meeting, find_next_free_slot
+                from app.models.calendar_event import EventTrigger
+                slot = find_next_free_slot(hours_from_now=24)
+                create_meeting(
+                    db=db,
+                    attendee_email=lead.email,
+                    title=f"Sales Discussion — {deal.deal_name}",
+                    description=(
+                        f"Deal stage updated to '{deal.stage}'.\n"
+                        f"Win probability: {deal.win_probability}%\n"
+                        f"Deal value: ₹{deal.deal_value}"
+                    ),
+                    start_time=slot,
+                    duration_minutes=30,
+                    trigger=EventTrigger.DEAL_SIGNAL,
+                    lead_id=deal.lead_id,
+                    deal_id=deal.id,
+                )
+                logger.info(f"[DEAL] Auto-scheduled meeting for deal '{deal.deal_name}' (stage → {deal.stage})")
+        except Exception as e:
+            logger.warning(f"[DEAL] Auto-schedule on stage change failed: {e}")
+
     return deal
 
 

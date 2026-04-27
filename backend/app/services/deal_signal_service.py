@@ -64,12 +64,12 @@ def maybe_schedule_from_email(
     if not lead or not lead.email:
         return None
 
-    from app.services.calendar_service import create_meeting, next_available_slot
+    from app.services.calendar_service import create_meeting, find_next_free_slot
 
     # Check deal signal
     deal = _get_active_deal_for_lead(db, lead.id)
     if deal and evaluate_deal_signal(db, deal):
-        slot = next_available_slot(hours_from_now=24)
+        slot = find_next_free_slot(hours_from_now=24)
         title = f"Sales Discussion — {lead.name} ({deal.deal_name})"
         description = (
             f"Follow-up call triggered by incoming Sales email.\n"
@@ -91,7 +91,7 @@ def maybe_schedule_from_email(
 
     # Check lead signal (no deal yet)
     if evaluate_lead_signal(db, lead):
-        slot = next_available_slot(hours_from_now=24)
+        slot = find_next_free_slot(hours_from_now=24)
         title = f"Introductory Call — {lead.name}"
         description = (
             f"Call triggered by high engagement from incoming Sales email.\n"
@@ -128,9 +128,9 @@ def schedule_from_rag_gap(
         logger.info("[RAG GAP] No lead email — skipping calendar schedule")
         return None
 
-    from app.services.calendar_service import create_meeting, next_available_slot
+    from app.services.calendar_service import create_meeting, find_next_free_slot
 
-    slot = next_available_slot(hours_from_now=48)
+    slot = find_next_free_slot(hours_from_now=48)
     title = f"Product Expert Call — {lead.name}"
     description = (
         f"Scheduled because our knowledge base could not fully answer a customer query.\n\n"

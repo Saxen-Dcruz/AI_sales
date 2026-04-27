@@ -57,6 +57,9 @@ class Email(Base):
     # AI draft reply (for Sales emails)
     ai_draft = Column(Text, nullable=True)
     gmail_draft_id = Column(String, nullable=True)      # Gmail draft ID if saved to Gmail Drafts
+    followup_gaps = Column(JSON, nullable=True)         # list of follow-up items RAG couldn't answer
+
+    competitor_mention = Column(String, nullable=True)   # competitor name if detected in email
 
     needs_human = Column(Boolean, default=False, index=True)
     resolved_by = Column(String, nullable=True)         # email of human who handled it

@@ -91,6 +91,17 @@ def fetch_unread_messages(service, max_results: int = 20) -> list[dict]:
     return full
 
 
+def _strip_quoted_reply(body: str) -> str:
+    """Strip Gmail reply-chain quotes so only the new message text is processed.
+    Removes 'On [date] ... wrote:' blocks and lines starting with '>'.
+    """
+    # Gmail quote marker: "On Mon, 25 Apr 2026 at 1:26 AM ... wrote:"
+    stripped = re.split(r'\nOn .{10,80}wrote:\s*\n', body)[0]
+    # Also remove lines that start with > (RFC 2822 quoted text)
+    lines = [l for l in stripped.split('\n') if not l.lstrip().startswith('>')]
+    return '\n'.join(lines).strip()
+
+
 def parse_message(message: dict) -> dict:
     """Extract structured fields from a raw Gmail message dict."""
     headers = {h["name"].lower(): h["value"] for h in message.get("payload", {}).get("headers", [])}
@@ -100,6 +111,8 @@ def parse_message(message: dict) -> dict:
     date_str = headers.get("date", "")
 
     body_text, body_html = _extract_body(message["payload"])
+    # Strip quoted previous messages — only keep the new text the sender wrote
+    body_text = _strip_quoted_reply(body_text) if body_text else ""
 
     return {
         "gmail_message_id": message["id"],
@@ -205,9 +218,40 @@ def send_email(service, to: str, subject: str, body: str, thread_id: Optional[st
     return sent
 
 
+def _markdown_to_html(text: str) -> str:
+    """Convert basic markdown to HTML for email rendering."""
+    import re
+    # Bold **text**
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    # Bullet lines: *   text  or  -  text
+    text = re.sub(r'^\*\s{1,4}(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'^-\s{1,4}(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    # Numbered items: 1. text
+    text = re.sub(r'^\d+\.\s+(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    # Wrap consecutive <li> blocks in <ul>
+    text = re.sub(r'((?:<li>.+</li>\n?)+)', r'<ul>\1</ul>', text)
+    # Paragraphs: blank line → new paragraph
+    paragraphs = re.split(r'\n{2,}', text)
+    html_parts = []
+    for p in paragraphs:
+        p = p.strip().replace('\n', '<br>')
+        if p:
+            html_parts.append(f'<p>{p}</p>' if not p.startswith('<ul>') else p)
+    body_html = '\n'.join(html_parts)
+    return (
+        '<div style="font-family:Arial,sans-serif;font-size:14px;'
+        'line-height:1.7;color:#333;max-width:700px">'
+        f'{body_html}</div>'
+    )
+
+
 def _build_mime(to: str, subject: str, body: str) -> str:
     msg = MIMEMultipart("alternative")
     msg["to"] = to
     msg["subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
+    # plain text fallback (strips markdown syntax for clients that don't render HTML)
+    plain = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', body)
+    msg.attach(MIMEText(plain, "plain"))
+    # HTML version — rendered in Gmail and most modern clients
+    msg.attach(MIMEText(_markdown_to_html(body), "html"))
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()
