@@ -11,7 +11,7 @@ rtc:
   
   # This helps LiveKit auto-discover the correct IP (localhost or VPS IP)
   use_external_ip: true
-  node_ip: 192.168.1.73
+  node_ip: 192.168.1.104
 
 
 # We do NOT put keys here anymore. 

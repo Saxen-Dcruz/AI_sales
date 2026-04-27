@@ -40,7 +40,8 @@ import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Block as BlockIcon,
-  Visibility as VisibilityIcon
+  Visibility as VisibilityIcon,
+  LibraryBooks as KnowledgeBaseIcon
 } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { Link, useNavigate } from 'react-router-dom'
@@ -164,10 +165,10 @@ export default function Products() {
               onChange={(e) => setCategory(e.target.value)}
               startAdornment={<FilterListIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />}
             >
-              <option value="All Categories">All Categories</option>
-              <option value="Software">Software</option>
-              <option value="Services">Services</option>
-              <option value="Add-on">Add-on</option>
+              <MenuItem value="All Categories">All Categories</MenuItem>
+              <MenuItem value="Software">Software</MenuItem>
+              <MenuItem value="Services">Services</MenuItem>
+              <MenuItem value="Add-on">Add-on</MenuItem>
             </Select>
           </FormControl>
 
@@ -273,6 +274,13 @@ export default function Products() {
           }}>
             {selectedProduct?.status === 'Active' ? <BlockIcon sx={{ mr: 1, fontSize: 18 }} /> : <CheckCircleIcon sx={{ mr: 1, fontSize: 18 }} />}
             {selectedProduct?.status === 'Active' ? 'Deactivate' : 'Activate'}
+          </MenuItem>
+          <MenuItem onClick={() => {
+            navigate(`/knowledge-base/${selectedProduct.id}`)
+            setAnchorEl(null)
+          }}>
+            <KnowledgeBaseIcon sx={{ mr: 1, fontSize: 18 }} />
+            Add Knowledge Base
           </MenuItem>
           <MenuItem onClick={() => handleDeleteClick(selectedProduct)} sx={{ color: 'error.main' }}>
             <DeleteIcon sx={{ mr: 1, fontSize: 18 }} />

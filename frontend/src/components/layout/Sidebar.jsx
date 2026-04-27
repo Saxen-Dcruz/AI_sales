@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Linkedin, Phone, Users, MessageSquare,
   Target, Bot, Settings, Bell, ChevronRight, Zap, X,
-  BarChart3, PhoneCall, UserCheck, TrendingUp, Package, PlusSquare
+  BarChart3, PhoneCall, UserCheck, TrendingUp, Package, PlusSquare,
+  BrainCircuit, AlertCircle, Mail, Calendar, BookOpen
 } from 'lucide-react'
 
 const navSections = [
@@ -18,6 +19,7 @@ const navSections = [
     items: [
       { path: '/linkedin', icon: Linkedin, label: 'LinkedIn Analytics' },
       { path: '/calls', icon: PhoneCall, label: 'Call Analytics' },
+      { path: '/ai-analytics', icon: BrainCircuit, label: 'AI Analytics' },
       { path: '/users', icon: UserCheck, label: 'User Analytics' },
     ]
   },
@@ -25,8 +27,16 @@ const navSections = [
     title: 'Management',
     items: [
       { path: '/leads', icon: Target, label: 'Lead Management' },
+      { path: '/gaps', icon: AlertCircle, label: 'Knowledge Gaps' },
       { path: '/feedback', icon: MessageSquare, label: 'User Feedback' },
       { path: '/ai-logs', icon: Bot, label: 'AI Call Logs' },
+    ]
+  },
+  {
+    title: 'Communication',
+    items: [
+      { path: '/gmail', icon: Mail, label: 'Gmail Inbox' },
+      { path: '/calendar', icon: Calendar, label: 'Calendar' },
     ]
   },
   {
