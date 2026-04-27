@@ -151,16 +151,20 @@ def get_chunk_type_filter(question: str) -> dict:
 
 def detect_product_ids(question: str, catalog: List[dict]) -> List[str]:
     """
-    Match product names mentioned in the query against the provided catalog.
-    Conservative: only matches product names >= 8 chars that appear verbatim
-    in the normalized question. Normalization strips hyphens/slashes so names
-    like "IoT Starter Kit- Energy Monitoring Kit" match questions that omit the dash.
+    Match products mentioned in the query by name or order code.
+    - Name match: normalized substring >= 8 chars (strips hyphens/slashes).
+    - Order code match: exact case-insensitive match (e.g. "RDL740").
     Returns string UUIDs — pgvector serialises metadata to JSON so UUIDs are strings.
     """
     q_norm = normalize(question)
+    q_lower = question.lower()
     matched = set()
     for p in catalog:
         name_norm = normalize(p["name"])
         if len(name_norm) >= 8 and name_norm in q_norm:
+            matched.add(str(p["id"]))
+            continue
+        order_code = p.get("order_code", "")
+        if order_code and order_code.lower() in q_lower:
             matched.add(str(p["id"]))
     return list(matched)

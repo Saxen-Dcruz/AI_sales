@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 
@@ -57,6 +57,9 @@ class LeadOut(BaseModel):
     global_ai_summary: Optional[str] = None
     next_best_action: Optional[str] = None
     engagement_score: int
+    classification: str
+    classification_reason: Optional[str] = None
+    inbound_first_contact: Optional[bool] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -67,3 +70,48 @@ class LeadListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class LeadClassificationTierStats(BaseModel):
+    count: int
+    avg_score: float
+    pct: float
+
+
+class LeadClassificationSummary(BaseModel):
+    total: int
+    high: LeadClassificationTierStats
+    medium: LeadClassificationTierStats
+    low: LeadClassificationTierStats
+    unclassified: LeadClassificationTierStats
+
+
+class LeadScoreSignals(BaseModel):
+    intent: Optional[str] = None
+    urgency: Optional[str] = None
+    sentiment: Optional[str] = None
+    inbound_first_contact: bool
+    total_emails: int
+    inbound_emails: int
+    outbound_emails: int
+    total_calls: int
+    inbound_calls: int
+    outbound_calls: int
+    total_meetings: int
+    days_since_last_activity: Optional[int] = None
+    active_deal_stage: Optional[str] = None
+    deal_win_probability: Optional[float] = None
+    has_unresolved_gaps: bool
+    total_gap_count: int
+    call_response_count: int      # calls where outcome != no_answer
+    email_reply_count: int        # inbound emails (they replied to us)
+
+
+class LeadScoreBreakdown(BaseModel):
+    lead_id: UUID
+    name: str
+    classification: str
+    engagement_score: int
+    classification_reason: Optional[str]
+    next_best_action: Optional[str]
+    signals: LeadScoreSignals

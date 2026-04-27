@@ -1,3 +1,4 @@
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -25,6 +26,8 @@ def list_leads(
     limit: int = 20,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    at_risk: Optional[bool] = None,
+    classification: Optional[str] = None,
 ) -> Tuple[List[Lead], int]:
     q = db.query(Lead)
     if status:
@@ -34,9 +37,42 @@ def list_leads(
         q = q.filter(
             or_(Lead.name.ilike(pattern), Lead.email.ilike(pattern), Lead.current_role.ilike(pattern))
         )
+    if at_risk is True:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        q = q.filter(
+            Lead.engagement_score < 40,
+            or_(Lead.last_contacted_at < cutoff, Lead.last_contacted_at.is_(None)),
+        )
+    if classification:
+        q = q.filter(Lead.classification == classification.upper())
     total = q.count()
     items = q.order_by(Lead.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
     return items, total
+
+
+def get_classification_summary(db: Session) -> dict:
+    """Count and average score per classification tier."""
+    leads = db.query(Lead).all()
+    total = len(leads)
+
+    tiers: dict = {"HIGH": [], "MEDIUM": [], "LOW": [], "UNCLASSIFIED": []}
+    for lead in leads:
+        tier = (lead.classification or "UNCLASSIFIED").upper()
+        tiers.setdefault(tier, []).append(lead.engagement_score or 0)
+
+    def _stats(scores: list) -> dict:
+        count = len(scores)
+        avg   = round(sum(scores) / count, 1) if count else 0.0
+        pct   = round(count / total * 100, 1) if total else 0.0
+        return {"count": count, "avg_score": avg, "pct": pct}
+
+    return {
+        "total":        total,
+        "high":         _stats(tiers["HIGH"]),
+        "medium":       _stats(tiers["MEDIUM"]),
+        "low":          _stats(tiers["LOW"]),
+        "unclassified": _stats(tiers["UNCLASSIFIED"]),
+    }
 
 
 def update_lead(db: Session, lead_id: UUID, payload: LeadUpdate) -> Optional[Lead]:

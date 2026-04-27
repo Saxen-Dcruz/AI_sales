@@ -22,6 +22,7 @@ class Product(Base):
     user_manual_link = Column(String, nullable=True)
     sdk_link = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    coverage_score = Column(Float, nullable=True)   # % of RAG gaps resolved for this product
 
     embeddings = relationship("ProductEmbedding", back_populates="product", cascade="all, delete-orphan")
 

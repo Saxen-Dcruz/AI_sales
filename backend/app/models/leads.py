@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
+from sqlalchemy import Boolean, Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -31,6 +31,11 @@ class Lead(Base):
     global_ai_summary = Column(Text, nullable=True)
     next_best_action = Column(String, nullable=True)
     engagement_score = Column(Integer, default=0)
+
+    # Classification tier and reasoning (updated with every score refresh)
+    classification = Column(String, default="UNCLASSIFIED")  # HIGH | MEDIUM | LOW | UNCLASSIFIED
+    classification_reason = Column(Text, nullable=True)       # human-readable explanation of all signals
+    inbound_first_contact = Column(Boolean, nullable=True)    # True if lead contacted us first (inbound)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

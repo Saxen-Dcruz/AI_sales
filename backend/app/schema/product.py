@@ -18,6 +18,7 @@ class ProductBase(BaseModel):
 
     bulk_price: Optional[float] = 0.0
     is_active: bool = True
+    coverage_score: Optional[float] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
@@ -27,21 +28,18 @@ class ProductCreate(ProductBase):
 
 
 class ProductUpdate(BaseModel):
-    name: Optional[str] = Field(None, alias="Product_id")
-    order_code: Optional[str] = Field(None, alias="Order Code")
-    category: Optional[str] = Field(None, alias="Category")
-    sub_category: Optional[str] = Field(None, alias="Sub-category")
-    brand: Optional[str] = Field(None, alias="Brand")
-    single_price: Optional[float] = Field(None, alias="Price")
-
-    product_link: Optional[str] = Field(None, alias="Product Link")
-    datasheet_link: Optional[str] = Field(None, alias="Data Sheet link")
-    user_manual_link: Optional[str] = Field(None, alias="User Manual")
-    sdk_link: Optional[str] = Field(None, alias="Learning Center SDK")
-
+    name: Optional[str] = None
+    order_code: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    brand: Optional[str] = None
+    single_price: Optional[float] = None
     bulk_price: Optional[float] = None
+    product_link: Optional[str] = None
+    datasheet_link: Optional[str] = None
+    user_manual_link: Optional[str] = None
+    sdk_link: Optional[str] = None
     is_active: Optional[bool] = None
-
     sections: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
