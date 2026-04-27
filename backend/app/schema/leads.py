@@ -49,6 +49,7 @@ class LeadOut(BaseModel):
     current_role: Optional[str] = None
     about: Optional[str] = None
     company_id: Optional[UUID] = None
+    company_name: Optional[str] = None
     status: str
     interest_level: str
     overall_sentiment: str

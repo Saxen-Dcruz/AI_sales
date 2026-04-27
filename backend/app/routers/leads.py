@@ -68,7 +68,13 @@ def list_leads(
         db, page=page, limit=limit, status=status, search=search,
         at_risk=at_risk, classification=classification,
     )
-    return LeadListResponse(items=items, total=total, page=page, limit=limit)
+    # Populate company_name from the relationship
+    out = []
+    for lead in items:
+        lo = LeadOut.model_validate(lead)
+        lo.company_name = lead.company.name if lead.company else None
+        out.append(lo)
+    return LeadListResponse(items=out, total=total, page=page, limit=limit)
 
 
 @router.get("/{lead_id}/score-breakdown", response_model=LeadScoreBreakdown)
@@ -186,7 +192,9 @@ def get_lead(
     lead = leads_service.get_lead(db, lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
-    return lead
+    lo = LeadOut.model_validate(lead)
+    lo.company_name = lead.company.name if lead.company else None
+    return lo
 
 
 @router.patch("/{lead_id}", response_model=LeadOut)

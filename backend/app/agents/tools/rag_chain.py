@@ -573,7 +573,7 @@ class RAGManager:
                 }
 
             except Exception as e:
-                uprint(f"RAG Error: {e}")
+                print(f"RAG Error: {e}")
                 return {
                     "answer": f"Error occurred: {e}",
                     "standalone_query": "Error",
