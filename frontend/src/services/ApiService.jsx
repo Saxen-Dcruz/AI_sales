@@ -4,7 +4,7 @@ const successCaseCode = [200, 201];
 
 const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
     const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
-    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.73:8003/api/v1/';
+    const END_POINT = import.meta.env.VITE_API_URL || 'http://192.168.1.104:8003/api/v1/';
 
     if (!userDetails) {
         return Promise.reject("Unauthorized: No user details found.");
@@ -70,8 +70,8 @@ const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack
 export const
     LoginService = (data) => {
         const PATH = 'auth/login';
-        // const END_POINT = 'http://192.168.1.73:8003/api/v1/';
-        const END_POINT = 'http://192.168.1.73:8003/api/v1/';
+        // const END_POINT = 'http://192.168.1.104:8003/api/v1/';
+        const END_POINT = 'http://192.168.1.104:8003/api/v1/';
         const SERVICE_METHOD = 'POST';
         const headers = {
             Accept: 'application/json',
@@ -124,4 +124,36 @@ export const DeleteProductService = (id, sucess, error) => {
 export const ToggleActiveInactiveService = (data, sucess, error) => {
     return _fetchService('toggle-active-inactive', 'PUT', data, sucess, error);
 }
+
+// AI & RAG Analytics
+export const GetAIAnalyticsService = (sucess, error) => {
+    return _fetchService('ai/analytics', 'GET', null, sucess, error);
+}
+
+export const GetAILogsService = (params, sucess, error) => {
+    const queryParams = new URLSearchParams(params).toString();
+    return _fetchService(`ai/analytics/logs?${queryParams}`, 'GET', null, sucess, error);
+}
+
+export const GetGapsService = (sucess, error) => {
+    return _fetchService('gaps', 'GET', null, sucess, error);
+}
+
+export const ResolveGapService = (id, data, sucess, error) => {
+    return _fetchService(`gaps/${id}/resolve`, 'POST', data, sucess, error);
+}
+
+// Gmail & Calendar
+export const GetGmailMessagesService = (sucess, error) => {
+    return _fetchService('gmail/messages', 'GET', null, sucess, error);
+}
+
+export const SyncGmailService = (sucess, error) => {
+    return _fetchService('gmail/sync', 'POST', null, sucess, error);
+}
+
+export const GetCalendarEventsService = (sucess, error) => {
+    return _fetchService('calendar/events', 'GET', null, sucess, error);
+}
+
 

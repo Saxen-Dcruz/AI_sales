@@ -1,0 +1,30 @@
+[33m3466289[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfrontend-dev[m[33m, [m[1;31morigin/frontend-dev[m[33m)[m HEAD@{0}: commit (merge): Merge branch 'dev' into frontend-dev
+[33me269670[m HEAD@{1}: checkout: moving from dev to frontend-dev
+[33m63c312a[m[33m ([m[1;31morigin/dev[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mdev[m[33m)[m HEAD@{2}: pull origin dev: Fast-forward
+[33m4c1930a[m HEAD@{3}: checkout: moving from frontend-dev to dev
+[33me269670[m HEAD@{4}: commit: corrected cod3e
+[33mbedefbd[m HEAD@{5}: commit: corrected cod3e
+[33mbc6f5db[m HEAD@{6}: commit: Product CRUD api to frontedn done
+[33m21f30bb[m HEAD@{7}: commit (merge): Merge branch 'dev' into frontend-dev
+[33m3874c13[m HEAD@{8}: checkout: moving from dev to frontend-dev
+[33m4c1930a[m HEAD@{9}: pull origin dev: Fast-forward
+[33m51bea63[m HEAD@{10}: checkout: moving from frontend-dev to dev
+[33m3874c13[m HEAD@{11}: commit: blah
+[33mfb81668[m HEAD@{12}: merge dev: Merge made by the 'ort' strategy.
+[33mb5c28c9[m HEAD@{13}: checkout: moving from dev to frontend-dev
+[33m51bea63[m HEAD@{14}: pull origin dev: Fast-forward
+[33m6ba87ae[m HEAD@{15}: checkout: moving from frontend-dev to dev
+[33mb5c28c9[m HEAD@{16}: checkout: moving from dev to frontend-dev
+[33m6ba87ae[m HEAD@{17}: checkout: moving from frontend-dev to dev
+[33mb5c28c9[m HEAD@{18}: commit: ui changed
+[33m6ba87ae[m HEAD@{19}: merge dev: Fast-forward
+[33m2abb9ef[m HEAD@{20}: checkout: moving from dev to frontend-dev
+[33m6ba87ae[m HEAD@{21}: pull origin dev: Fast-forward
+[33m2abb9ef[m HEAD@{22}: checkout: moving from frontend-dev to dev
+[33m2abb9ef[m HEAD@{23}: checkout: moving from dev to frontend-dev
+[33m2abb9ef[m HEAD@{24}: checkout: moving from frontend-dev to dev
+[33m2abb9ef[m HEAD@{25}: merge dev: Fast-forward
+[33m102c30a[m HEAD@{26}: checkout: moving from dev to frontend-dev
+[33m2abb9ef[m HEAD@{27}: pull origin dev: Merge made by the 'ort' strategy.
+[33m183f379[m HEAD@{28}: commit: initial commit '
+[33m102c30a[m HEAD@{29}: clone: from https://github.com/Saxen-Dcruz/AI_sales.git
