@@ -50,13 +50,36 @@ def test_get_product(client: TestClient, auth_headers: dict):
 
 def test_update_product(client: TestClient, auth_headers: dict):
     created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
-    resp = client.put(
+    resp = client.patch(
         f"{BASE}/{created['id']}",
-        json={"Brand": "UpdatedBrand", "Price": 9999.0},
+        json={"brand": "UpdatedBrand", "single_price": 9999.0},
         headers=auth_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["Brand"] == "UpdatedBrand"
+    data = resp.json()
+    assert data["Brand"] == "UpdatedBrand"
+    assert data["Price"] == 9999.0
+
+
+def test_update_product_links(client: TestClient, auth_headers: dict):
+    """PATCH can update all RAG-relevant link and pricing fields."""
+    created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
+    resp = client.patch(
+        f"{BASE}/{created['id']}",
+        json={
+            "datasheet_link": "https://rdltech.in/datasheets/test.pdf",
+            "product_link": "https://rdltech.in/products/test",
+            "user_manual_link": "https://rdltech.in/manuals/test.pdf",
+            "bulk_price": 4200.0,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["Data Sheet link"] == "https://rdltech.in/datasheets/test.pdf"
+    assert data["Product Link"] == "https://rdltech.in/products/test"
+    assert data["User Manual"] == "https://rdltech.in/manuals/test.pdf"
+    assert data["bulk_price"] == 4200.0
 
 
 def test_delete_product(client: TestClient, auth_headers: dict):
@@ -99,6 +122,42 @@ def test_create_product_no_auth(client: TestClient):
     client.cookies.clear()
     try:
         resp = client.post(f"{BASE}/", json=_payload())
+        assert resp.status_code == 401
+    finally:
+        for k, v in saved.items():
+            client.cookies.set(k, v)
+
+
+def test_toggle_availability(client: TestClient, auth_headers: dict):
+    # Create a product (is_active=True by default)
+    resp = client.post(f"{BASE}/", json=_payload(), headers=auth_headers)
+    assert resp.status_code == 201
+    product_id = resp.json()["id"]
+    assert resp.json()["is_active"] is True
+
+    # Toggle off
+    resp = client.patch(f"{BASE}/{product_id}/availability", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
+
+    # Toggle back on
+    resp = client.patch(f"{BASE}/{product_id}/availability", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True
+
+
+def test_toggle_availability_not_found(client: TestClient, auth_headers: dict):
+    import uuid
+    resp = client.patch(f"{BASE}/{uuid.uuid4()}/availability", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_toggle_availability_no_auth(client: TestClient):
+    import uuid
+    saved = dict(client.cookies)
+    client.cookies.clear()
+    try:
+        resp = client.patch(f"{BASE}/{uuid.uuid4()}/availability")
         assert resp.status_code == 401
     finally:
         for k, v in saved.items():

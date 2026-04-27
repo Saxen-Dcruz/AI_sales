@@ -56,3 +56,48 @@ class AnalyticsLogsResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+# ── RAG gap analytics ─────────────────────────────────────────────────────────
+
+class GapTopicCount(BaseModel):
+    topic: str
+    count: int
+
+
+class GapProductCount(BaseModel):
+    product_name: str
+    total_gaps: int
+    resolved_gaps: int
+    resolution_rate: float
+
+
+class FrequentQuestion(BaseModel):
+    question: str
+    count: int
+    topic: str
+    product_name: Optional[str]
+
+
+class GapAnalyticsSummary(BaseModel):
+    total_gaps: int
+    resolved_gaps: int
+    unresolved_gaps: int
+    resolution_rate: float
+    by_topic: List[GapTopicCount]
+    by_product: List[GapProductCount]
+    top_unanswered_questions: List[FrequentQuestion]
+
+
+# ── Product sentiment analytics ───────────────────────────────────────────────
+
+class ProductSentimentOut(BaseModel):
+    product_name: str
+    total_mentions: int
+    positive_pct: float
+    neutral_pct: float
+    frustrated_pct: float
+
+
+class ProductSentimentResponse(BaseModel):
+    items: List[ProductSentimentOut]

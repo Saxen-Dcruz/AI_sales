@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -5,6 +7,7 @@ from uuid import UUID
 
 from app.api.dependencies import get_current_user
 from app.database.core import get_db
+from app.models.deal import Deal
 from app.models.user import User
 from app.schema.deal import DealCreate, DealListResponse, DealOut, DealUpdate
 from app.services import deal_service
@@ -30,9 +33,24 @@ def list_deals(
     limit: int = Query(20, ge=1, le=100),
     stage: Optional[str] = Query(None),
     company_id: Optional[UUID] = Query(None),
+    at_risk: bool = Query(False, description="Return only open deals with no activity in 7+ days"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    if at_risk:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        q = (
+            db.query(Deal)
+            .filter(
+                Deal.stage.notin_(["Closed Won", "Closed Lost"]),
+                Deal.created_at < cutoff,
+            )
+            .order_by(Deal.created_at.asc())
+        )
+        total = q.count()
+        items = q.offset((page - 1) * limit).limit(limit).all()
+        return DealListResponse(items=items, total=total, page=page, limit=limit)
+
     items, total = deal_service.list_deals(db, page=page, limit=limit, stage=stage, company_id=company_id)
     return DealListResponse(items=items, total=total, page=page, limit=limit)
 
