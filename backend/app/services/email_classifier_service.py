@@ -23,6 +23,16 @@ Classify the incoming email into EXACTLY ONE of these labels and also detect com
 - Promotional: Newsletters, marketing emails, advertisements, offers from other companies, event invitations
 - Personal: Greetings, congratulations, wishes, informal messages with no business intent
 
+REPLY HANDLING: If "ORIGINAL THREAD" context is provided, the incoming message is a reply in an ongoing conversation. Classify it based on the ORIGINAL thread's topic and intent — not just the reply text alone. A short confirmation reply ("ok", ".", "thanks", "sure") to a Sales inquiry is still Sales, not Personal.
+
+AUTOMATED SENDER RULES — classify immediately without deviation:
+- Sender contains "calendar-notification@google.com" → Transactional
+- Sender contains "drive-shares-dm-noreply@google.com" → Transactional
+- Sender contains "mailer-daemon@" → Transactional
+- Sender contains "CloudPlatform-noreply@google.com" → Transactional
+- Sender contains "no-reply@" or "noreply@" and body contains invoice/order/receipt keywords → Transactional
+- Subject starts with "Notification:" and sender is Google Calendar → Transactional
+
 For Transactional emails also identify the transactional_type:
 - invoice, receipt, order_confirmation, shipping, payment, account, other
 
@@ -58,15 +68,27 @@ def classify_email(
     subject: str,
     body: str,
     sender: str,
+    thread_context: Optional[str] = None,
 ) -> dict:
     """
     Classify an email using Gemini. Returns dict with label, confidence, reasoning,
     transactional_type, transactional_data.
     Falls back to Unclassified on any error.
+    thread_context: body of the original message in the thread (for reply emails).
     """
-    # Sanitize subject — remove double quotes that break Gemini's JSON output
     safe_subject = subject.replace('"', "'")
-    user_content = f"""From: {sender}
+
+    if thread_context:
+        user_content = f"""From: {sender}
+Subject: {safe_subject}
+
+--- ORIGINAL THREAD ---
+{thread_context[:1500]}
+
+--- NEW REPLY ---
+{body[:1500]}"""
+    else:
+        user_content = f"""From: {sender}
 Subject: {safe_subject}
 
 Body:

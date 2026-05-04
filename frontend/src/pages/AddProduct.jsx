@@ -99,8 +99,12 @@ export default function AddProduct() {
           setFetching(false)
         },
         (status, err) => {
-          setStatusMsg({ type: 'error', text: `Failed to load product: ${err}` })
           setFetching(false)
+          if (status === 401) {
+            navigate('/login')
+          } else {
+            setStatusMsg({ type: 'error', text: `Failed to load product: ${err}` })
+          }
         }
       )
     }

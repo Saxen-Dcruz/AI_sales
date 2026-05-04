@@ -1,24 +1,17 @@
-import { AnimatePresence, motion } from 'framer-motion'
+import { useState, useEffect, useMemo } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
-  AlertCircle,
-  Brain,
-  Briefcase,
-  Calendar,
-  CalendarDays,
-  CheckCircle,
-  ChevronLeft, ChevronRight,
-  Clock,
-  ExternalLink,
-  MousePointer,
-  RefreshCw,
-  Tag,
-  User,
-  Video,
-  X,
-  Zap
+  ChevronLeft, ChevronRight, RefreshCw, ExternalLink,
+  Video, Calendar, Clock, User, Zap, Brain, MousePointer, X,
+  CheckCircle, AlertCircle, CalendarDays, Briefcase, Tag, Link as LinkIcon
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { GetCalendarEventsService } from '../services/ApiService'
+import {
+  GetCalendarEventsService,
+  GetAvailabilityService,
+  UpdateAvailabilityDayService,
+  GetSchedulingConfigService,
+  UpdateSchedulingConfigService,
+} from '../services/ApiService'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -236,8 +229,177 @@ function EventDetail({ event, onClose }) {
 
 // ─── Main Calendar Component ────────────────────────────────────────────────
 
+const DAYS_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const BUFFER_OPTIONS = [0, 10, 15, 20, 30, 45, 60]
+
+function AvailabilityPanel() {
+  const [availability, setAvailability] = useState([])
+  const [config, setConfig] = useState({ buffer_minutes: 15, slot_duration_minutes: 30, max_meetings_per_day: 8 })
+  const [saving, setSaving] = useState(null) // day_of_week being saved, or 'config'
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      new Promise(res => GetAvailabilityService(res, () => res([]))),
+      new Promise(res => GetSchedulingConfigService(res, () => res(null))),
+    ]).then(([avail, cfg]) => {
+      setAvailability(avail || [])
+      if (cfg) setConfig(cfg)
+      setLoaded(true)
+    })
+  }, [])
+
+  const updateDay = (dow, field, value) => {
+    setAvailability(prev => prev.map(d =>
+      d.day_of_week === dow ? { ...d, [field]: value } : d
+    ))
+  }
+
+  const saveDay = (day) => {
+    setSaving(day.day_of_week)
+    UpdateAvailabilityDayService(day.day_of_week, {
+      is_available: day.is_available,
+      start_hour: day.start_hour,
+      start_minute: day.start_minute,
+      end_hour: day.end_hour,
+      end_minute: day.end_minute,
+    },
+      () => setSaving(null),
+      (_s, err) => { setSaving(null); alert('Save failed: ' + err) }
+    )
+  }
+
+  const saveConfig = () => {
+    setSaving('config')
+    UpdateSchedulingConfigService(config,
+      () => setSaving(null),
+      (_s, err) => { setSaving(null); alert('Save failed: ' + err) }
+    )
+  }
+
+  if (!loaded) return <div className="flex justify-center py-10 text-gray-400 text-sm">Loading availability...</div>
+
+  return (
+    <div className="space-y-5">
+      {/* Buffer & slot config */}
+      <div className="glass-card p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Meeting Settings</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">
+              Buffer between meetings
+            </label>
+            <select value={config.buffer_minutes}
+              onChange={e => setConfig(c => ({ ...c, buffer_minutes: Number(e.target.value) }))}
+              className="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-blue-400">
+              {BUFFER_OPTIONS.map(m => (
+                <option key={m} value={m}>{m === 0 ? 'No buffer' : `${m} min`}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1">Prevents back-to-back meetings</p>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">
+              Default slot duration
+            </label>
+            <select value={config.slot_duration_minutes}
+              onChange={e => setConfig(c => ({ ...c, slot_duration_minutes: Number(e.target.value) }))}
+              className="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-blue-400">
+              {[15, 20, 30, 45, 60, 90].map(m => (
+                <option key={m} value={m}>{m} min</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">
+              Max meetings per day
+            </label>
+            <select value={config.max_meetings_per_day}
+              onChange={e => setConfig(c => ({ ...c, max_meetings_per_day: Number(e.target.value) }))}
+              className="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-blue-400">
+              {[2,3,4,5,6,7,8,10,12].map(n => (
+                <option key={n} value={n}>{n} meetings</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button onClick={saveConfig} disabled={saving === 'config'}
+            className="px-5 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
+            {saving === 'config' ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
+      </div>
+
+      {/* Per-day availability */}
+      <div className="glass-card p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Weekly Availability</h3>
+        <div className="space-y-3">
+          {availability.map(day => (
+            <div key={day.day_of_week}
+              className={`flex items-center gap-4 p-3 rounded-xl transition-all ${
+                day.is_available ? 'bg-gray-50' : 'bg-gray-50/40 opacity-60'
+              }`}>
+              {/* Toggle */}
+              <button onClick={() => updateDay(day.day_of_week, 'is_available', !day.is_available)}
+                className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${
+                  day.is_available ? 'bg-blue-600' : 'bg-gray-300'
+                }`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  day.is_available ? 'left-4' : 'left-0.5'
+                }`} />
+              </button>
+
+              {/* Day name */}
+              <span className="text-xs font-semibold text-gray-700 w-24 flex-shrink-0">
+                {DAYS_LONG[day.day_of_week]}
+              </span>
+
+              {/* Time range */}
+              {day.is_available ? (
+                <div className="flex items-center gap-2 flex-1">
+                  <select value={day.start_hour}
+                    onChange={e => updateDay(day.day_of_week, 'start_hour', Number(e.target.value))}
+                    className="px-2 py-1 text-xs rounded-lg bg-white border border-gray-200 focus:outline-none focus:border-blue-400">
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-gray-400">to</span>
+                  <select value={day.end_hour}
+                    onChange={e => updateDay(day.day_of_week, 'end_hour', Number(e.target.value))}
+                    className="px-2 py-1 text-xs rounded-lg bg-white border border-gray-200 focus:outline-none focus:border-blue-400">
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-gray-400 ml-1">
+                    {day.end_hour - day.start_hour}h window
+                  </span>
+                </div>
+              ) : (
+                <span className="text-xs text-gray-400 flex-1">Not available</span>
+              )}
+
+              {/* Save */}
+              <button onClick={() => saveDay(day)} disabled={saving === day.day_of_week}
+                className="flex-shrink-0 px-3 py-1 rounded-lg bg-blue-50 text-blue-600 text-xs font-semibold hover:bg-blue-100 transition-all disabled:opacity-60">
+                {saving === day.day_of_week ? '...' : 'Save'}
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-400 mt-3">
+          The scheduler will only book meetings within these hours, with the configured buffer between slots.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function CalendarIntegration() {
   const today = new Date()
+  const [activeTab, setActiveTab] = useState('calendar') // 'calendar' | 'availability'
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [events, setEvents] = useState([])
@@ -310,16 +472,37 @@ export default function CalendarIntegration() {
               {totalEvents} events · {dealSignals} deal signals · {manual} manual meetings
             </p>
           </div>
-          <button
-            onClick={fetchEvents}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:shadow-md transition-all"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin text-indigo-500' : ''} />
-            <span className="text-sm font-medium text-gray-600">Refresh</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-white border border-gray-200 shadow-sm">
+              <button onClick={() => setActiveTab('calendar')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'calendar' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}>
+                Calendar
+              </button>
+              <button onClick={() => setActiveTab('availability')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'availability' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}>
+                Availability
+              </button>
+            </div>
+            <button
+              onClick={fetchEvents}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:shadow-md transition-all"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin text-indigo-500' : ''} />
+              <span className="text-sm font-medium text-gray-600">Refresh</span>
+            </button>
+          </div>
         </div>
 
-        {/* Stats Cards */}
+        {/* Availability settings tab */}
+        {activeTab === 'availability' && <AvailabilityPanel />}
+
+        {/* Calendar tab content */}
+        {activeTab === 'calendar' && <div className="space-y-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { label: 'Total Events', value: totalEvents, icon: CalendarDays, color: 'text-indigo-600', bg: 'bg-indigo-50' },
@@ -536,6 +719,8 @@ export default function CalendarIntegration() {
             </AnimatePresence>
           </div>
         </div>
+        </div>} {/* end calendar tab */}
+
       </div>
     </div>
   )

@@ -47,7 +47,7 @@ function CoverageBar({ score }) {
   )
 }
 
-function ProductCard({ product, onEdit, onToggle, onDelete, onView }) {
+function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   const isActive = product.status === 'Active'
   return (
     <motion.div
@@ -150,6 +150,8 @@ function ProductCard({ product, onEdit, onToggle, onDelete, onView }) {
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-blue-600 transition-all">
           <Edit2 size={12} />
           Edit
+        </button>
+        <button onClick={() => onKb(product.id)}
         </button> */}
         <button onClick={() => onView(product)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-purple-600 transition-all">
@@ -174,7 +176,7 @@ function ProductCard({ product, onEdit, onToggle, onDelete, onView }) {
   )
 }
 
-function ProductRow({ product, onEdit, onToggle, onDelete, onView }) {
+function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   const isActive = product.status === 'Active'
   const pct = Math.round((product.coverage_score ?? 0) * 100)
   const coverageColor = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444'
@@ -227,7 +229,7 @@ function ProductRow({ product, onEdit, onToggle, onDelete, onView }) {
             className="p-1.5 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-400 transition-all">
             <Edit2 size={13} />
           </button>
-          <button onClick={() => onView(product)}
+          <button onClick={() => onKb(product.id)}
             className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all">
             <BookOpen size={13} />
           </button>
@@ -412,6 +414,7 @@ export default function Products() {
                 <ProductCard
                   product={product}
                   onEdit={(id) => navigate(`/edit-product/${id}`)}
+                  onKb={(id) => navigate(`/knowledge-base/${id}`)}
                   onToggle={handleToggle}
                   onDelete={(p) => { setSelectedProduct(p); setDeleteDialogOpen(true) }}
                   onView={(p) => { setDetailProduct(p); setDetailOpen(true) }}
