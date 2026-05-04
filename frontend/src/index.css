@@ -2,6 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+ * NexusAI — daisyUI abyss-light migration
+ * Drop-in replacement for AI_SALES/frontend/src/index.css
+ *
+ * Layered approach:
+ *  - `:root` exposes the raw daisyUI tokens as CSS vars so non-Tailwind
+ *    code (recharts strokes, framer-motion inline styles, plain CSS)
+ *    can pull from the same source.
+ *  - `@layer components` keeps every classname your existing JSX uses
+ *    (.glass-card, .btn-primary, .badge-*, .nav-item, .stat-*, etc.)
+ *    so this is a true drop-in — no JSX needs editing on day 1.
+ * ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* daisyUI core color tokens (kept as oklch — original spec) */
+  --color-base-100: oklch(98% 0.003 247.858);
+  --color-base-200: oklch(96% 0.007 247.896);
+  --color-base-300: oklch(92% 0.013 255.508);
+  --color-base-content: oklch(20% 0.042 265.755);
+
+  --color-primary:           oklch(70% 0.183 293.541);
+  --color-primary-content:   oklch(28% 0.141 291.089);
+  --color-secondary:         oklch(70% 0.022 261.325);
+  --color-secondary-content: oklch(13% 0.028 261.692);
+  --color-accent:            oklch(74% 0.16  232.661);
+  --color-accent-content:    oklch(29% 0.066 243.157);
+  --color-neutral:           oklch(44% 0.043 257.281);
+  --color-neutral-content:   oklch(98% 0.003 247.858);
+
+  --color-info:    oklch(58% 0.158 241.966);
+  --color-success: oklch(62% 0.194 149.214);
+  --color-warning: oklch(68% 0.162 75.834);
+  --color-error:   oklch(57% 0.245 27.325);
+
+  /* daisyUI shape tokens */
+  --radius-selector: 0rem;
+  --radius-field:    0.25rem;
+  --radius-box:      2rem;
+  --border:          2px;
+
+  /* Semantic aliases used by some components */
+  --bg-app:    var(--color-base-100);
+  --bg-elev-1: var(--color-base-100);
+  --bg-elev-2: var(--color-base-200);
+  --fg-1: var(--color-base-content);
+  --fg-3: oklch(50% 0.03 265);
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -9,37 +59,30 @@
     padding: 0;
   }
 
-  html {
-    scroll-behavior: smooth;
-  }
+  html { scroll-behavior: smooth; }
 
   body {
-    @apply bg-gray-50 text-gray-900 font-sans antialiased;
-    background-color: #f9fafb;
+    @apply bg-surface text-gray-900 font-sans antialiased;
+    background-color: var(--color-base-100);
+    color: var(--color-base-content);
     overflow-x: hidden;
   }
 
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-surface-1;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-surface-4 rounded-full;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-primary-600;
-  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--color-base-200); }
+  ::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-primary); }
 }
 
 @layer components {
+  /* ---------- cards ---------- */
   .glass-card {
-    @apply rounded-2xl border border-gray-200 bg-white shadow-sm;
+    /* was: rounded-2xl border (1px) bg-white shadow-sm
+       now: 2rem radius, 2px border, soft cool shadow */
+    border-radius: var(--radius-box);
+    border: var(--border) solid var(--color-base-300);
+    background: var(--color-base-100);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
   .glass-card-hover {
@@ -47,114 +90,151 @@
   }
 
   .glass-card-hover:hover {
-    @apply border-gray-300 shadow-md;
+    border-color: color-mix(in oklch, var(--color-primary) 30%, transparent);
+    box-shadow: 0 4px 14px rgba(40, 30, 80, 0.06);
     transform: translateY(-2px);
   }
 
+  /* ---------- text gradient ---------- */
   .glow-text {
     @apply text-transparent bg-clip-text;
-    background-image: linear-gradient(135deg, #6172f3, #a78bfa);
+    background-image: linear-gradient(135deg, oklch(70% .183 293), oklch(74% .16 232));
   }
 
+  /* ---------- buttons ---------- */
   .btn-primary {
-    @apply px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200;
-    @apply bg-primary-600 hover:bg-primary-500 text-white;
-    @apply shadow-glow hover:shadow-glow-lg;
+    @apply px-4 py-2 font-semibold text-sm transition-all duration-200;
+    border-radius: var(--radius-field);
+    border: var(--border) solid var(--color-primary);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    box-shadow: 0 0 24px rgba(139, 84, 247, 0.30);
+  }
+  .btn-primary:hover {
+    background: oklch(64% .183 293.541);
+    border-color: oklch(64% .183 293.541);
+    box-shadow: 0 0 48px rgba(139, 84, 247, 0.40);
   }
 
   .btn-ghost {
-    @apply px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200;
-    @apply text-gray-500 hover:text-gray-900 hover:bg-gray-100;
+    @apply px-4 py-2 font-medium text-sm transition-all duration-200;
+    border-radius: var(--radius-field);
+    background: transparent;
+    color: var(--fg-3);
+  }
+  .btn-ghost:hover {
+    background: var(--color-base-200);
+    color: var(--color-base-content);
   }
 
+  /* ---------- sidebar nav ---------- */
   .nav-item {
-    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium;
-    @apply text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-all duration-200;
+    @apply flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-all duration-200;
+    border-radius: var(--radius-field);
+    color: oklch(35% .04 265);
   }
-
+  .nav-item:hover {
+    background: var(--color-base-200);
+    color: var(--color-base-content);
+  }
   .nav-item.active {
-    @apply text-blue-600 bg-blue-50;
+    background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+    color: oklch(48% .183 293);
+    border: var(--border) solid color-mix(in oklch, var(--color-primary) 35%, transparent);
+    /* tighten padding to compensate for the 2px border so geometry stays the same */
+    padding: calc(0.625rem - 2px) calc(0.75rem - 2px);
   }
 
+  /* ---------- badges ---------- */
   .badge {
-    @apply text-xs font-semibold px-2 py-0.5 rounded-full;
+    @apply text-xs font-bold inline-flex items-center;
+    padding: 2px 9px;
+    border-radius: 9999px;
+    border: var(--border) solid;
+    letter-spacing: .04em;
   }
-
   .badge-green {
-    @apply badge bg-accent-green/15 text-accent-green;
+    background: color-mix(in oklch, var(--color-success) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-success) 40%, transparent);
+    color: oklch(45% .194 149);
   }
-
   .badge-red {
-    @apply badge bg-accent-red/15 text-accent-red;
+    background: color-mix(in oklch, var(--color-error) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-error) 40%, transparent);
+    color: oklch(50% .245 27);
   }
-
   .badge-blue {
-    @apply badge bg-accent-blue/15 text-accent-blue;
+    /* re-tinted to brand accent (cyan) */
+    background: color-mix(in oklch, var(--color-accent) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-accent) 40%, transparent);
+    color: oklch(38% .12 232);
   }
-
   .badge-purple {
-    @apply badge bg-accent-purple/15 text-accent-purple;
+    background: color-mix(in oklch, var(--color-primary) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-primary) 40%, transparent);
+    color: oklch(48% .183 293);
   }
-
   .badge-orange {
-    @apply badge bg-accent-orange/15 text-accent-orange;
+    background: color-mix(in oklch, var(--color-warning) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-warning) 40%, transparent);
+    color: oklch(45% .16 75);
   }
 
+  /* ---------- stat numbers ---------- */
   .stat-label {
-    @apply text-xs text-gray-500 font-medium uppercase tracking-wider;
+    @apply text-xs font-semibold uppercase;
+    color: var(--fg-3);
+    letter-spacing: 0.1em;
   }
-
   .stat-value {
-    @apply text-2xl font-bold text-gray-900;
+    @apply text-2xl font-bold;
+    color: var(--color-base-content);
+    letter-spacing: -0.01em;
   }
 
-  .gradient-border {
-    position: relative;
-  }
-
+  /* ---------- gradient-border (kept; re-tinted) ---------- */
+  .gradient-border { position: relative; }
   .gradient-border::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(135deg, rgba(97,114,243,0.5), rgba(139,92,246,0.3), transparent);
+    background: linear-gradient(135deg, rgba(139, 84, 247, 0.5), rgba(54, 197, 245, 0.3), transparent);
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
-    mask-composite: exclude;
+            mask-composite: exclude;
     pointer-events: none;
   }
 
   .shimmer {
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.04), transparent);
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.04), transparent);
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
   }
 
   .table-row {
-    @apply border-b border-gray-200 transition-colors duration-150;
+    @apply border-b transition-colors duration-150;
+    border-color: var(--color-base-200);
   }
-
   .table-row:hover {
-    @apply bg-gray-50;
+    background: color-mix(in oklch, var(--color-primary) 4%, transparent);
   }
 }
 
-@layer utilities {
-}
+@layer utilities {}
 
-/* Blob animations */
+/* Blob animations (unchanged keyframes, but the colors at usage-site
+   should now reference --color-primary / --color-accent at .05–.08 alpha) */
 @keyframes blob1 {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33% { transform: translate(30px, -50px) scale(1.1); }
   66% { transform: translate(-20px, 20px) scale(0.9); }
 }
-
 @keyframes blob2 {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33% { transform: translate(-40px, 30px) scale(0.95); }
   66% { transform: translate(20px, -30px) scale(1.05); }
 }
-
 .blob1 { animation: blob1 10s ease-in-out infinite; }
 .blob2 { animation: blob2 12s ease-in-out infinite; }

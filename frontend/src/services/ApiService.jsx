@@ -7,6 +7,9 @@ const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack
     const END_POINT = import.meta.env.VITE_API_URL;
 
     if (!userDetails) {
+        if (typeof errorCallBack === "function") {
+            errorCallBack(401, "Session expired — please log in again.");
+        }
         return Promise.reject("Unauthorized: No user details found.");
     }
     const { id, email, userRole, companyCode, semesterId } = userDetails;
@@ -117,6 +120,12 @@ export const ToggleActiveInactiveService = (id, sucess, error) =>
     _fetchService(`products/${id}/availability`, "PATCH", null, sucess, error);
 
 // Product Knowledge Base
+export const GetAllEmbeddingsService = (sucess, error) =>
+    _fetchService("products/embeddings", "GET", null, sucess, error);
+
+export const GetProductEmbeddingsService = (productId, sucess, error) =>
+    _fetchService(`products/${productId}/embeddings`, "GET", null, sucess, error);
+
 export const GetProductKnowledgeService = (productId, sucess, error) =>
     _fetchService(`products/${productId}/knowledge`, "GET", null, sucess, error);
 
@@ -244,6 +253,9 @@ export const GetProductSentimentService = (sucess, error) =>
 
 // ─── Gmail ───────────────────────────────────────────────────────────────────
 
+export const GetEmailByIdService = (id, sucess, error) =>
+    _fetchService(`gmail/${id}`, "GET", null, sucess, error);
+
 export const GetGmailMessagesService = (params, sucess, error) => {
     const query = new URLSearchParams(params || {}).toString();
     return _fetchService(`gmail/?${query}`, "GET", null, sucess, error);
@@ -267,6 +279,9 @@ export const DiscardDraftService = (emailId, sucess, error) =>
 export const ResolveEmailService = (emailId, data, sucess, error) =>
     _fetchService(`gmail/${emailId}/resolve`, "POST", data, sucess, error);
 
+export const GenerateDraftService = (data, sucess, error) =>
+    _fetchService("gmail/generate-draft", "POST", data, sucess, error);
+
 export const SendEmailService = (data, sucess, error) =>
     _fetchService("gmail/send", "POST", data, sucess, error);
 
@@ -288,6 +303,18 @@ export const CancelEmailSequenceService = (id, sucess, error) =>
     _fetchService(`gmail/sequences/${id}/cancel`, "POST", null, sucess, error);
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
+
+export const GetAvailabilityService = (sucess, error) =>
+    _fetchService("calendar/availability", "GET", null, sucess, error);
+
+export const UpdateAvailabilityDayService = (dayOfWeek, data, sucess, error) =>
+    _fetchService(`calendar/availability/${dayOfWeek}`, "PUT", data, sucess, error);
+
+export const GetSchedulingConfigService = (sucess, error) =>
+    _fetchService("calendar/scheduling-config", "GET", null, sucess, error);
+
+export const UpdateSchedulingConfigService = (data, sucess, error) =>
+    _fetchService("calendar/scheduling-config", "PATCH", data, sucess, error);
 
 export const GetCalendarEventsService = (params, sucess, error) => {
     const query = new URLSearchParams(params || {}).toString();
