@@ -20,6 +20,8 @@ from app.schema.gmail import (
     GapNotificationListResponse,
     GapNotificationOut,
     GapResolveRequest,
+    GenerateDraftRequest,
+    GenerateDraftResponse,
     ResolveEmailRequest,
     SendEmailRequest,
     SequenceCreate,
@@ -27,7 +29,7 @@ from app.schema.gmail import (
 )
 from app.services import gmail_service, product_knowledge_service
 from app.services import email_sequence_service
-from app.services.email_router_service import process_inbound_email
+from app.services.email_router_service import process_inbound_email, _generate_sales_draft
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
 
@@ -420,6 +422,26 @@ def discard_draft(
 
 
 # ── Outbound send ─────────────────────────────────────────────────────────────
+
+@router.post("/generate-draft", response_model=GenerateDraftResponse)
+def generate_draft(
+    payload: GenerateDraftRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generate an AI draft reply using the RAG pipeline.
+    Returns the draft text only — does NOT send or save anything.
+    The caller edits the draft in the UI, then calls /send when ready.
+    """
+    draft = _generate_sales_draft(
+        sender=payload.to,
+        subject=payload.subject,
+        body=payload.body,
+    )
+    if not draft:
+        raise HTTPException(status_code=503, detail="AI draft generation failed — check Vertex AI connectivity")
+    return GenerateDraftResponse(draft=draft)
+
 
 @router.post("/send", status_code=status.HTTP_201_CREATED, response_model=EmailOut)
 def send_email(

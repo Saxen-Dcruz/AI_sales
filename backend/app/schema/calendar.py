@@ -84,3 +84,42 @@ class CalendarEventListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+# ── Operator availability ─────────────────────────────────────────────────────
+
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+class AvailabilityDayOut(BaseModel):
+    day_of_week: int
+    day_name: str
+    is_available: bool
+    start_hour: int
+    start_minute: int
+    end_hour: int
+    end_minute: int
+
+    model_config = {"from_attributes": True}
+
+
+class AvailabilityDayUpdate(BaseModel):
+    is_available: bool
+    start_hour: int
+    start_minute: int = 0
+    end_hour: int
+    end_minute: int = 0
+
+
+class SchedulingConfigOut(BaseModel):
+    buffer_minutes: int
+    slot_duration_minutes: int
+    max_meetings_per_day: int
+
+    model_config = {"from_attributes": True}
+
+
+class SchedulingConfigUpdate(BaseModel):
+    buffer_minutes: Optional[int] = None
+    slot_duration_minutes: Optional[int] = None
+    max_meetings_per_day: Optional[int] = None
