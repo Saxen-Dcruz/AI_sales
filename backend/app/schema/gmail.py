@@ -98,6 +98,16 @@ class EmailSLAAnalytics(BaseModel):
     by_label: dict                 # count per EmailLabel
 
 
+class GenerateDraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str  # customer's message / context for the AI to reply to
+
+
+class GenerateDraftResponse(BaseModel):
+    draft: str
+
+
 class SendEmailRequest(BaseModel):
     to: str
     subject: str

@@ -1,10 +1,12 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from app.api.dependencies import get_current_user
 from app.database.core import get_db
+from app.models.product import Product
 from app.models.user import User
 from app.schema.product import ProductCreate, ProductResponse, ProductUpdate
 from app.schema.product_knowledge import KnowledgeEntryCreate, KnowledgeEntryListResponse, KnowledgeEntryOut, KnowledgeEntryUpdate
@@ -31,10 +33,68 @@ async def add_product(
 def list_products(
     skip: int = 0,
     limit: int = 50,
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    is_active: Optional[bool] = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return product_service.get_all_products(db, skip, limit)
+    return product_service.get_all_products(
+        db, skip=skip, limit=limit,
+        search=search, category=category, is_active=is_active,
+    )
+
+
+# ── Embedding inspection (must be before /{product_id} to avoid route shadowing) ──
+
+@router.get("/embeddings", summary="List all products with their RAG embeddings and product details")
+def list_all_embeddings(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    products = db.query(Product).filter(Product.is_active == True).order_by(Product.name).all()
+    rows = db.execute(text(
+        "SELECT id, cmetadata, left(document, 500) AS doc_preview "
+        "FROM langchain_pg_embedding ORDER BY cmetadata->>'product_id', cmetadata->>'chunk_type'"
+    )).fetchall()
+    chunks_by_product: dict[str, list] = {}
+    for row in rows:
+        meta = row.cmetadata or {}
+        pid = meta.get("product_id")
+        if not pid:
+            continue
+        chunks_by_product.setdefault(pid, []).append({
+            "chunk_id": str(row.id),
+            "chunk_type": meta.get("chunk_type", "unknown"),
+            "doc_preview": row.doc_preview,
+        })
+    result = []
+    for p in products:
+        pid = str(p.id)
+        chunks = chunks_by_product.get(pid, [])
+        result.append({
+            "product_id": pid,
+            "name": p.name,
+            "order_code": p.order_code,
+            "category": p.category,
+            "single_price": p.single_price,
+            "bulk_price": p.bulk_price,
+            "brand": p.brand,
+            "coverage_score": round((p.coverage_score or 0) * 100, 1),
+            "is_active": p.is_active,
+            "product_link": p.product_link,
+            "datasheet_link": p.datasheet_link,
+            "total_chunks": len(chunks),
+            "chunk_types": sorted({c["chunk_type"] for c in chunks}),
+            "chunks": chunks,
+        })
+    not_embedded = [r["name"] for r in result if r["total_chunks"] == 0]
+    return {
+        "total_products": len(result),
+        "total_embeddings": len(rows),
+        "not_embedded": not_embedded,
+        "items": result,
+    }
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
@@ -46,7 +106,49 @@ def view_product(
     product = product_service.get_product(db, product_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    return product
+
+    # Reconstruct sections from pgvector chunks so the edit form is pre-populated
+    sections: dict = {}
+    try:
+        rows = db.execute(text(
+            "SELECT cmetadata->>'chunk_type' AS chunk_type, document "
+            "FROM langchain_pg_embedding "
+            "WHERE cmetadata->>'product_id' = :pid"
+        ), {"pid": str(product_id)}).fetchall()
+        for row in rows:
+            ct = row.chunk_type or ""
+            doc = row.document or ""
+            if ct == "description" or ct == "product_description":
+                # Strip the "Product Name: ... Section: Description\n\n" header
+                body = doc.split("\n\n", 1)[-1].strip()
+                sections["description"] = body
+            elif ct == "features":
+                body = doc.split("\n\n", 1)[-1].strip()
+                # Each feature is a "- ..." line
+                features = [
+                    line.lstrip("- ").strip()
+                    for line in body.splitlines()
+                    if line.strip().startswith("-")
+                ]
+                if features:
+                    sections["features"] = features
+            elif ct in ("package_contains", "package_includes"):
+                body = doc.split("\n\n", 1)[-1].strip()
+                items = [
+                    line.lstrip("- ").strip()
+                    for line in body.splitlines()
+                    if line.strip().startswith("-")
+                ]
+                if items:
+                    sections["packageContains"] = items
+    except Exception:
+        pass  # sections remain empty — not fatal
+
+    # Build response dict manually so we can inject sections
+    resp = ProductResponse.model_validate(product)
+    data = resp.model_dump(by_alias=True, mode="json")
+    data["sections"] = sections
+    return data
 
 
 @router.patch("/{product_id}", response_model=ProductResponse)
@@ -161,3 +263,46 @@ def delete_knowledge(
         product_knowledge_service.delete_entry(db, entry_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/{product_id}/embeddings", summary="Get all RAG chunks for a single product")
+def get_product_embeddings(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Returns every pgvector chunk for the product with full document text and pricing."""
+    p = db.query(Product).filter(Product.id == product_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Product not found")
+    rows = db.execute(text(
+        "SELECT id, cmetadata, document FROM langchain_pg_embedding "
+        "WHERE cmetadata->>'product_id' = :pid ORDER BY cmetadata->>'chunk_type'"
+    ), {"pid": str(product_id)}).fetchall()
+    chunks = [
+        {
+            "chunk_id": str(row.id),
+            "chunk_type": (row.cmetadata or {}).get("chunk_type", "unknown"),
+            "document": row.document,
+        }
+        for row in rows
+    ]
+    return {
+        "product_id": str(p.id),
+        "name": p.name,
+        "order_code": p.order_code,
+        "category": p.category,
+        "sub_category": p.sub_category,
+        "brand": p.brand,
+        "single_price": p.single_price,
+        "bulk_price": p.bulk_price,
+        "coverage_score": round((p.coverage_score or 0) * 100, 1),
+        "is_active": p.is_active,
+        "product_link": p.product_link,
+        "datasheet_link": p.datasheet_link,
+        "user_manual_link": p.user_manual_link,
+        "sdk_link": p.sdk_link,
+        "total_chunks": len(chunks),
+        "chunks": chunks,
+    }
+

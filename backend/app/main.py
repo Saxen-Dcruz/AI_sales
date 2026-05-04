@@ -28,6 +28,7 @@ import app.models.calendar_event
 import app.models.product_knowledge
 import app.models.call
 import app.models.blocked_time
+import app.models.operator_availability
 import app.models.email_sequence
 import app.models.linkedin
 

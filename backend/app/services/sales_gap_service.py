@@ -95,36 +95,185 @@ def extract_structured_gaps(
                     "resolved_by": None,
                 })
     else:
-        # Fallback: scan follow-up sentences in the AI response directly
-        for s in re.split(r"(?<=[.!?])\s+", ai_response):
-            if s.strip() and any(marker in s.lower() for marker in _FOLLOWUP_MARKERS):
-                gaps.append({
-                    "question": s.strip(),
-                    "topic": infer_topic(s),
-                    "product_name": product_name,
-                    "product_id": product_id,
-                    "resolved": False,
-                    "answer": None,
-                    "resolved_by": None,
-                })
+        # Fallback: check if any follow-up exists in the AI response.
+        # The question is the customer's original text (subject or body), NOT the draft sentence.
+        has_followup = any(
+            marker in ai_response.lower() for marker in _FOLLOWUP_MARKERS
+        )
+        if has_followup and customer_text.strip():
+            # Use the customer's actual text (subject or body) as the question
+            question = customer_text.strip()[:300]
+            gaps.append({
+                "question": question,
+                "topic": infer_topic(question),
+                "product_name": product_name,
+                "product_id": product_id,
+                "resolved": False,
+                "answer": None,
+                "resolved_by": None,
+            })
 
     return gaps
 
 
 # ── Product detection ─────────────────────────────────────────────────────────
 
-def detect_product(db: Session, text: str) -> tuple[Optional[str], Optional[str]]:
+_STOP_WORDS = {
+    "and", "or", "the", "for", "with", "of", "in", "a", "an", "to", "at",
+    "is", "are", "its", "by", "from", "this", "that", "how", "what", "much",
+    "will", "can", "does", "do", "be", "has", "have", "get", "i", "we",
+    # common 2-char words that are not product identifiers
+    "it", "on", "up", "so", "as", "us", "me", "my", "no", "if", "ok",
+}
+
+
+def _product_keywords(name: str) -> list[str]:
     """
-    Return (product_id_str, product_name) for the first product name or order code
-    found in text. Longest-name-first matching avoids partial substring false positives.
+    Extract meaningful tokens from a product name or query text.
+    Minimum length is 2 so short but meaningful identifiers like '4g', 'ai',
+    'dc', 'ac' are kept. Common stop words are excluded.
+    """
+    return [
+        w for w in re.split(r"\W+", name.lower())
+        if len(w) >= 2 and w not in _STOP_WORDS
+    ]
+
+
+def _llm_identify_product(
+    text: str, products: list
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Last-resort fallback: ask Gemini which product from the catalog the customer is
+    most likely asking about. Only called when keyword matching also fails.
+    """
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from app.core.config import settings
+
+        catalog_lines = "\n".join(
+            f"- {p.name} (Order Code: {p.order_code or 'N/A'})"
+            for p in products[:60]
+        )
+        llm = ChatGoogleGenerativeAI(
+            model="models/gemini-2.5-flash",
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=0,
+            max_output_tokens=80,
+        )
+        response = llm.invoke([
+            SystemMessage(content=(
+                "You are a product identification assistant. "
+                "Given a customer query and a product catalog, return ONLY the exact product name "
+                "from the catalog that the customer is most likely asking about. "
+                "If no product matches, respond with exactly: NONE"
+            )),
+            HumanMessage(content=(
+                f"Customer query: {text[:600]}\n\nProduct catalog:\n{catalog_lines}"
+            )),
+        ])
+        matched_name = response.content.strip().strip('"').strip("'")
+        if matched_name.upper() == "NONE":
+            return None, None
+        for p in products:
+            if p.name.lower() == matched_name.lower():
+                logger.info(f"[PRODUCT DETECT] LLM identified: {p.name!r}")
+                return str(p.id), p.name
+    except Exception as e:
+        logger.warning(f"[PRODUCT DETECT] LLM fallback failed: {e}")
+    return None, None
+
+
+def detect_product(
+    db: Session, text: str
+) -> tuple[Optional[str], Optional[str], str]:
+    """
+    Three-phase product detection. Returns (product_id, product_name, confidence).
+
+    confidence values:
+      "high"   — Phase 1 exact phrase / order-code match. Safe to auto-draft.
+      "low"    — Phase 2 keyword overlap OR Phase 3 LLM. Uncertain — ask customer to confirm.
+      "none"   — No match found at all. Ask customer to specify the product.
+
+    The caller decides what to do based on confidence:
+      high → run RAG and send/hold draft
+      low  → send a clarification email with similar product links
+      none → send a clarification email asking the customer to name the product
     """
     from app.models.product import Product
     products = db.query(Product).filter(Product.is_active == True).all()
     text_lower = text.lower()
+
+    # ── Phase 1: exact phrase / order-code match (HIGH confidence) ───────────
     for p in sorted(products, key=lambda x: -len(x.name)):
-        if p.name.lower() in text_lower or (p.order_code and p.order_code.lower() in text_lower):
-            return str(p.id), p.name
-    return None, None
+        if len(p.name) < 4:
+            continue
+        if p.name.lower() in text_lower or (
+            p.order_code and p.order_code.lower() in text_lower
+        ):
+            logger.info(f"[PRODUCT DETECT] Exact match: {p.name!r}")
+            return str(p.id), p.name, "high"
+
+    # ── Phase 2: keyword overlap (LOW confidence) ─────────────────────────────
+    best: tuple[float, Optional[object]] = (0.0, None)
+    text_kw_set = set(_product_keywords(text))
+    for p in products:
+        if len(p.name) < 4:
+            continue
+        prod_kw_set = set(_product_keywords(p.name))
+        if not prod_kw_set:
+            continue
+        matched = len(prod_kw_set & text_kw_set)
+        coverage = matched / len(prod_kw_set)
+        if matched >= 2 and coverage >= 0.3 and coverage > best[0]:
+            best = (coverage, p)
+
+    if best[1]:
+        p = best[1]
+        logger.info(f"[PRODUCT DETECT] Keyword match ({best[0]:.0%}, LOW confidence): {p.name!r}")
+        return str(p.id), p.name, "low"
+
+    # ── Phase 3: LLM fallback (LOW confidence) ───────────────────────────────
+    logger.info("[PRODUCT DETECT] No phrase/keyword match — trying LLM identification")
+    pid, pname = _llm_identify_product(text, products)
+    if pid:
+        return pid, pname, "low"
+
+    return None, None, "none"
+
+
+def find_similar_products(db: Session, text: str, limit: int = 4) -> list[dict]:
+    """
+    Return up to `limit` products whose keywords best overlap with the query text.
+    Each entry has: id, name, product_link, order_code, category.
+    Used to build the clarification email when product confidence is low or none.
+    """
+    from app.models.product import Product
+    products = db.query(Product).filter(Product.is_active == True).all()
+    text_kw_set = set(_product_keywords(text))
+
+    scored: list[tuple[float, object]] = []
+    for p in products:
+        if len(p.name) < 4:
+            continue
+        prod_kw_set = set(_product_keywords(p.name))
+        if not prod_kw_set:
+            continue
+        matched = len(prod_kw_set & text_kw_set)
+        if matched > 0:
+            scored.append((matched / len(prod_kw_set), p))
+
+    scored.sort(key=lambda x: -x[0])
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "order_code": p.order_code,
+            "category": p.category,
+            "product_link": getattr(p, "product_link", None),
+        }
+        for _, p in scored[:limit]
+    ]
 
 
 # ── RAG context fetch (shared across channels) ────────────────────────────────

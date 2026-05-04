@@ -162,3 +162,147 @@ def test_toggle_availability_no_auth(client: TestClient):
     finally:
         for k, v in saved.items():
             client.cookies.set(k, v)
+
+
+# ── Product search & filter ───────────────────────────────────────────────────
+
+def test_search_by_name(client: TestClient, auth_headers: dict):
+    code = _order_code()
+    client.post(f"{BASE}/", json={**_payload(code), "Product_id": "SearchableWidget Pro"}, headers=auth_headers)
+    resp = client.get(f"{BASE}/?search=SearchableWidget", headers=auth_headers)
+    assert resp.status_code == 200
+    names = [p["Product_id"] for p in resp.json()]
+    assert any("SearchableWidget" in n for n in names)
+
+
+def test_search_by_order_code(client: TestClient, auth_headers: dict):
+    code = _order_code()
+    client.post(f"{BASE}/", json=_payload(code), headers=auth_headers)
+    resp = client.get(f"{BASE}/?search={code}", headers=auth_headers)
+    assert resp.status_code == 200
+    codes = [p.get("Order Code") for p in resp.json()]
+    assert code in codes
+
+
+def test_search_no_results(client: TestClient, auth_headers: dict):
+    resp = client.get(f"{BASE}/?search=ZZZNOMATCHXYZ999", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_filter_by_category(client: TestClient, auth_headers: dict):
+    code = _order_code()
+    payload = {**_payload(code), "Category": "UniqueCatXYZ"}
+    client.post(f"{BASE}/", json=payload, headers=auth_headers)
+    resp = client.get(f"{BASE}/?category=UniqueCatXYZ", headers=auth_headers)
+    assert resp.status_code == 200
+    assert all(p["Category"] == "UniqueCatXYZ" for p in resp.json())
+    assert len(resp.json()) >= 1
+
+
+def test_filter_active_only(client: TestClient, auth_headers: dict):
+    code = _order_code()
+    created = client.post(f"{BASE}/", json=_payload(code), headers=auth_headers).json()
+    # Deactivate it
+    client.patch(f"{BASE}/{created['id']}/availability", headers=auth_headers)
+    # Filter active only — should not include our deactivated product
+    resp = client.get(f"{BASE}/?is_active=true", headers=auth_headers)
+    assert resp.status_code == 200
+    ids = [p["id"] for p in resp.json()]
+    assert created["id"] not in ids
+
+
+def test_search_no_auth(client: TestClient):
+    saved = dict(client.cookies)
+    client.cookies.clear()
+    try:
+        resp = client.get(f"{BASE}/?search=test")
+        assert resp.status_code == 401
+    finally:
+        for k, v in saved.items():
+            client.cookies.set(k, v)
+
+
+# ── Embedding endpoints ───────────────────────────────────────────────────────
+
+def test_list_all_embeddings_shape(client: TestClient, auth_headers: dict):
+    """GET /products/embeddings returns expected top-level keys."""
+    resp = client.get(f"{BASE}/embeddings", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "total_products" in data
+    assert "total_embeddings" in data
+    assert "not_embedded" in data
+    assert "items" in data
+    assert isinstance(data["items"], list)
+    assert isinstance(data["not_embedded"], list)
+
+
+def test_list_all_embeddings_product_fields(client: TestClient, auth_headers: dict):
+    """Each item in embeddings list has the required product detail fields."""
+    # Create a product so there's at least one to inspect
+    client.post(f"{BASE}/", json=_payload(), headers=auth_headers)
+    resp = client.get(f"{BASE}/embeddings", headers=auth_headers)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert len(items) >= 1
+    p = items[0]
+    for field in ("product_id", "name", "order_code", "category", "single_price",
+                  "bulk_price", "brand", "coverage_score", "is_active",
+                  "total_chunks", "chunk_types", "chunks"):
+        assert field in p, f"Missing field: {field}"
+
+
+def test_new_product_has_zero_chunks(client: TestClient, auth_headers: dict):
+    """A freshly created product with no embeddings appears in not_embedded list."""
+    code = _order_code()
+    created = client.post(f"{BASE}/", json=_payload(code), headers=auth_headers).json()
+    resp = client.get(f"{BASE}/embeddings", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    # Find our product in items
+    match = next((p for p in data["items"] if p["product_id"] == created["id"]), None)
+    assert match is not None
+    assert match["total_chunks"] == 0
+    assert match["name"] in data["not_embedded"]
+
+
+def test_list_all_embeddings_no_auth(client: TestClient):
+    saved = dict(client.cookies)
+    client.cookies.clear()
+    try:
+        resp = client.get(f"{BASE}/embeddings")
+        assert resp.status_code == 401
+    finally:
+        for k, v in saved.items():
+            client.cookies.set(k, v)
+
+
+def test_get_product_embeddings_shape(client: TestClient, auth_headers: dict):
+    """GET /products/{id}/embeddings returns product detail and chunks list."""
+    created = client.post(f"{BASE}/", json=_payload(), headers=auth_headers).json()
+    resp = client.get(f"{BASE}/{created['id']}/embeddings", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    for field in ("product_id", "name", "order_code", "category", "single_price",
+                  "bulk_price", "brand", "coverage_score", "total_chunks", "chunks"):
+        assert field in data, f"Missing field: {field}"
+    assert data["product_id"] == created["id"]
+    assert isinstance(data["chunks"], list)
+    assert data["total_chunks"] == 0  # freshly created, not yet ingested
+
+
+def test_get_product_embeddings_not_found(client: TestClient, auth_headers: dict):
+    resp = client.get(f"{BASE}/{uuid.uuid4()}/embeddings", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_get_product_embeddings_no_auth(client: TestClient):
+    saved = dict(client.cookies)
+    client.cookies.clear()
+    try:
+        resp = client.get(f"{BASE}/{uuid.uuid4()}/embeddings")
+        assert resp.status_code == 401
+    finally:
+        for k, v in saved.items():
+            client.cookies.set(k, v)

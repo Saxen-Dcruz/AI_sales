@@ -22,6 +22,7 @@ from app.services.sales_gap_service import (
     detect_product,
     extract_structured_gaps,
     fetch_rag_context,
+    find_similar_products,
     sanitize_ai_response,
 )
 
@@ -295,9 +296,21 @@ def process_inbound_email(db: Session, raw_message: dict) -> Optional[Email]:
     sender_email = gmail_service.extract_email_address(sender_raw)
     subject = parsed["subject"] or ""
     body = parsed["body_text"] or ""
+    # Customers often send subject-only emails with no body.
+    # Use the subject as content so the RAG and classifier get the actual question.
+    effective_body = body if body.strip() else subject
     received_at = _parse_received_at(parsed["date_str"])
 
-    classification = classify_email(subject=subject, body=body, sender=sender_raw)
+    # For reply emails, fetch the original message so the classifier has full context
+    thread_context: str | None = None
+    if subject.lower().startswith("re:") and parsed.get("gmail_thread_id"):
+        thread_context = gmail_service.fetch_thread_context(
+            gmail_svc, parsed["gmail_thread_id"], gmail_message_id
+        )
+        if thread_context:
+            logger.debug(f"[EMAIL ROUTER] Fetched thread context for reply: {subject!r}")
+
+    classification = classify_email(subject=subject, body=effective_body, sender=sender_raw, thread_context=thread_context)
     label: EmailLabel = classification["label"]
 
     # Sales emails always get a lead — create one if this is a new sender
@@ -315,7 +328,7 @@ def process_inbound_email(db: Session, raw_message: dict) -> Optional[Email]:
         sender=sender_raw,
         recipients=parsed["recipients"],
         subject=subject,
-        body_text=body,
+        body_text=effective_body,
         body_html=parsed["body_html"],
         received_at=received_at,
         label=label,
@@ -328,10 +341,10 @@ def process_inbound_email(db: Session, raw_message: dict) -> Optional[Email]:
     )
 
     if label == EmailLabel.SALES:
-        product_id, product_name = detect_product(db, f"{subject} {body}")
-        _route_sales(gmail_svc, db, email_row, sender_raw, subject, body, parsed["gmail_thread_id"], product_id, product_name)
+        product_id, product_name, product_confidence = detect_product(db, f"{subject} {effective_body}")
+        _route_sales(gmail_svc, db, email_row, sender_raw, subject, effective_body, parsed["gmail_thread_id"], product_id, product_name, product_confidence)
         # Only schedule if customer explicitly requested a meeting AND gave a specific time
-        _try_schedule_from_email_body(db, body, lead, subject, sender_email)
+        _try_schedule_from_email_body(db, effective_body, lead, subject, sender_email)
 
     elif label in (EmailLabel.SUPPORT, EmailLabel.GRIEVANCE):
         _route_support_grievance(gmail_svc, email_row, sender_raw, subject, body, parsed["gmail_thread_id"], label)
@@ -484,6 +497,52 @@ def _route_support_grievance(
         logger.error(f"[EMAIL ROUTER] Failed to send {label.value} acknowledgment: {e}")
 
 
+def _build_clarification_email(
+    subject: str,
+    similar_products: list,
+    detected_name: Optional[str],
+) -> str:
+    """
+    Build a clarification reply when product detection confidence is low or none.
+    Lists the most similar products with their links so the customer can confirm.
+    """
+    if detected_name and similar_products:
+        intro = (
+            f"Thank you for your inquiry. We noticed you might be asking about "
+            f"**{detected_name}**, but we want to make sure we give you the right information.\n\n"
+            f"Could you confirm which of the following products you're referring to?"
+        )
+    elif similar_products:
+        intro = (
+            "Thank you for reaching out! To point you to the right product and provide accurate details, "
+            "could you confirm which product you're asking about? "
+            "Here are some that may match your inquiry:"
+        )
+    else:
+        intro = (
+            "Thank you for your inquiry. To provide you with accurate information, "
+            "could you please let us know the exact product name or order code you're asking about?\n\n"
+            "You can browse our full catalog at https://rdltech.in/products"
+        )
+
+    lines = [intro]
+    if similar_products:
+        lines.append("")
+        for i, p in enumerate(similar_products, 1):
+            link = p.get("product_link") or "https://rdltech.in/products"
+            code = f" (Order Code: {p['order_code']})" if p.get("order_code") else ""
+            lines.append(f"{i}. **{p['name']}**{code} — {link}")
+
+    lines += [
+        "",
+        "Once you confirm, we'll get back to you with complete details, pricing, and specifications.",
+        "",
+        "Best regards,",
+        "RDL Technologies Sales Team",
+    ]
+    return "\n".join(lines)
+
+
 def _route_sales(
     gmail_svc,
     db: Session,
@@ -494,7 +553,34 @@ def _route_sales(
     thread_id: Optional[str],
     product_id: Optional[str] = None,
     product_name: Optional[str] = None,
+    product_confidence: str = "high",
 ) -> None:
+    # ── Low / no confidence: ask customer to confirm the product ─────────────
+    if product_confidence in ("low", "none"):
+        similar = find_similar_products(db, f"{subject} {body}", limit=4)
+        clarification = _build_clarification_email(subject, similar, product_name)
+        try:
+            sender_email = gmail_service.extract_email_address(sender)
+            reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
+            draft = gmail_service.create_draft(
+                gmail_svc, to=sender_email, subject=reply_subject,
+                body=clarification, thread_id=thread_id,
+            )
+            # Auto-send the clarification — it's a friendly question, not a draft to review
+            gmail_service.send_draft(gmail_svc, draft["id"])
+            email_row.ai_draft = clarification
+            email_row.gmail_draft_id = None
+            email_row.status = EmailStatus.REPLIED
+            logger.info(
+                f"[EMAIL ROUTER] Clarification sent (product confidence={product_confidence!r}): {subject}"
+            )
+        except Exception as e:
+            logger.error(f"[EMAIL ROUTER] Failed to send clarification: {e}")
+            email_row.needs_human = True
+            email_row.status = EmailStatus.PENDING_HUMAN
+        return
+
+    # ── High confidence: run RAG and draft ───────────────────────────────────
     draft_text = _generate_sales_draft(sender=sender, subject=subject, body=body)
     if draft_text and product_id:
         fbt = _get_fbt_recommendation(db, product_id)
@@ -515,14 +601,19 @@ def _route_sales(
             email_row.gmail_draft_id = draft["id"]
             gaps = extract_structured_gaps(body, draft_text, product_name, product_id)
             if gaps:
+                # Gaps exist → log to knowledge gap module AND hold draft for human review.
                 email_row.followup_gaps = gaps
-                logger.info(f"[EMAIL ROUTER] {len(gaps)} RAG gap(s) logged for dashboard: {subject}")
-            # Always send — gaps are logged on the dashboard for follow-up,
-            # but the customer gets a reply immediately.
-            gmail_service.send_draft(gmail_svc, draft["id"])
-            email_row.gmail_draft_id = None
-            email_row.status = EmailStatus.REPLIED
-            logger.info(f"[EMAIL ROUTER] Reply sent for: {subject}")
+                email_row.needs_human = True
+                email_row.status = EmailStatus.DRAFT_READY
+                logger.info(
+                    f"[EMAIL ROUTER] {len(gaps)} gap(s) logged + draft held for review: {subject}"
+                )
+            else:
+                # RAG answered everything — auto-send immediately.
+                gmail_service.send_draft(gmail_svc, draft["id"])
+                email_row.gmail_draft_id = None
+                email_row.status = EmailStatus.REPLIED
+                logger.info(f"[EMAIL ROUTER] Auto-sent (no gaps): {subject}")
         except Exception as e:
             logger.error(f"Failed to create Gmail draft for sales email: {e}")
             email_row.needs_human = True
