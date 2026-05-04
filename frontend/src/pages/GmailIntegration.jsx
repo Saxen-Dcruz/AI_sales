@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
@@ -475,6 +475,20 @@ export default function GmailIntegration() {
   const [directEmail, setDirectEmail] = useState(null) // email fetched directly from gaps nav
   const [composeOpen, setComposeOpen] = useState(false)
 
+  const queryClient = useQueryClient()
+
+  const syncMutation = useMutation({
+    mutationFn: () => new Promise((resolve, reject) => {
+      SyncGmailService(
+        resolve,
+        (s, err) => reject(new Error(err))
+      )
+    }),
+    onSuccess: () => {
+      fetchEmails()
+    }
+  })
+
   // When navigated from GapsPage with a specific email to show
   useEffect(() => {
     const emailId = location.state?.selectEmailId
@@ -511,7 +525,7 @@ export default function GmailIntegration() {
     queryFn: () => new Promise((resolve, reject) => {
       SyncGmailService(
         () => {
-          queryClient.invalidateQueries({ queryKey: ['emails'] })
+          fetchEmails()
           resolve(true)
         },
         (s, err) => reject(new Error(err))
@@ -521,7 +535,7 @@ export default function GmailIntegration() {
     refetchOnWindowFocus: true,
   })
 
-  useEffect(() => { setPage(1); setSelected(null) }, [filter])
+  useEffect(() => { setPage(1); setSelected(null) }, [search])
 
   const syncing = syncMutation.isPending
 
