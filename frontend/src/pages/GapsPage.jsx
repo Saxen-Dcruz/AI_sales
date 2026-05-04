@@ -7,6 +7,7 @@ import {
 } from '@mui/material'
 import { HelpOutline, CheckCircle, Refresh as RefreshIcon } from '@mui/icons-material'
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import { GetEmailGapsService, ResolveEmailGapService, GetCallGapsService, ResolveCallGapService } from '../services/ApiService'
 
 function flattenEmailGaps(emailItems) {
@@ -54,6 +55,7 @@ function flattenCallGaps(callItems) {
 }
 
 export default function GapsPage() {
+  const navigate = useNavigate()
   const [tab, setTab] = useState(0)
   const [emailGaps, setEmailGaps] = useState([])
   const [callGaps, setCallGaps] = useState([])
@@ -177,15 +179,43 @@ export default function GapsPage() {
                         </TableCell>
                       )}
                       <TableCell align="right">
-                        <Button
-                          variant="contained"
-                          size="small"
-                          color="success"
-                          startIcon={<CheckCircle />}
-                          onClick={() => openResolve(gap)}
-                        >
-                          Resolve
-                        </Button>
+                        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          {/* Fill gap directly in product KB */}
+                          {gap.product_id && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              color="primary"
+                              onClick={() => navigate(`/knowledge-base/${gap.product_id}`)}
+                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                            >
+                              Fill in KB
+                            </Button>
+                          )}
+                          {/* Go to the email that has this gap */}
+                          {tab === 0 && gap.email_id && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              color="warning"
+                              onClick={() => navigate('/gmail', { state: { selectEmailId: gap.email_id } })}
+                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                            >
+                              Review Email
+                            </Button>
+                          )}
+                          {/* Resolve with a direct answer */}
+                          <Button
+                            variant="contained"
+                            size="small"
+                            color="success"
+                            startIcon={<CheckCircle />}
+                            onClick={() => openResolve(gap)}
+                            sx={{ fontSize: '0.7rem' }}
+                          >
+                            Resolve
+                          </Button>
+                        </Box>
                       </TableCell>
                     </TableRow>
                   ))
