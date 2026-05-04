@@ -49,8 +49,27 @@ async def _process_embeddings(product_id: int, product_name: str, sections: dict
     finally:
         db.close()
 
-def get_all_products(db: Session, skip: int, limit: int):
-    return db.query(Product).offset(skip).limit(limit).all()
+def get_all_products(
+    db: Session,
+    skip: int = 0,
+    limit: int = 50,
+    search: str | None = None,
+    category: str | None = None,
+    is_active: bool | None = None,
+):
+    q = db.query(Product)
+    if search:
+        pattern = f"%{search}%"
+        q = q.filter(
+            Product.name.ilike(pattern)
+            | Product.order_code.ilike(pattern)
+            | Product.brand.ilike(pattern)
+        )
+    if category:
+        q = q.filter(Product.category.ilike(f"%{category}%"))
+    if is_active is not None:
+        q = q.filter(Product.is_active == is_active)
+    return q.order_by(Product.name).offset(skip).limit(limit).all()
 
 def get_product(db: Session, product_id: int):
     return db.query(Product).filter(Product.id == product_id).first()

@@ -8,10 +8,14 @@ from app.api.dependencies import get_current_user, get_db
 from app.models.blocked_time import BlockedTime
 from app.models.calendar_event import CalendarEvent, EventStatus, EventTrigger
 from app.models.user import User
+from app.models.operator_availability import OperatorAvailability, SchedulingConfig
 from app.schema.calendar import (
+    DAYS,
+    AvailabilityDayOut, AvailabilityDayUpdate,
     BlockedTimeCreate, BlockedTimeOut,
     CalendarEventListResponse, CalendarEventOut,
     RescheduleMeetingRequest, ScheduleMeetingRequest,
+    SchedulingConfigOut, SchedulingConfigUpdate,
 )
 from app.services.calendar_service import cancel_event, create_meeting, reschedule_event
 
@@ -67,6 +71,131 @@ def list_events(
     return CalendarEventListResponse(items=items, total=total, page=page, limit=limit)
 
 
+# ── Recurring availability blocks (must be before /{event_id} to avoid shadowing) ──
+
+@router.post("/blocked-times", response_model=BlockedTimeOut, status_code=status.HTTP_201_CREATED)
+def add_blocked_time(
+    payload: BlockedTimeCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    if payload.start_hour >= payload.end_hour:
+        raise HTTPException(status_code=422, detail="start_hour must be less than end_hour")
+    block = BlockedTime(**payload.model_dump())
+    db.add(block)
+    db.commit()
+    db.refresh(block)
+    return block
+
+
+@router.get("/blocked-times", response_model=list[BlockedTimeOut])
+def list_blocked_times(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return db.query(BlockedTime).filter(BlockedTime.is_active == True).order_by(
+        BlockedTime.day_of_week, BlockedTime.start_hour
+    ).all()
+
+
+@router.delete("/blocked-times/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_blocked_time(
+    block_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    block = db.query(BlockedTime).filter(BlockedTime.id == block_id).first()
+    if not block:
+        raise HTTPException(status_code=404, detail="Blocked time not found")
+    db.delete(block)
+    db.commit()
+
+
+# ── Operator availability ─────────────────────────────────────────────────────
+
+def _avail_row_to_out(r: OperatorAvailability) -> AvailabilityDayOut:
+    return AvailabilityDayOut(
+        day_of_week=r.day_of_week,
+        day_name=DAYS[r.day_of_week],
+        is_available=r.is_available,
+        start_hour=r.start_hour,
+        start_minute=r.start_minute,
+        end_hour=r.end_hour,
+        end_minute=r.end_minute,
+    )
+
+
+@router.get("/availability", response_model=list[AvailabilityDayOut])
+def get_availability(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    rows = db.query(OperatorAvailability).order_by(OperatorAvailability.day_of_week).all()
+    return [_avail_row_to_out(r) for r in rows]
+
+
+@router.put("/availability/{day_of_week}", response_model=AvailabilityDayOut)
+def update_availability_day(
+    day_of_week: int,
+    payload: AvailabilityDayUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    if day_of_week < 0 or day_of_week > 6:
+        raise HTTPException(status_code=422, detail="day_of_week must be 0–6")
+    row = db.query(OperatorAvailability).filter(
+        OperatorAvailability.day_of_week == day_of_week
+    ).first()
+    if not row:
+        row = OperatorAvailability(day_of_week=day_of_week)
+        db.add(row)
+    row.is_available = payload.is_available
+    row.start_hour = payload.start_hour
+    row.start_minute = payload.start_minute
+    row.end_hour = payload.end_hour
+    row.end_minute = payload.end_minute
+    db.commit()
+    db.refresh(row)
+    return _avail_row_to_out(row)
+
+
+@router.get("/scheduling-config", response_model=SchedulingConfigOut)
+def get_scheduling_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    cfg = db.query(SchedulingConfig).filter(SchedulingConfig.id == 1).first()
+    if not cfg:
+        cfg = SchedulingConfig(id=1)
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+    return cfg
+
+
+@router.patch("/scheduling-config", response_model=SchedulingConfigOut)
+def update_scheduling_config(
+    payload: SchedulingConfigUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    cfg = db.query(SchedulingConfig).filter(SchedulingConfig.id == 1).first()
+    if not cfg:
+        cfg = SchedulingConfig(id=1)
+        db.add(cfg)
+    if payload.buffer_minutes is not None:
+        cfg.buffer_minutes = payload.buffer_minutes
+    if payload.slot_duration_minutes is not None:
+        cfg.slot_duration_minutes = payload.slot_duration_minutes
+    if payload.max_meetings_per_day is not None:
+        cfg.max_meetings_per_day = payload.max_meetings_per_day
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+# ── Single event CRUD (parameterized — must be AFTER all literal paths) ───────
+
 @router.get("/{event_id}", response_model=CalendarEventOut)
 def get_event(
     event_id: UUID,
@@ -117,42 +246,3 @@ def cancel_meeting(  # noqa: E302
     cancel_event(db, event)
 
 
-# ── Recurring availability blocks ─────────────────────────────────────────────
-
-@router.post("/blocked-times", response_model=BlockedTimeOut, status_code=status.HTTP_201_CREATED)
-def add_blocked_time(
-    payload: BlockedTimeCreate,
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    """Block a recurring time window so find_next_free_slot skips it automatically."""
-    if payload.start_hour >= payload.end_hour:
-        raise HTTPException(status_code=422, detail="start_hour must be less than end_hour")
-    block = BlockedTime(**payload.model_dump())
-    db.add(block)
-    db.commit()
-    db.refresh(block)
-    return block
-
-
-@router.get("/blocked-times", response_model=list[BlockedTimeOut])
-def list_blocked_times(
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    return db.query(BlockedTime).filter(BlockedTime.is_active == True).order_by(
-        BlockedTime.day_of_week, BlockedTime.start_hour
-    ).all()
-
-
-@router.delete("/blocked-times/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_blocked_time(
-    block_id: UUID,
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    block = db.query(BlockedTime).filter(BlockedTime.id == block_id).first()
-    if not block:
-        raise HTTPException(status_code=404, detail="Blocked time not found")
-    db.delete(block)
-    db.commit()

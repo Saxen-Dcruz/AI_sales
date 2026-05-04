@@ -246,58 +246,147 @@ def _is_slot_free(cal_svc, start: datetime, end: datetime) -> bool:
         return True
 
 
+def _fetch_day_busy_periods(
+    cal_svc, day_start: datetime, day_end: datetime
+) -> list[tuple[datetime, datetime]]:
+    """
+    One freebusy API call for an entire day window.
+    Returns parsed list of (busy_start, busy_end) datetimes.
+    Callers check individual slots locally — avoids N calls per day.
+    """
+    try:
+        result = cal_svc.freebusy().query(body={
+            "timeMin": day_start.isoformat(),
+            "timeMax": day_end.isoformat(),
+            "items": [{"id": "primary"}],
+        }).execute()
+        busy = result.get("calendars", {}).get("primary", {}).get("busy", [])
+        return [
+            (datetime.fromisoformat(b["start"]), datetime.fromisoformat(b["end"]))
+            for b in busy
+        ]
+    except Exception as e:
+        logger.warning(f"[CALENDAR] freebusy day query failed: {e} — assuming free")
+        return []
+
+
+def _range_overlaps_busy(
+    busy_periods: list[tuple[datetime, datetime]], start: datetime, end: datetime
+) -> bool:
+    return any(b_start < end and b_end > start for b_start, b_end in busy_periods)
+
+
 def find_next_free_slot(duration_minutes: int = 30, hours_from_now: int = 24) -> datetime:
     """
-    Find the next free slot on the primary Google Calendar.
-    Checks 10 AM, 11 AM, 2 PM, 3 PM, 4 PM IST on weekdays for up to 14 days.
-    Falls back to 10 AM next business day if the calendar API fails.
+    Find the next free meeting slot using the operator's configured availability.
+
+    Algorithm:
+    1. Load operator's per-day working hours from DB (OperatorAvailability).
+    2. Load scheduling config: buffer_minutes, max_meetings_per_day.
+    3. For each working day, generate candidate slots every `duration_minutes` within
+       the operator's working window.
+    4. Check (slot_start - buffer, slot_end + buffer) is free on Google Calendar so
+       no back-to-back meetings are booked.
+    5. Also skip any recurring blocks (lunch breaks, etc.) from BlockedTime table.
+    Falls back to next_available_slot() if calendar API fails.
     """
     from zoneinfo import ZoneInfo
     ist = ZoneInfo("Asia/Kolkata")
-    # Mon–Sat, 9 AM–7 PM IST — hourly slots, prefer morning slots first
-    PREFERRED_HOURS = [9, 10, 11, 14, 15, 16, 17, 18]
+
+    # ── Load config from DB ───────────────────────────────────────────────────
+    buffer_minutes = 15
+    avail_by_day: dict[int, dict] = {}
+    blocked_windows: list[tuple[int, int, int]] = []
+
+    try:
+        from app.database.core import SessionLocal
+        from app.models.operator_availability import OperatorAvailability, SchedulingConfig
+        from app.models.blocked_time import BlockedTime
+        with SessionLocal() as _db:
+            cfg = _db.query(SchedulingConfig).filter(SchedulingConfig.id == 1).first()
+            if cfg:
+                buffer_minutes = cfg.buffer_minutes
+                duration_minutes = cfg.slot_duration_minutes  # use configured default
+
+            rows = _db.query(OperatorAvailability).all()
+            for r in rows:
+                avail_by_day[r.day_of_week] = {
+                    "available": r.is_available,
+                    "start": (r.start_hour, r.start_minute),
+                    "end": (r.end_hour, r.end_minute),
+                }
+
+            blocks = _db.query(BlockedTime).filter(BlockedTime.is_active == True).all()
+            blocked_windows = [(b.day_of_week, b.start_hour, b.end_hour) for b in blocks]
+    except Exception as e:
+        logger.warning(f"[CALENDAR] Could not load availability config: {e}")
+
+    # Fallback defaults if nothing in DB
+    if not avail_by_day:
+        for d in range(6):   # Mon–Sat default
+            avail_by_day[d] = {"available": True, "start": (9, 0), "end": (18, 0)}
+        avail_by_day[6] = {"available": False, "start": (9, 0), "end": (18, 0)}
 
     try:
         cal_svc = get_calendar_service()
     except Exception:
         return next_available_slot(hours_from_now)
 
-    # Load recurring blocked hours from DB
-    blocked_windows: list[tuple[int, int, int]] = []  # (day_of_week, start_hour, end_hour)
-    try:
-        from app.database.core import SessionLocal
-        from app.models.blocked_time import BlockedTime
-        with SessionLocal() as _db:
-            blocks = _db.query(BlockedTime).filter(BlockedTime.is_active == True).all()
-            blocked_windows = [(b.day_of_week, b.start_hour, b.end_hour) for b in blocks]
-    except Exception:
-        pass
-
     now_ist = datetime.now(timezone.utc).astimezone(ist)
     earliest = now_ist + timedelta(hours=hours_from_now)
     start_date = earliest.date()
 
-    for day_offset in range(21):
+    for day_offset in range(28):  # look up to 4 weeks ahead
         check_date = start_date + timedelta(days=day_offset)
-        if check_date.weekday() == 6:  # skip Sunday only — Mon-Sat are working days
+        dow = check_date.weekday()  # 0=Mon … 6=Sun
+
+        day_cfg = avail_by_day.get(dow, {})
+        if not day_cfg.get("available", False):
             continue
-        for hour in PREFERRED_HOURS:
-            # Check recurring blocks
+
+        sh, sm = day_cfg["start"]
+        eh, em = day_cfg["end"]
+
+        slot_start = datetime(check_date.year, check_date.month, check_date.day,
+                              sh, sm, 0, tzinfo=ist)
+        day_end = datetime(check_date.year, check_date.month, check_date.day,
+                           eh, em, 0, tzinfo=ist)
+
+        # One freebusy call for the entire day window (+ buffer padding) instead of
+        # one call per slot — reduces up to 16 API calls/day to 1.
+        fetch_start = slot_start - timedelta(minutes=buffer_minutes)
+        fetch_end = day_end + timedelta(minutes=buffer_minutes)
+        busy_periods = _fetch_day_busy_periods(cal_svc, fetch_start, fetch_end)
+
+        while True:
+            slot_end = slot_start + timedelta(minutes=duration_minutes)
+            if slot_end > day_end:
+                break
+
+            if slot_start <= earliest:
+                slot_start = slot_start + timedelta(minutes=duration_minutes)
+                continue
+
             if any(
-                bday == check_date.weekday() and bstart <= hour < bend
+                bday == dow and bstart <= slot_start.hour < bend
                 for bday, bstart, bend in blocked_windows
             ):
+                slot_start = slot_start + timedelta(minutes=duration_minutes)
                 continue
-            slot_start = datetime(check_date.year, check_date.month, check_date.day,
-                                  hour, 0, 0, tzinfo=ist)
-            if slot_start <= earliest:
-                continue
-            slot_end = slot_start + timedelta(minutes=duration_minutes)
-            if _is_slot_free(cal_svc, slot_start, slot_end):
-                logger.info(f"[CALENDAR] Free slot found: {slot_start.isoformat()}")
+
+            check_start = slot_start - timedelta(minutes=buffer_minutes)
+            check_end = slot_end + timedelta(minutes=buffer_minutes)
+
+            if not _range_overlaps_busy(busy_periods, check_start, check_end):
+                logger.info(
+                    f"[CALENDAR] Free slot found: {slot_start.isoformat()} "
+                    f"(buffer={buffer_minutes}min)"
+                )
                 return slot_start.astimezone(timezone.utc)
 
-    logger.warning("[CALENDAR] No free slot found in 14 days — using fallback")
+            slot_start = slot_start + timedelta(minutes=duration_minutes)
+
+    logger.warning("[CALENDAR] No free slot found in 28 days — using fallback")
     return next_available_slot(hours_from_now)
 
 

@@ -48,6 +48,8 @@ def _fetch_all_labels(service) -> dict[str, str]:
 
 def ensure_labels_exist(service) -> None:
     global _label_cache
+    if _label_cache:
+        return  # Already initialised — skip the network call on every subsequent cycle
     existing = _fetch_all_labels(service)
     for label_name in MANAGED_LABELS:
         if label_name not in existing:
@@ -69,6 +71,28 @@ def get_label_id(service, label_name: str) -> Optional[str]:
 
 
 # ── Email fetching ────────────────────────────────────────────────────────────
+
+def fetch_thread_context(service, thread_id: str, current_message_id: str) -> Optional[str]:
+    """
+    For reply emails: return the body of the original message in the thread so
+    the classifier can understand the full conversation context, not just the reply.
+    Returns None if the thread has only one message or on any error.
+    """
+    try:
+        thread = service.users().threads().get(
+            userId="me", id=thread_id, format="full"
+        ).execute()
+        messages = thread.get("messages", [])
+        # Take the earliest message that isn't the current reply
+        others = [m for m in messages if m["id"] != current_message_id]
+        if not others:
+            return None
+        parsed = parse_message(others[0])
+        return (parsed.get("body_text") or "")[:2000] or None
+    except Exception as e:
+        logger.warning(f"[GMAIL] Could not fetch thread context for {thread_id}: {e}")
+        return None
+
 
 def fetch_unread_messages(service, max_results: int = 20) -> list[dict]:
     """Return list of full message dicts for unread inbox emails."""
@@ -93,13 +117,25 @@ def fetch_unread_messages(service, max_results: int = 20) -> list[dict]:
 
 def _strip_quoted_reply(body: str) -> str:
     """Strip Gmail reply-chain quotes so only the new message text is processed.
-    Removes 'On [date] ... wrote:' blocks and lines starting with '>'.
+
+    Gmail wraps the attribution block across two lines:
+        On Wed, Apr 29, 2026 at 3:06 PM Sender <email@x.com>
+        wrote: original text
+
+    The old single-line regex missed this. We now stop at the first line that
+    looks like a Gmail attribution header ('On [Weekday/Day], ...').
     """
-    # Gmail quote marker: "On Mon, 25 Apr 2026 at 1:26 AM ... wrote:"
-    stripped = re.split(r'\nOn .{10,80}wrote:\s*\n', body)[0]
-    # Also remove lines that start with > (RFC 2822 quoted text)
-    lines = [l for l in stripped.split('\n') if not l.lstrip().startswith('>')]
-    return '\n'.join(lines).strip()
+    lines = body.split('\n')
+    result = []
+    for line in lines:
+        # Gmail attribution starts with "On Mon," / "On 29 Apr" etc.
+        if re.match(r'^On [A-Z][a-z]{2},?\s+', line):
+            break
+        # RFC 2822 quoted lines start with >
+        if line.lstrip().startswith('>'):
+            continue
+        result.append(line)
+    return '\n'.join(result).strip()
 
 
 def parse_message(message: dict) -> dict:

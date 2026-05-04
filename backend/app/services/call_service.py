@@ -287,7 +287,7 @@ def process_transcript(db: Session, call: Call, transcript: str) -> Call:
     """
     call.transcript = transcript
 
-    product_id, product_name = detect_product(db, transcript)
+    product_id, product_name, _confidence = detect_product(db, transcript)
     call.detected_product_id = product_id
     call.detected_product_name = product_name
 
