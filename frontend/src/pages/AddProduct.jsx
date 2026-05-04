@@ -231,6 +231,9 @@ export default function AddProduct() {
                   <FormControl fullWidth size="medium">
                     <InputLabel>Category</InputLabel>
                     <Select name="category" value={formData.category} label="Category" onChange={handleInputChange} required>
+                      {formData.category && !CATEGORY_MAP[formData.category] && (
+                        <MenuItem key={formData.category} value={formData.category}>{formData.category}</MenuItem>
+                      )}
                       {Object.keys(CATEGORY_MAP).map(cat => (
                         <MenuItem key={cat} value={cat}>{cat}</MenuItem>
                       ))}
@@ -239,7 +242,7 @@ export default function AddProduct() {
                   <FormControl fullWidth size="medium" disabled={!formData.category}>
                     <InputLabel>Subcategory</InputLabel>
                     <Select name="subcategory" value={formData.subcategory} label="Subcategory" onChange={handleInputChange}>
-                      {formData.category && CATEGORY_MAP[formData.category].map(sub => (
+                      {formData.category && CATEGORY_MAP[formData.category]?.map(sub => (
                         <MenuItem key={sub} value={sub}>{sub}</MenuItem>
                       ))}
                     </Select>

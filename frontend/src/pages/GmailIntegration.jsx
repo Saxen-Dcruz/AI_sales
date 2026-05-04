@@ -7,6 +7,7 @@ import {
   Target, ThumbsUp, TrendingUp, UserPlus
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { GetGmailMessagesService, SyncGmailService } from '../services/ApiService'
 
 // ─── Sales Agent Config ─────────────────────────────────────────────────────
@@ -345,41 +346,65 @@ function SalesMetrics({ emails }) {
 const PAGE_SIZE = 25
 
 export default function AISalesAgentInbox() {
-  const [emails, setEmails] = useState([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
+  const queryClient = useQueryClient()
   const [filter, setFilter] = useState('all') // all, leads, hot, needs_action
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(null)
 
-  const fetchEmails = useCallback(() => {
-    setLoading(true)
-    const params = { page, limit: PAGE_SIZE }
-    // No filter by label here – we'll filter client-side for flexibility
-    GetGmailMessagesService(params,
-      (data) => { setEmails(data?.items || []); setTotal(data?.total || 0); setLoading(false) },
-      () => setLoading(false)
-    )
-  }, [page])
+  // 1. Fetch Emails from Database
+  const { data: emailsData, isLoading: loading } = useQuery({
+    queryKey: ['emails', page],
+    queryFn: () => new Promise((resolve, reject) => {
+      GetGmailMessagesService({ page, limit: PAGE_SIZE }, resolve, (s, err) => reject(new Error(err)))
+    })
+  })
 
-  useEffect(() => { fetchEmails() }, [fetchEmails])
-  useEffect(() => { setPage(1); setSelected(null) }, [filter])
+  const emails = emailsData?.items || []
+  const total = emailsData?.total || 0
+
+  // 2. Manual Sync Mutation
+  const syncMutation = useMutation({
+    mutationFn: () => new Promise((resolve, reject) => {
+      SyncGmailService(resolve, (s, err) => reject(new Error(err)))
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['emails'] })
+    },
+    onError: (error) => {
+      alert('Sync failed: ' + error.message)
+    }
+  })
 
   const handleSync = () => {
-    setSyncing(true)
-    SyncGmailService(
-      () => { setSyncing(false); fetchEmails() },
-      (_s, err) => { setSyncing(false); alert('Sync failed: ' + err) }
-    )
+    syncMutation.mutate()
   }
+
+  // 3. Smart Background Sync Polling (Every 60s & on Window Focus)
+  useQuery({
+    queryKey: ['backgroundSync'],
+    queryFn: () => new Promise((resolve, reject) => {
+      SyncGmailService(
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['emails'] })
+          resolve(true)
+        },
+        (s, err) => reject(new Error(err))
+      )
+    }),
+    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
+  })
+
+  useEffect(() => { setPage(1); setSelected(null) }, [filter])
+
+  const syncing = syncMutation.isPending
 
   // Apply filters
   const filteredEmails = emails.filter(email => {
-    const score = generateLeadScore(email)
-    if (filter === 'leads') return score >= 40
-    if (filter === 'hot') return score >= 70
+    if (filter === 'Sales') return email.label === 'Sales'
+    if (filter === 'Support') return email.label === 'Support'
+    if (filter === 'Grievance') return email.label === 'Grievance'
     if (filter === 'needs_action') return email.needs_human || email.status === 'draft_ready'
     return true
   }).filter(email =>
@@ -402,7 +427,7 @@ export default function AISalesAgentInbox() {
             <p className="text-sm text-gray-500">Intelligent lead prioritization & engagement</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={fetchEmails} className="p-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50">
+            <button onClick={() => queryClient.invalidateQueries({ queryKey: ['emails'] })} className="p-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50">
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
             <button onClick={handleSync} disabled={syncing} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 shadow-md">
@@ -420,12 +445,13 @@ export default function AISalesAgentInbox() {
           {/* Left: Filtered List */}
           <div className="w-96 flex-shrink-0 bg-white rounded-2xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
             {/* Filter Tabs */}
-            <div className="flex border-b border-gray-100 p-2 gap-1">
+            <div className="flex border-b border-gray-100 p-2 gap-1 overflow-x-auto whitespace-nowrap scrollbar-hide">
               {[
                 { key: 'all', label: 'All', icon: Mail },
-                { key: 'leads', label: 'Leads', icon: Target },
-                { key: 'hot', label: 'Hot', icon: TrendingUp },
-                { key: 'needs_action', label: 'Needs Action', icon: AlertCircle }
+                { key: 'Sales', label: 'Sales', icon: Target },
+                { key: 'Support', label: 'Support', icon: MessageSquare },
+                { key: 'Grievance', label: 'Grievance', icon: AlertCircle },
+                { key: 'needs_action', label: 'Action', icon: Flag }
               ].map(f => {
                 const Icon = f.icon
                 return (

@@ -1,16 +1,30 @@
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Search, Plus, Edit2, Trash2, BookOpen, Power, PowerOff,
-  RefreshCw, ExternalLink, ChevronLeft, ChevronRight, Tag,
-  Package, X, LayoutGrid, List
-} from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  DialogContentText, Button
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle
 } from '@mui/material'
-import { ShowAllProductService, DeleteProductService, ToggleActiveInactiveService } from '../services/ApiService'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  BookOpen,
+  ChevronLeft, ChevronRight,
+  Edit2,
+  ExternalLink,
+  LayoutGrid, List,
+  Package,
+  Plus,
+  Power, PowerOff,
+  RefreshCw,
+  Search,
+  Tag,
+  Trash2,
+  X
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { DeleteProductService, ShowAllProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
 function CoverageBar({ score }) {
   const pct = Math.round((score ?? 0) * 100)
@@ -66,9 +80,8 @@ function ProductCard({ product, onEdit, onToggle, onDelete, onView }) {
             </div>
           </div>
         </div>
-        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ${
-          isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
-        }`}>
+        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ${isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
+          }`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
           {isActive ? 'Active' : 'Inactive'}
         </span>
@@ -133,22 +146,21 @@ function ProductCard({ product, onEdit, onToggle, onDelete, onView }) {
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-        <button onClick={() => onEdit(product.id)}
+        {/* <button onClick={() => onEdit(product.id)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-blue-600 transition-all">
           <Edit2 size={12} />
           Edit
-        </button>
+        </button> */}
         <button onClick={() => onView(product)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-purple-600 transition-all">
           <BookOpen size={12} />
-          KB
+          View
         </button>
         <button onClick={() => onToggle(product)}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            isActive
-              ? 'text-gray-600 hover:bg-orange-50 hover:text-orange-500'
-              : 'text-gray-600 hover:bg-green-50 hover:text-green-500'
-          }`}>
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all ${isActive
+            ? 'text-gray-600 hover:bg-orange-50 hover:text-orange-500'
+            : 'text-gray-600 hover:bg-green-50 hover:text-green-500'
+            }`}>
           {isActive ? <PowerOff size={12} /> : <Power size={12} />}
           {isActive ? 'Off' : 'On'}
         </button>
@@ -203,9 +215,8 @@ function ProductRow({ product, onEdit, onToggle, onDelete, onView }) {
         </div>
       </td>
       <td className="py-3 px-4">
-        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg ${
-          isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
-        }`}>
+        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg ${isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
+          }`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
           {isActive ? 'Active' : 'Inactive'}
         </span>
@@ -221,9 +232,8 @@ function ProductRow({ product, onEdit, onToggle, onDelete, onView }) {
             <BookOpen size={13} />
           </button>
           <button onClick={() => onToggle(product)}
-            className={`p-1.5 rounded-lg text-gray-400 transition-all ${
-              isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
-            }`}>
+            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
+              }`}>
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
           </button>
           <button onClick={() => onDelete(product)}
@@ -445,9 +455,8 @@ export default function Products() {
           </button>
           {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map(p => (
             <button key={p} onClick={() => setPage(p)}
-              className={`w-7 h-7 rounded-lg text-xs font-medium transition-all ${
-                p === page ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
-              }`}>
+              className={`w-7 h-7 rounded-lg text-xs font-medium transition-all ${p === page ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+                }`}>
               {p}
             </button>
           ))}
