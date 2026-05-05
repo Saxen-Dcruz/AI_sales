@@ -1,43 +1,51 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
-  RefreshCw, Search, Mail, MailOpen, AlertCircle,
-  CheckCircle, Archive, Send, Users, Star, Tag, ChevronRight,
+  AlertCircle,
+  Archive,
+  CheckCircle,
+  ChevronRight,
+  Mail, MailOpen,
+  RefreshCw, Search,
+  Send,
+  Star, Tag,
+  Users,
   X, Zap
 } from 'lucide-react'
-import { GetGmailMessagesService, SyncGmailService, ApproveDraftService, ResolveEmailService, DiscardDraftService, GenerateDraftService, SendEmailService, GetEmailByIdService } from '../services/ApiService'
+import { useCallback, useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, ResolveEmailService, SendEmailService, SyncGmailService } from '../services/ApiService'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const LABEL_CONFIG = {
-  Sales:         { bg: 'bg-emerald-50',  text: 'text-emerald-700', border: 'border-l-emerald-400', dot: 'bg-emerald-400', badge: 'bg-emerald-100 text-emerald-700' },
-  Support:       { bg: 'bg-amber-50',    text: 'text-amber-700',   border: 'border-l-amber-400',   dot: 'bg-amber-400',   badge: 'bg-amber-100 text-amber-700' },
-  Grievance:     { bg: 'bg-red-50',      text: 'text-red-700',     border: 'border-l-red-400',     dot: 'bg-red-400',     badge: 'bg-red-100 text-red-700' },
-  Transactional: { bg: 'bg-blue-50',     text: 'text-blue-700',    border: 'border-l-blue-300',    dot: 'bg-blue-300',    badge: 'bg-blue-100 text-blue-700' },
-  Promotional:   { bg: 'bg-purple-50',   text: 'text-purple-700',  border: 'border-l-purple-300',  dot: 'bg-purple-300',  badge: 'bg-purple-100 text-purple-700' },
-  Personal:      { bg: 'bg-pink-50',     text: 'text-pink-700',    border: 'border-l-pink-300',    dot: 'bg-pink-300',    badge: 'bg-pink-100 text-pink-700' },
-  Unclassified:  { bg: 'bg-gray-50',     text: 'text-gray-600',    border: 'border-l-gray-300',    dot: 'bg-gray-300',    badge: 'bg-gray-100 text-gray-600' },
+  Sales: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-l-emerald-400', dot: 'bg-emerald-400', badge: 'bg-emerald-100 text-emerald-700' },
+  Support: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-l-amber-400', dot: 'bg-amber-400', badge: 'bg-amber-100 text-amber-700' },
+  Grievance: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-l-red-400', dot: 'bg-red-400', badge: 'bg-red-100 text-red-700' },
+  Transactional: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-l-blue-300', dot: 'bg-blue-300', badge: 'bg-blue-100 text-blue-700' },
+  Promotional: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-l-purple-300', dot: 'bg-purple-300', badge: 'bg-purple-100 text-purple-700' },
+  Personal: { bg: 'bg-pink-50', text: 'text-pink-700', border: 'border-l-pink-300', dot: 'bg-pink-300', badge: 'bg-pink-100 text-pink-700' },
+  Unclassified: { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-l-gray-300', dot: 'bg-gray-300', badge: 'bg-gray-100 text-gray-600' },
 }
 
 const STATUS_CONFIG = {
-  new:           { icon: Mail,         color: 'text-blue-500',  label: 'New' },
-  classified:    { icon: Tag,          color: 'text-gray-400',  label: 'Classified' },
-  draft_ready:   { icon: Star,         color: 'text-amber-500', label: 'Draft Ready' },
-  pending_human: { icon: AlertCircle,  color: 'text-red-500',   label: 'Needs Review' },
-  replied:       { icon: CheckCircle,  color: 'text-emerald-500', label: 'Replied' },
-  archived:      { icon: Archive,      color: 'text-gray-400',  label: 'Archived' },
-  ignored:       { icon: X,           color: 'text-gray-300',  label: 'Ignored' },
+  new: { icon: Mail, color: 'text-blue-500', label: 'New' },
+  classified: { icon: Tag, color: 'text-gray-400', label: 'Classified' },
+  draft_ready: { icon: Star, color: 'text-amber-500', label: 'Draft Ready' },
+  pending_human: { icon: AlertCircle, color: 'text-red-500', label: 'Needs Review' },
+  replied: { icon: CheckCircle, color: 'text-emerald-500', label: 'Replied' },
+  archived: { icon: Archive, color: 'text-gray-400', label: 'Archived' },
+  ignored: { icon: X, color: 'text-gray-300', label: 'Ignored' },
 }
 
 
 const TABS = [
-  { key: '',              label: 'All',          icon: Mail },
-  { key: 'Sales',        label: 'Sales',         icon: Zap },
-  { key: 'Support',      label: 'Support',       icon: Users },
-  { key: 'Grievance',    label: 'Grievance',     icon: AlertCircle },
-  { key: 'needs_human',  label: 'Needs Review',  icon: Star },
-  { key: 'draft_ready',  label: 'Draft Ready',   icon: Send },
+  { key: '', label: 'All', icon: Mail },
+  { key: 'Sales', label: 'Sales', icon: Zap },
+  { key: 'Support', label: 'Support', icon: Users },
+  { key: 'Grievance', label: 'Grievance', icon: AlertCircle },
+  { key: 'needs_human', label: 'Needs Review', icon: Star },
+  { key: 'draft_ready', label: 'Draft Ready', icon: Send },
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -86,9 +94,9 @@ function EmailRow({ email, selected, onClick }) {
         <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white
           ${email.label === 'Sales' ? 'bg-emerald-500' :
             email.label === 'Support' ? 'bg-amber-500' :
-            email.label === 'Grievance' ? 'bg-red-500' :
-            email.label === 'Transactional' ? 'bg-blue-400' :
-            'bg-gray-400'}`}>
+              email.label === 'Grievance' ? 'bg-red-500' :
+                email.label === 'Transactional' ? 'bg-blue-400' :
+                  'bg-gray-400'}`}>
           {senderInitial(email.sender)}
         </div>
 
@@ -288,12 +296,12 @@ function EmailDetail({ email, onRefresh }) {
           )}
           {(email.label === 'Support' || email.label === 'Grievance') &&
             email.status !== 'replied' && !email.resolved_at && (
-            <button onClick={handleResolve} disabled={acting === 'resolve'}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
-              <CheckCircle size={12} />
-              {acting === 'resolve' ? 'Resolving...' : 'Mark Resolved'}
-            </button>
-          )}
+              <button onClick={handleResolve} disabled={acting === 'resolve'}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
+                <CheckCircle size={12} />
+                {acting === 'resolve' ? 'Resolving...' : 'Mark Resolved'}
+              </button>
+            )}
           {email.status === 'replied' && (
             <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
               <CheckCircle size={13} />
@@ -459,7 +467,7 @@ export default function GmailIntegration() {
   const [emails, setEmails] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
+  // const [syncing, setSyncing] = useState(false)
   const [activeTab, setActiveTab] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -467,13 +475,27 @@ export default function GmailIntegration() {
   const [directEmail, setDirectEmail] = useState(null) // email fetched directly from gaps nav
   const [composeOpen, setComposeOpen] = useState(false)
 
+  const queryClient = useQueryClient()
+
+  const syncMutation = useMutation({
+    mutationFn: () => new Promise((resolve, reject) => {
+      SyncGmailService(
+        resolve,
+        (s, err) => reject(new Error(err))
+      )
+    }),
+    onSuccess: () => {
+      fetchEmails()
+    }
+  })
+
   // When navigated from GapsPage with a specific email to show
   useEffect(() => {
     const emailId = location.state?.selectEmailId
     if (!emailId) return
     GetEmailByIdService(emailId,
       (data) => { setDirectEmail(data); setSelected(data.id) },
-      () => {}
+      () => { }
     )
   }, [location.state])
 
@@ -494,18 +516,34 @@ export default function GmailIntegration() {
   useEffect(() => { setPage(1); setSelected(null) }, [activeTab])
 
   const handleSync = () => {
-    setSyncing(true)
-    SyncGmailService(
-      () => { setSyncing(false); fetchEmails() },
-      (_s, err) => { setSyncing(false); alert('Sync failed: ' + err) }
-    )
+    syncMutation.mutate()
   }
+
+  // 3. Smart Background Sync Polling (Every 60s & on Window Focus)
+  useQuery({
+    queryKey: ['backgroundSync'],
+    queryFn: () => new Promise((resolve, reject) => {
+      SyncGmailService(
+        () => {
+          fetchEmails()
+          resolve(true)
+        },
+        (s, err) => reject(new Error(err))
+      )
+    }),
+    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
+  })
+
+  useEffect(() => { setPage(1); setSelected(null) }, [search])
+
+  const syncing = syncMutation.isPending
 
   const filtered = search
     ? emails.filter(e =>
-        (e.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-        (e.sender || '').toLowerCase().includes(search.toLowerCase())
-      )
+      (e.subject || '').toLowerCase().includes(search.toLowerCase()) ||
+      (e.sender || '').toLowerCase().includes(search.toLowerCase())
+    )
     : emails
 
   // directEmail is set when navigated from GapsPage — may not be in the current paginated list

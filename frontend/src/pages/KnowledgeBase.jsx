@@ -1,27 +1,30 @@
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
-  ArrowLeft, Plus, Edit2, Trash2, RefreshCw, BookOpen,
-  Tag, Save, X, Database, ChevronDown, ChevronRight
+  ArrowLeft,
+  Database,
+  Edit2,
+  Plus,
+  Save, Trash2, X
 } from 'lucide-react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
-  ShowOneProductService,
-  GetProductKnowledgeService,
   AddProductKnowledgeService,
-  UpdateProductKnowledgeService,
   DeleteProductKnowledgeService,
   GetProductEmbeddingsService,
+  GetProductKnowledgeService,
+  ShowOneProductService,
+  UpdateProductKnowledgeService,
 } from '../services/ApiService'
 
 const CATEGORIES = ['general', 'warranty', 'pricing', 'compatibility', 'technical']
 
 const CAT_COLOR = {
-  general:       'bg-gray-100 text-gray-600',
-  warranty:      'bg-blue-50 text-blue-700',
-  pricing:       'bg-emerald-50 text-emerald-700',
+  general: 'bg-gray-100 text-gray-600',
+  warranty: 'bg-blue-50 text-blue-700',
+  pricing: 'bg-emerald-50 text-emerald-700',
   compatibility: 'bg-purple-50 text-purple-700',
-  technical:     'bg-amber-50 text-amber-700',
+  technical: 'bg-amber-50 text-amber-700',
 }
 
 function EntryDialog({ open, entry, productId, onClose, onSaved }) {
@@ -92,10 +95,10 @@ function EntryDialog({ open, entry, productId, onClose, onSaved }) {
             <textarea value={content} onChange={e => setContent(e.target.value)} rows={7}
               placeholder={
                 category === 'warranty' ? 'e.g. This product comes with a 1-year replacement warranty. Contact support@rdltech.in for claims.' :
-                category === 'pricing' ? 'e.g. Bulk orders of 10+ units get 15% discount. Contact sales for OEM pricing.' :
-                category === 'compatibility' ? 'e.g. Compatible with Arduino, Raspberry Pi, and ESP32 via UART/I2C.' :
-                category === 'technical' ? 'e.g. Operating voltage: 5V DC. Max current draw: 500mA. Temperature range: -20°C to 85°C.' :
-                'Enter detailed product knowledge that the AI should use to answer customer questions...'
+                  category === 'pricing' ? 'e.g. Bulk orders of 10+ units get 15% discount. Contact sales for OEM pricing.' :
+                    category === 'compatibility' ? 'e.g. Compatible with Arduino, Raspberry Pi, and ESP32 via UART/I2C.' :
+                      category === 'technical' ? 'e.g. Operating voltage: 5V DC. Max current draw: 500mA. Temperature range: -20°C to 85°C.' :
+                        'Enter detailed product knowledge that the AI should use to answer customer questions...'
               }
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl px-4 py-3 resize-none focus:outline-none focus:border-blue-400 transition-all leading-relaxed" />
             <p className="text-[10px] text-gray-400 mt-1">{content.length} chars · This text will be embedded into the RAG vector store immediately on save.</p>
@@ -116,44 +119,46 @@ function EntryDialog({ open, entry, productId, onClose, onSaved }) {
 }
 
 const CHUNK_COLORS = {
-  description:        'bg-blue-50 text-blue-700',
-  features:           'bg-emerald-50 text-emerald-700',
-  specification:      'bg-purple-50 text-purple-700',
-  specifications:     'bg-purple-50 text-purple-700',
-  package_contains:   'bg-amber-50 text-amber-700',
-  package_includes:   'bg-amber-50 text-amber-700',
+  description: 'bg-blue-50 text-blue-700',
+  features: 'bg-emerald-50 text-emerald-700',
+  specification: 'bg-purple-50 text-purple-700',
+  specifications: 'bg-purple-50 text-purple-700',
+  package_contains: 'bg-amber-50 text-amber-700',
+  package_includes: 'bg-amber-50 text-amber-700',
   frequently_bought_together: 'bg-pink-50 text-pink-700',
-  product_knowledge:  'bg-indigo-50 text-indigo-700',
+  product_knowledge: 'bg-indigo-50 text-indigo-700',
 }
 
-function ChunkRow({ chunk }) {
-  const [open, setOpen] = useState(false)
+function ChunkTableRow({ chunk, index, onEdit, onDelete }) {
   const color = CHUNK_COLORS[chunk.chunk_type] || 'bg-gray-50 text-gray-600'
   return (
-    <div className="border border-gray-100 rounded-xl overflow-hidden">
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-all text-left group">
-        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${color}`}>
+    <tr className="hover:bg-gray-50/50 transition-colors group">
+      <td className="px-4 py-4 text-xs font-medium text-gray-500 text-center align-top w-16">
+        {index}
+      </td>
+      <td className="px-4 py-4 align-top w-48">
+        <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${color} inline-block whitespace-nowrap`}>
           {chunk.chunk_type.replace(/_/g, ' ')}
         </span>
-        <span className="text-[10px] text-gray-500 truncate flex-1">
-          {(chunk.document || '').slice(0, 120)}
-        </span>
-        {open
-          ? <ChevronDown size={12} className="text-gray-400 flex-shrink-0" />
-          : <ChevronRight size={12} className="text-gray-400 flex-shrink-0 opacity-0 group-hover:opacity-100" />}
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }}
-            exit={{ height: 0 }} className="overflow-hidden">
-            <pre className="text-[10px] text-gray-700 bg-gray-50 border-t border-gray-100 px-4 py-3 whitespace-pre-wrap leading-relaxed font-mono max-h-56 overflow-y-auto">
-              {chunk.document}
-            </pre>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+      </td>
+      <td className="px-4 py-4">
+        <div className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap font-mono bg-gray-50/50 p-3 rounded-lg border border-gray-100 max-h-48 overflow-y-auto">
+          {chunk.document}
+        </div>
+      </td>
+      <td className="px-4 py-4 align-top w-32">
+        <div className="flex items-center justify-center gap-1">
+          <button onClick={() => onEdit?.(chunk)}
+            className="p-1.5 rounded-lg text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition-all">
+            <Edit2 size={16} />
+          </button>
+          <button onClick={() => onDelete?.(chunk)}
+            className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 transition-all">
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -197,6 +202,16 @@ export default function KnowledgeBase() {
     )
   }
 
+  const handleEditChunk = (chunk) => {
+    alert(`Editing chunk: ${chunk.chunk_id}\n\n(Backend implementation needed)`);
+  }
+
+  const handleDeleteChunk = (chunk) => {
+    if (window.confirm(`Delete this chunk?\n\n"${(chunk.document || '').slice(0, 80)}..."`)) {
+      alert(`Deleted chunk: ${chunk.chunk_id}\n\n(Backend implementation needed)`);
+    }
+  }
+
   const openAdd = () => { setEditingEntry(null); setDialogOpen(true) }
   const openEdit = (entry) => { setEditingEntry(entry); setDialogOpen(true) }
   const onSaved = () => { setDialogOpen(false); fetchAll() }
@@ -234,12 +249,12 @@ export default function KnowledgeBase() {
         <div className="flex items-center gap-2">
           <button onClick={fetchAll}
             className="p-2 rounded-xl bg-gray-50 border border-gray-200 text-gray-400 hover:bg-gray-100 transition-all">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            {/* <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> */}
           </button>
           <button onClick={openAdd}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all">
             <Plus size={14} />
-            Add Knowledge
+            Add Chunks  
           </button>
         </div>
       </div>
@@ -259,61 +274,8 @@ export default function KnowledgeBase() {
         ))}
       </div>
 
-      {/* Entries */}
-      {loading ? (
-        <div className="glass-card p-10 text-center text-gray-400 text-sm">Loading entries...</div>
-      ) : entries.length === 0 ? (
-        <div className="glass-card p-12 flex flex-col items-center gap-3 text-center">
-          <BookOpen size={28} className="text-gray-300" />
-          <p className="text-sm text-gray-500">No knowledge entries yet.</p>
-          <p className="text-xs text-gray-400 max-w-xs">Add warranty info, pricing details, compatibility notes, or technical specs so the AI can answer customer questions accurately.</p>
-          <button onClick={openAdd}
-            className="mt-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all">
-            <Plus size={14} />
-            Add first entry
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <AnimatePresence>
-            {entries.map((entry, i) => (
-              <motion.div key={entry.id}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96 }} transition={{ delay: i * 0.03 }}
-                className="glass-card p-4 group">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <Tag size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${CAT_COLOR[entry.category] || CAT_COLOR.general}`}>
-                          {entry.category}
-                        </span>
-                        {entry.added_by && (
-                          <span className="text-[9px] text-gray-400">by {entry.added_by}</span>
-                        )}
-                      </div>
-                      <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{entry.content}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(entry)}
-                      className="p-1.5 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-400 transition-all">
-                      <Edit2 size={13} />
-                    </button>
-                    <button onClick={() => handleDelete(entry.id, entry.content)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all">
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
 
-      {/* RAG Embedding Chunks */}
+
       {!loading && chunks.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 px-1">
@@ -324,12 +286,32 @@ export default function KnowledgeBase() {
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
               {chunks.length} chunks
             </span>
-            <p className="text-[10px] text-gray-400 ml-1">
-              Click any chunk to read the full embedded text
-            </p>
           </div>
-          <div className="space-y-1.5">
-            {chunks.map(chunk => <ChunkRow key={chunk.chunk_id} chunk={chunk} />)}
+
+          <div className="glass-card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                    <th className="px-4 py-3 w-16 text-center">Sl No.</th>
+                    <th className="px-4 py-3 w-48">Chunk Type</th>
+                    <th className="px-4 py-3">Chunk Description</th>
+                    <th className="px-4 py-3 w-32 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {chunks.map((chunk, index) => (
+                    <ChunkTableRow
+                      key={chunk.chunk_id}
+                      chunk={chunk}
+                      index={index + 1}
+                      onEdit={handleEditChunk}
+                      onDelete={handleDeleteChunk}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

@@ -1,19 +1,44 @@
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Search, Plus, Edit2, Trash2, BookOpen, Power, PowerOff,
-  RefreshCw, ExternalLink, ChevronLeft, ChevronRight, Tag,
-  Package, X, LayoutGrid, List
-} from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
-import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  DialogContentText, Button
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle
 } from '@mui/material'
-import { ShowAllProductService, DeleteProductService, ToggleActiveInactiveService } from '../services/ApiService'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  BookOpen,
+  ChevronLeft, ChevronRight,
+  Edit2,
+  ExternalLink,
+  LayoutGrid, List,
+  Package,
+  Plus,
+  Power, PowerOff,
+  RefreshCw,
+  Search,
+  Tag,
+  Trash2,
+  X
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { DeleteProductService, ShowAllProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
 function CoverageBar({ score }) {
-  const pct = Math.round((score ?? 0) * 100)
+  if (score === null || score === undefined) {
+    return (
+      <div>
+        <div className="flex justify-between mb-1">
+          <span className="text-[10px] text-gray-400">Knowledge Coverage</span>
+          <span className="text-[10px] font-bold text-gray-400">No data</span>
+        </div>
+        <div className="h-1 rounded-full bg-gray-100" />
+      </div>
+    )
+  }
+  const pct = Math.round(score * 100)
   const color = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444'
   return (
     <div>
@@ -66,9 +91,8 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
             </div>
           </div>
         </div>
-        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ${
-          isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
-        }`}>
+        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ${isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
+          }`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
           {isActive ? 'Active' : 'Inactive'}
         </span>
@@ -133,22 +157,23 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-        <button onClick={() => onEdit(product.id)}
+        {/* <button onClick={() => onEdit(product.id)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-blue-600 transition-all">
           <Edit2 size={12} />
           Edit
         </button>
         <button onClick={() => onKb(product.id)}
+        </button> */}
+        <button onClick={() => onView(product)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-purple-600 transition-all">
           <BookOpen size={12} />
-          KB
+          View
         </button>
         <button onClick={() => onToggle(product)}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            isActive
-              ? 'text-gray-600 hover:bg-orange-50 hover:text-orange-500'
-              : 'text-gray-600 hover:bg-green-50 hover:text-green-500'
-          }`}>
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all ${isActive
+            ? 'text-gray-600 hover:bg-orange-50 hover:text-orange-500'
+            : 'text-gray-600 hover:bg-green-50 hover:text-green-500'
+            }`}>
           {isActive ? <PowerOff size={12} /> : <Power size={12} />}
           {isActive ? 'Off' : 'On'}
         </button>
@@ -164,8 +189,9 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
 
 function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   const isActive = product.status === 'Active'
-  const pct = Math.round((product.coverage_score ?? 0) * 100)
-  const coverageColor = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444'
+  const hasScore = product.coverage_score !== null && product.coverage_score !== undefined
+  const pct = hasScore ? Math.round(product.coverage_score * 100) : null
+  const coverageColor = !hasScore ? '#9ca3af' : pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444'
 
   return (
     <motion.tr layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="table-row">
@@ -197,15 +223,16 @@ function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
       <td className="py-3 px-4">
         <div className="flex items-center gap-1.5">
           <div className="w-16 h-1 rounded-full bg-gray-100">
-            <div className="h-full rounded-full" style={{ width: `${pct}%`, background: coverageColor }} />
+            <div className="h-full rounded-full" style={{ width: `${pct ?? 0}%`, background: coverageColor }} />
           </div>
-          <span className="text-[10px] font-medium" style={{ color: coverageColor }}>{pct}%</span>
+          <span className="text-[10px] font-medium" style={{ color: coverageColor }}>
+            {pct !== null ? `${pct}%` : '—'}
+          </span>
         </div>
       </td>
       <td className="py-3 px-4">
-        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg ${
-          isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
-        }`}>
+        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg ${isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'
+          }`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
           {isActive ? 'Active' : 'Inactive'}
         </span>
@@ -221,9 +248,8 @@ function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
             <BookOpen size={13} />
           </button>
           <button onClick={() => onToggle(product)}
-            className={`p-1.5 rounded-lg text-gray-400 transition-all ${
-              isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
-            }`}>
+            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
+              }`}>
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
           </button>
           <button onClick={() => onDelete(product)}
@@ -305,15 +331,16 @@ export default function Products() {
 
   const categories = ['All', ...new Set(products.map(p => p.category).filter(Boolean))]
   const active = products.filter(p => p.status === 'Active').length
-  const avgCoverage = products.length
-    ? Math.round(products.reduce((a, p) => a + (p.coverage_score ?? 0) * 100, 0) / products.length)
+  const scoredProducts = products.filter(p => p.coverage_score !== null && p.coverage_score !== undefined)
+  const avgCoverage = scoredProducts.length
+    ? Math.round(scoredProducts.reduce((a, p) => a + p.coverage_score * 100, 0) / scoredProducts.length)
     : 0
 
   const summaryCards = [
     { label: 'Total Products', value: products.length, color: 'text-primary-400' },
     { label: 'Active', value: active, color: 'text-accent-green' },
     { label: 'Inactive', value: products.length - active, color: 'text-gray-400' },
-    { label: 'Avg Coverage', value: `${avgCoverage}%`, color: avgCoverage >= 70 ? 'text-accent-green' : avgCoverage >= 40 ? 'text-accent-orange' : 'text-accent-red' },
+    { label: 'Avg Coverage', value: scoredProducts.length ? `${avgCoverage}%` : '—', color: scoredProducts.length ? (avgCoverage >= 70 ? 'text-accent-green' : avgCoverage >= 40 ? 'text-accent-orange' : 'text-accent-red') : 'text-gray-400' },
   ]
 
   return (
@@ -446,9 +473,8 @@ export default function Products() {
           </button>
           {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map(p => (
             <button key={p} onClick={() => setPage(p)}
-              className={`w-7 h-7 rounded-lg text-xs font-medium transition-all ${
-                p === page ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
-              }`}>
+              className={`w-7 h-7 rounded-lg text-xs font-medium transition-all ${p === page ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+                }`}>
               {p}
             </button>
           ))}
