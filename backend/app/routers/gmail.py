@@ -158,11 +158,22 @@ def get_email_analytics(
     competitor_mentions = sum(1 for e in all_emails if e.competitor_mention)
 
     by_label = {}
+    by_status = {}
+    by_direction = {}
     for e in all_emails:
         lbl = e.label.value if e.label else "Unclassified"
         by_label[lbl] = by_label.get(lbl, 0) + 1
 
+        st = e.status.value if e.status else "unknown"
+        by_status[st] = by_status.get(st, 0) + 1
+
+        d = e.direction or "unknown"
+        by_direction[d] = by_direction.get(d, 0) + 1
+
     return EmailSLAAnalytics(
+        total_emails=len(all_emails),
+        total_inbound=by_direction.get("inbound", 0),
+        total_outbound=by_direction.get("outbound", 0),
         total_sales_emails=len(sales),
         auto_sent=auto_sent,
         drafted_for_review=drafted,
@@ -172,6 +183,8 @@ def get_email_analytics(
         sla_breached=sla_breached,
         competitor_mentions=competitor_mentions,
         by_label=by_label,
+        by_status=by_status,
+        by_direction=by_direction,
     )
 
 

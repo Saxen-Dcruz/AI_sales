@@ -17,6 +17,7 @@ import GapsPage from './pages/GapsPage'
 import GmailIntegration from './pages/GmailIntegration'
 import CalendarIntegration from './pages/CalendarIntegration'
 import EmbeddingsPage from './pages/EmbeddingsPage'
+import GmailAnalytics from './pages/GmailAnalytics'
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="edit-product/:id" element={<AddProduct />} />
           <Route path="knowledge-base/:id" element={<KnowledgeBase />} />
           <Route path="embeddings" element={<EmbeddingsPage />} />
+          <Route path="gmail-analytics" element={<GmailAnalytics />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

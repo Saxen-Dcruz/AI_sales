@@ -1307,3 +1307,114 @@ def test_resolve_email_no_auth(client):
     with _no_auth(client):
         resp = client.post(f"{BASE}/{eid}/resolve", json={"resolved_by": "x@x.com"})
     assert resp.status_code == 401
+
+
+# ── GET /analytics ─────────────────────────────────────────────────────────────
+
+def test_analytics_response_shape(client, auth_headers):
+    """Response contains all required top-level keys."""
+    resp = client.get(f"{BASE}/analytics", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    required = {
+        "total_emails", "total_inbound", "total_outbound",
+        "total_sales_emails", "auto_sent", "drafted_for_review",
+        "pending_human", "auto_sent_rate_pct", "avg_reply_minutes",
+        "sla_breached", "competitor_mentions", "by_label",
+        "by_status", "by_direction",
+    }
+    assert required.issubset(data.keys())
+
+
+def test_analytics_by_direction_counts_inbound(client, auth_headers):
+    """Inbound emails appear in by_direction and total_inbound."""
+    before = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    _insert_email(direction="inbound", label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED)
+    after = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert after["total_inbound"] == before["total_inbound"] + 1
+    assert after["by_direction"].get("inbound", 0) == before["by_direction"].get("inbound", 0) + 1
+    assert after["total_emails"] == before["total_emails"] + 1
+
+
+def test_analytics_by_direction_counts_outbound(client, auth_headers):
+    """Outbound emails appear in by_direction and total_outbound."""
+    before = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    _insert_email(direction="outbound", label=EmailLabel.SALES, status=EmailStatus.REPLIED)
+    after = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert after["total_outbound"] == before["total_outbound"] + 1
+    assert after["by_direction"].get("outbound", 0) == before["by_direction"].get("outbound", 0) + 1
+
+
+def test_analytics_by_label_includes_all_inserted_labels(client, auth_headers):
+    """Each inserted label appears in by_label."""
+    _insert_email(label=EmailLabel.SUPPORT, status=EmailStatus.PENDING_HUMAN, needs_human=True)
+    _insert_email(label=EmailLabel.GRIEVANCE, status=EmailStatus.PENDING_HUMAN, needs_human=True)
+    _insert_email(label=EmailLabel.TRANSACTIONAL, status=EmailStatus.ARCHIVED)
+    resp = client.get(f"{BASE}/analytics", headers=auth_headers)
+    by_label = resp.json()["by_label"]
+    assert by_label.get("Support", 0) >= 1
+    assert by_label.get("Grievance", 0) >= 1
+    assert by_label.get("Transactional", 0) >= 1
+
+
+def test_analytics_by_status_tracks_replied(client, auth_headers):
+    """Replied emails appear in by_status."""
+    before = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    _insert_email(label=EmailLabel.SALES, status=EmailStatus.REPLIED, direction="outbound")
+    after = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert after["by_status"].get("replied", 0) >= before["by_status"].get("replied", 0) + 1
+
+
+def test_analytics_by_status_tracks_pending_human(client, auth_headers):
+    """Pending-human emails appear in by_status and pending_human count."""
+    before = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    _insert_email(label=EmailLabel.SUPPORT, status=EmailStatus.PENDING_HUMAN, needs_human=True)
+    after = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert after["by_status"].get("pending_human", 0) >= before["by_status"].get("pending_human", 0) + 1
+    assert after["pending_human"] >= before["pending_human"] + 1
+
+
+def test_analytics_auto_sent_rate_is_percentage(client, auth_headers):
+    """auto_sent_rate_pct is between 0 and 100."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert 0.0 <= data["auto_sent_rate_pct"] <= 100.0
+
+
+def test_analytics_avg_reply_minutes_non_negative(client, auth_headers):
+    """avg_reply_minutes is >= 0."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert data["avg_reply_minutes"] >= 0.0
+
+
+def test_analytics_total_equals_direction_sum(client, auth_headers):
+    """total_emails equals sum of all by_direction values."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    direction_sum = sum(data["by_direction"].values())
+    assert data["total_emails"] == direction_sum
+
+
+def test_analytics_total_equals_label_sum(client, auth_headers):
+    """total_emails equals sum of all by_label values."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    label_sum = sum(data["by_label"].values())
+    assert data["total_emails"] == label_sum
+
+
+def test_analytics_total_equals_status_sum(client, auth_headers):
+    """total_emails equals sum of all by_status values."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    status_sum = sum(data["by_status"].values())
+    assert data["total_emails"] == status_sum
+
+
+def test_analytics_competitor_mentions_non_negative(client, auth_headers):
+    """competitor_mentions is >= 0."""
+    data = client.get(f"{BASE}/analytics", headers=auth_headers).json()
+    assert data["competitor_mentions"] >= 0
+
+
+def test_analytics_no_auth(client):
+    """Analytics endpoint requires authentication."""
+    with _no_auth(client):
+        resp = client.get(f"{BASE}/analytics")
+    assert resp.status_code == 401

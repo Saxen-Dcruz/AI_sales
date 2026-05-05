@@ -1,10 +1,10 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  LayoutDashboard, Linkedin, Phone, Users, MessageSquare,
-  Target, Bot, Settings, Bell, ChevronRight, Zap, X,
-  BarChart3, PhoneCall, UserCheck, TrendingUp, Package, PlusSquare,
-  BrainCircuit, AlertCircle, Mail, Calendar, BookOpen
+  LayoutDashboard, Linkedin, MessageSquare,
+  Target, Bot, Settings, ChevronRight, X, Zap,
+  PhoneCall, UserCheck, Package, PlusSquare,
+  BrainCircuit, AlertCircle, Mail, Calendar, MailSearch
 } from 'lucide-react'
 
 const navSections = [
@@ -19,6 +19,7 @@ const navSections = [
     items: [
       { path: '/linkedin', icon: Linkedin, label: 'LinkedIn Analytics' },
       { path: '/calls', icon: PhoneCall, label: 'Call Analytics' },
+      { path: '/gmail-analytics', icon: MailSearch, label: 'Email Analytics' },
       { path: '/ai-analytics', icon: BrainCircuit, label: 'AI Analytics' },
       { path: '/users', icon: UserCheck, label: 'User Analytics' },
     ]

@@ -87,15 +87,20 @@ class GapResolveRequest(BaseModel):
 
 
 class EmailSLAAnalytics(BaseModel):
+    total_emails: int
+    total_inbound: int
+    total_outbound: int
     total_sales_emails: int
-    auto_sent: int                 # replied without human touch
-    drafted_for_review: int        # had gaps, sent after saving
-    pending_human: int             # support/grievance awaiting resolution
+    auto_sent: int
+    drafted_for_review: int
+    pending_human: int
     auto_sent_rate_pct: float
-    avg_reply_minutes: float       # avg time from received_at to replied
-    sla_breached: int              # Sales emails not replied within 2 hours
-    competitor_mentions: int       # emails where a competitor was mentioned
-    by_label: dict                 # count per EmailLabel
+    avg_reply_minutes: float
+    sla_breached: int
+    competitor_mentions: int
+    by_label: dict
+    by_status: dict
+    by_direction: dict
 
 
 class GenerateDraftRequest(BaseModel):
