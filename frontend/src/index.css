@@ -24,32 +24,36 @@
   --color-base-300: oklch(92% 0.013 255.508);
   --color-base-content: oklch(20% 0.042 265.755);
 
-  --color-primary:           oklch(70% 0.183 293.541);
-  --color-primary-content:   oklch(28% 0.141 291.089);
-  --color-secondary:         oklch(70% 0.022 261.325);
+  --color-primary: oklch(70% 0.183 293.541);
+  --color-primary-content: oklch(28% 0.141 291.089);
+  --color-secondary: oklch(70% 0.022 261.325);
   --color-secondary-content: oklch(13% 0.028 261.692);
-  --color-accent:            oklch(74% 0.16  232.661);
-  --color-accent-content:    oklch(29% 0.066 243.157);
-  --color-neutral:           oklch(44% 0.043 257.281);
-  --color-neutral-content:   oklch(98% 0.003 247.858);
+  --color-accent: oklch(74% 0.16 232.661);
+  --color-accent-content: oklch(29% 0.066 243.157);
+  --color-neutral: oklch(44% 0.043 257.281);
+  --color-neutral-content: oklch(98% 0.003 247.858);
 
-  --color-info:    oklch(58% 0.158 241.966);
+  --color-info: oklch(58% 0.158 241.966);
   --color-success: oklch(62% 0.194 149.214);
   --color-warning: oklch(68% 0.162 75.834);
-  --color-error:   oklch(57% 0.245 27.325);
+  --color-error: oklch(57% 0.245 27.325);
 
   /* daisyUI shape tokens */
   --radius-selector: 0rem;
-  --radius-field:    0.25rem;
-  --radius-box:      2rem;
-  --border:          2px;
+  --radius-field: 0.25rem;
+  --radius-box: 2rem;
+  --border: 2px;
 
-  /* Semantic aliases used by some components */
-  --bg-app:    var(--color-base-100);
-  --bg-elev-1: var(--color-base-100);
-  --bg-elev-2: var(--color-base-200);
-  --fg-1: var(--color-base-content);
-  --fg-3: oklch(50% 0.03 265);
+  /* Premium Light Analytics Tokens */
+  --premium-indigo: #4f46e5;
+  --premium-violet: #8b5cf6;
+  --premium-emerald: #10b981;
+  --premium-amber: #f59e0b;
+  --premium-rose: #f43f5e;
+  --premium-glass-bg: rgba(255, 255, 255, 0.7);
+  --premium-glass-border: rgba(255, 255, 255, 0.4);
+  --premium-aura-indigo: rgba(79, 70, 229, 0.15);
+  --premium-aura-violet: rgba(139, 92, 246, 0.15);
 }
 
 @layer base {
@@ -59,7 +63,9 @@
     padding: 0;
   }
 
-  html { scroll-behavior: smooth; }
+  html {
+    scroll-behavior: smooth;
+  }
 
   body {
     @apply bg-surface text-gray-900 font-sans antialiased;
@@ -68,13 +74,27 @@
     overflow-x: hidden;
   }
 
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--color-base-200); }
-  ::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 9999px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--color-primary); }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-base-200);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-base-300);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary);
+  }
 }
 
 @layer components {
+
   /* ---------- cards ---------- */
   .glass-card {
     /* was: rounded-2xl border (1px) bg-white shadow-sm
@@ -110,6 +130,7 @@
     color: var(--color-primary-content);
     box-shadow: 0 0 24px rgba(139, 84, 247, 0.30);
   }
+
   .btn-primary:hover {
     background: oklch(64% .183 293.541);
     border-color: oklch(64% .183 293.541);
@@ -122,6 +143,7 @@
     background: transparent;
     color: var(--fg-3);
   }
+
   .btn-ghost:hover {
     background: var(--color-base-200);
     color: var(--color-base-content);
@@ -133,10 +155,12 @@
     border-radius: var(--radius-field);
     color: oklch(35% .04 265);
   }
+
   .nav-item:hover {
     background: var(--color-base-200);
     color: var(--color-base-content);
   }
+
   .nav-item.active {
     background: color-mix(in oklch, var(--color-primary) 15%, transparent);
     color: oklch(48% .183 293);
@@ -153,27 +177,32 @@
     border: var(--border) solid;
     letter-spacing: .04em;
   }
+
   .badge-green {
     background: color-mix(in oklch, var(--color-success) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-success) 40%, transparent);
     color: oklch(45% .194 149);
   }
+
   .badge-red {
     background: color-mix(in oklch, var(--color-error) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-error) 40%, transparent);
     color: oklch(50% .245 27);
   }
+
   .badge-blue {
     /* re-tinted to brand accent (cyan) */
     background: color-mix(in oklch, var(--color-accent) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-accent) 40%, transparent);
     color: oklch(38% .12 232);
   }
+
   .badge-purple {
     background: color-mix(in oklch, var(--color-primary) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-primary) 40%, transparent);
     color: oklch(48% .183 293);
   }
+
   .badge-orange {
     background: color-mix(in oklch, var(--color-warning) 18%, transparent);
     border-color: color-mix(in oklch, var(--color-warning) 40%, transparent);
@@ -186,6 +215,7 @@
     color: var(--fg-3);
     letter-spacing: 0.1em;
   }
+
   .stat-value {
     @apply text-2xl font-bold;
     color: var(--color-base-content);
@@ -193,7 +223,10 @@
   }
 
   /* ---------- gradient-border (kept; re-tinted) ---------- */
-  .gradient-border { position: relative; }
+  .gradient-border {
+    position: relative;
+  }
+
   .gradient-border::before {
     content: '';
     position: absolute;
@@ -203,7 +236,7 @@
     background: linear-gradient(135deg, rgba(139, 84, 247, 0.5), rgba(54, 197, 245, 0.3), transparent);
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
-            mask-composite: exclude;
+    mask-composite: exclude;
     pointer-events: none;
   }
 
@@ -217,8 +250,48 @@
     @apply border-b transition-colors duration-150;
     border-color: var(--color-base-200);
   }
+
   .table-row:hover {
     background: color-mix(in oklch, var(--color-primary) 4%, transparent);
+  }
+
+  /* ---------- Premium Glass ---------- */
+  .premium-glass {
+    background: var(--premium-glass-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--premium-glass-border);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  }
+
+  .premium-card {
+    @apply premium-glass rounded-[2rem] p-6 transition-all duration-500;
+  }
+
+  .premium-card:hover {
+    box-shadow: 0 12px 48px 0 rgba(79, 70, 229, 0.12);
+    transform: translateY(-4px);
+    border-color: rgba(79, 70, 229, 0.2);
+  }
+
+  /* ---------- AI Aura ---------- */
+  .aura-sphere {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, var(--premium-indigo), var(--premium-violet));
+    filter: blur(40px);
+    opacity: 0.2;
+    animation: pulse-aura 8s ease-in-out infinite alternate;
+  }
+
+  @keyframes pulse-aura {
+    0% { transform: scale(1) translate(0, 0); opacity: 0.15; }
+    50% { transform: scale(1.2) translate(20px, -20px); opacity: 0.25; }
+    100% { transform: scale(0.9) translate(-10px, 10px); opacity: 0.15; }
+  }
+
+  .chart-glow {
+    filter: drop-shadow(0 0 8px rgba(79, 70, 229, 0.3));
   }
 }
 
@@ -227,14 +300,41 @@
 /* Blob animations (unchanged keyframes, but the colors at usage-site
    should now reference --color-primary / --color-accent at .05–.08 alpha) */
 @keyframes blob1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(30px, -50px) scale(1.1); }
-  66% { transform: translate(-20px, 20px) scale(0.9); }
+
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
 }
+
 @keyframes blob2 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(-40px, 30px) scale(0.95); }
-  66% { transform: translate(20px, -30px) scale(1.05); }
+
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+
+  33% {
+    transform: translate(-40px, 30px) scale(0.95);
+  }
+
+  66% {
+    transform: translate(20px, -30px) scale(1.05);
+  }
 }
-.blob1 { animation: blob1 10s ease-in-out infinite; }
-.blob2 { animation: blob2 12s ease-in-out infinite; }
+
+.blob1 {
+  animation: blob1 10s ease-in-out infinite;
+}
+
+.blob2 {
+  animation: blob2 12s ease-in-out infinite;
+}

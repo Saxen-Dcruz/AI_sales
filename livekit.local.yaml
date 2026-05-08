@@ -6,8 +6,8 @@ logging:
 rtc:
   tcp_port: 7881
   # LiveKit needs a range of UDP ports for audio/video transport
-  port_range_start: 50000
-  port_range_end: 50100
+  port_range_start: 44000
+  port_range_end: 44100
   
   # This helps LiveKit auto-discover the correct IP (localhost or VPS IP)
   use_external_ip: true
