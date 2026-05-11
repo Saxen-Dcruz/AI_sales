@@ -152,8 +152,14 @@ def get_chunk_type_filter(question: str) -> dict:
 def detect_product_ids(question: str, catalog: List[dict]) -> List[str]:
     """
     Match products mentioned in the query by name or order code.
-    - Name match: normalized substring >= 8 chars (strips hyphens/slashes).
-    - Order code match: exact case-insensitive match (e.g. "RDL740").
+
+    Matching strategy (in order, stops at first hit per product):
+    1. Full name: full normalized product name is a substring of the query.
+    2. Order code: exact case-insensitive match (e.g. "RDL740").
+    3. Bigram: any consecutive 2-word phrase from the name (≥8 chars) appears in the
+       query, accounting for plural suffix (+s). Catches "data loggers" → "Industrial
+       Data Logger 4G LTE" and "vibration sensors" → "Vibration Sensor".
+
     Returns string UUIDs — pgvector serialises metadata to JSON so UUIDs are strings.
     """
     q_norm = normalize(question)
@@ -161,10 +167,25 @@ def detect_product_ids(question: str, catalog: List[dict]) -> List[str]:
     matched = set()
     for p in catalog:
         name_norm = normalize(p["name"])
+
+        # 1. Full name match
         if len(name_norm) >= 8 and name_norm in q_norm:
             matched.add(str(p["id"]))
             continue
+
+        # 2. Order code match
         order_code = p.get("order_code", "")
         if order_code and order_code.lower() in q_lower:
             matched.add(str(p["id"]))
+            continue
+
+        # 3. Bigram match — any 2-word phrase from product name (≥8 chars) in query.
+        # Also checks plural form (phrase + 's') to catch "data loggers" / "sensors".
+        words = name_norm.split()
+        for i in range(len(words) - 1):
+            phrase = f"{words[i]} {words[i + 1]}"
+            if len(phrase) >= 8 and (phrase in q_norm or (phrase + "s") in q_norm):
+                matched.add(str(p["id"]))
+                break
+
     return list(matched)
