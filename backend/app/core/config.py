@@ -114,7 +114,8 @@ class Settings(BaseSettings):
     LIVEKIT_WS_URL: str 
 
     # --- AI API Keys ---
-    GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
     
 
     # --- REDIS ---

@@ -29,7 +29,8 @@ from app.schema.gmail import (
 )
 from app.services import gmail_service, product_knowledge_service
 from app.services import email_sequence_service
-from app.services.email_router_service import process_inbound_email, _generate_sales_draft
+from app.services.workflows.email_workflow import run_email_workflow
+from app.services.workflows.email_nodes import generate_sales_draft as _gen_draft
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
 
@@ -48,7 +49,7 @@ def sync_inbox(
     messages = gmail_service.fetch_unread_messages(svc, max_results=max_results)
     processed = 0
     for raw_msg in messages:
-        result = process_inbound_email(db, raw_msg)
+        result = run_email_workflow(db, raw_msg)
         if result:
             processed += 1
     return {"processed": processed, "fetched": len(messages)}
@@ -286,6 +287,17 @@ def resolve_gap(
     email.followup_gaps = gaps
     db.commit()
     db.refresh(email)
+
+    # If all gaps are now resolved, auto-send the draft via the LangGraph resume path
+    all_resolved = all(g.get("resolved") for g in gaps)
+    if all_resolved and email.gmail_draft_id:
+        try:
+            from app.services.workflows.email_workflow import resume_after_gaps_resolved
+            resume_after_gaps_resolved(db, str(email_id))
+            db.refresh(email)
+        except Exception as e:
+            logger.warning(f"[GMAIL ROUTER] Workflow resume failed for {email_id}: {e}")
+
     return email
 
 
@@ -446,7 +458,7 @@ def generate_draft(
     Returns the draft text only — does NOT send or save anything.
     The caller edits the draft in the UI, then calls /send when ready.
     """
-    draft = _generate_sales_draft(
+    draft = _gen_draft(
         sender=payload.to,
         subject=payload.subject,
         body=payload.body,

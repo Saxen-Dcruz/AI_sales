@@ -157,7 +157,7 @@ def _llm_identify_product(
         )
         llm = ChatGoogleGenerativeAI(
             model="models/gemini-2.5-flash",
-            google_api_key=settings.GOOGLE_API_KEY,
+            **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
             temperature=0,
             max_output_tokens=80,
         )

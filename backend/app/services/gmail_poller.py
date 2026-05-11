@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 
 from app.database.core import SessionLocal
-from app.services.email_router_service import process_inbound_email
 
 logger = logging.getLogger("rdl_app_logger")
+
+from app.services.workflows.email_workflow import run_email_workflow
 
 POLL_INTERVAL_SECONDS = 120  # check inbox every 2 minutes
 HEARTBEAT_CYCLES = 5        # log "alive" every N cycles (~10 min)
@@ -57,7 +58,7 @@ def _run_poll_cycle() -> int:
         processed = 0
         for raw_msg in messages:
             try:
-                result = process_inbound_email(db, raw_msg)
+                result = run_email_workflow(db, raw_msg)
                 if result:
                     logger.info(f"[GMAIL POLLER] Processed: {result.subject!r} → {result.label.value}")
                     processed += 1

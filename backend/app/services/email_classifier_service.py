@@ -55,12 +55,10 @@ IMPORTANT: The reasoning field must be a plain sentence you write yourself. Neve
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
-    return ChatGoogleGenerativeAI(
-        model="models/gemini-2.5-flash",
-        google_api_key=settings.GOOGLE_API_KEY,
-        temperature=0.1,
-        max_output_tokens=512,
-    )
+    kwargs = dict(model="models/gemini-2.5-flash", temperature=0.1, max_output_tokens=512)
+    if settings.GOOGLE_API_KEY:
+        kwargs["google_api_key"] = settings.GOOGLE_API_KEY
+    return ChatGoogleGenerativeAI(**kwargs)
 
 
 @traceable(run_type="chain", name="classify_email")

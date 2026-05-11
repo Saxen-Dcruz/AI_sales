@@ -191,16 +191,17 @@ def _insert_old_deal(db, company_id_val, stage="Proposal"):
 
 def test_at_risk_returns_open_idle_deals(client: TestClient, auth_headers: dict, company_id: str):
     """at_risk=true returns open deals with no activity for 7+ days."""
+    before = client.get(f"{BASE_DEALS}/?at_risk=true", headers=auth_headers).json()["total"]
+
     from app.database.core import SessionLocal
     with SessionLocal() as db:
-        old_deal = _insert_old_deal(db, company_id)
+        _insert_old_deal(db, company_id)
 
     resp = client.get(f"{BASE_DEALS}/?at_risk=true", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
     assert "items" in body
-    ids = [item["id"] for item in body["items"]]
-    assert str(old_deal.id) in ids
+    assert body["total"] == before + 1
 
 
 def test_at_risk_excludes_closed_won(client: TestClient, auth_headers: dict, company_id: str):

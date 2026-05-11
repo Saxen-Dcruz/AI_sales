@@ -93,7 +93,7 @@ class RAGManager:
             try:
                 embeddings = GoogleGenerativeAIEmbeddings(
                     model=settings.AGENT.rag.embedding_model,
-                    google_api_key=settings.GOOGLE_API_KEY
+                    **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {})
                 )
 
                 self.vectorstore = PGVector(
@@ -142,7 +142,7 @@ class RAGManager:
                 def _make_llm(max_tokens: int) -> ChatGoogleGenerativeAI:
                     return ChatGoogleGenerativeAI(
                         model=settings.AGENT.rag.llm_model,
-                        google_api_key=settings.GOOGLE_API_KEY,
+                        **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
                         temperature=0.1,
                         streaming=True,
                         max_output_tokens=max_tokens,
@@ -152,7 +152,7 @@ class RAGManager:
                 # response causes Gemini to return an empty stream, crashing the task.
                 sentiment_llm = ChatGoogleGenerativeAI(
                     model=settings.AGENT.rag.llm_model,
-                    google_api_key=settings.GOOGLE_API_KEY,
+                    **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
                     temperature=0.1,
                     streaming=False,
                     max_output_tokens=64,

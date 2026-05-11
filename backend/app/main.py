@@ -2,6 +2,12 @@ import logging
 import asyncio
 import json
 import os
+
+# Ensure GOOGLE_APPLICATION_CREDENTIALS is set from settings before any Google client is imported
+from app.core.config import settings
+if settings.GOOGLE_APPLICATION_CREDENTIALS:
+    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", settings.GOOGLE_APPLICATION_CREDENTIALS)
+
 from app.database.core import engine, Base
 from fastapi import Request
 import redis.asyncio as redis

@@ -64,7 +64,7 @@ def _extract_structured_fields(transcript: str, client) -> dict:
     try:
         from google.genai import types
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=80),
         )
@@ -185,14 +185,14 @@ def _generate_call_summary(transcript: str) -> tuple[str, str, object]:
         client = genai.Client(vertexai=True, project=project_id, location="us-central1")
 
         summary_resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=summary_prompt,
             config=types.GenerateContentConfig(temperature=0.3),
         )
         summary = sanitize_ai_response(summary_resp.text.strip())
 
         sentiment_resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=sentiment_prompt,
             config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=10),
         )
