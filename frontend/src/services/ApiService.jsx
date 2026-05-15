@@ -1,92 +1,200 @@
 import ApplicationStore from "../utils/ApplicationStore";
 
+const END_POINT = import.meta.env.VITE_API_URL || 'http://localhost:8003/api/v1/';
 const successCaseCode = [200, 201];
+// ─────────────────────────────────────────────
+// Refresh Token API
+// ─────────────────────────────────────────────
+const refreshAccessToken = async () => {
+    try {
+        const response = await fetch(`${END_POINT}auth/refresh`, {
+            method: "POST",
+            credentials: "include", // IMPORTANT for cookies
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
 
-const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
-    const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
-    const END_POINT = import.meta.env.VITE_API_URL;
-
-    if (!userDetails) {
-        if (typeof errorCallBack === "function") {
-            errorCallBack(401, "Session expired — please log in again.");
+        if (!response.ok) {
+            throw new Error("Refresh token expired");
         }
-        return Promise.reject("Unauthorized: No user details found.");
+
+        const data = await response.json();
+
+        const storedData = ApplicationStore().getStorage("userDetails");
+
+        if (!storedData) {
+            throw new Error("No user storage found");
+        }
+
+        // Update access token
+        const updatedStorage = {
+            ...storedData,
+            accessToken: data.access_token,
+        };
+
+        // Save updated token
+        ApplicationStore().setStorage("userDetails", updatedStorage);
+
+        return data.access_token;
+    } catch (error) {
+        ApplicationStore().clearStorage();
+        window.location.href = "/login";
+        throw error;
     }
-    const { id, email, userRole, companyCode, semesterId } = userDetails;
+};
+
+// ─────────────────────────────────────────────
+// Queue Requests While Refreshing
+// ─────────────────────────────────────────────
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+const subscribeTokenRefresh = (callback) => {
+    refreshSubscribers.push(callback);
+};
+
+const onRefreshed = (newToken) => {
+    refreshSubscribers.forEach((callback) => callback(newToken));
+    refreshSubscribers = [];
+};
+
+// ─────────────────────────────────────────────
+// Main Fetch Service
+// ─────────────────────────────────────────────
+const _fetchService = async (
+    PATH,
+    serviceMethod,
+    data,
+    successCallback,
+    errorCallBack
+) => {
+    const storage = ApplicationStore().getStorage("userDetails");
+
+    if (!storage || !storage.userDetails) {
+        errorCallBack?.(401, "Session expired");
+        return;
+    }
+
+    const { accessToken, userDetails } = storage;
+
+    const {
+        id,
+        email,
+        userRole,
+        companyCode,
+        semesterId,
+        branch,
+        instituteid,
+    } = userDetails;
 
     const isFormData = data instanceof FormData;
 
-    const authHeaders = {
-        authorization: `Bearer ${accessToken}`,
-        companyCode: `${companyCode}`,
-        userId: `${id}`,
-        userEmail: `${email}`,
-        userRole: `${userRole}`,
-        semesterId: `${semesterId}`,
-        branch: `${userDetails.branch}`,
-        instituteid: `${userDetails.instituteid}`,
-    };
+    const makeRequest = async (token) => {
+        const authHeaders = {
+            authorization: `Bearer ${token}`,
+            companyCode: `${companyCode}`,
+            userId: `${id}`,
+            userEmail: `${email}`,
+            userRole: `${userRole}`,
+            semesterId: `${semesterId}`,
+            branch: `${branch}`,
+            instituteid: `${instituteid}`,
+        };
 
-    const headers = isFormData
-        ? authHeaders
-        : { "Content-Type": "application/json", ...authHeaders };
+        const headers = isFormData
+            ? authHeaders
+            : {
+                  "Content-Type": "application/json",
+                  ...authHeaders,
+              };
 
-    const requestOptions = {
-        method: serviceMethod,
-        headers,
-        body:
-            serviceMethod === "GET" || serviceMethod === "DELETE"
-                ? undefined
-                : isFormData
+        return fetch(END_POINT + PATH, {
+            method: serviceMethod,
+            headers,
+            body:
+                serviceMethod === "GET" || serviceMethod === "DELETE"
+                    ? undefined
+                    : isFormData
                     ? data
                     : JSON.stringify(data),
-        mode: "cors",
-        cache: "no-cache",
-        credentials: "same-origin",
-        redirect: "follow",
-        referrerPolicy: "no-referrer",
+            mode: "cors",
+            cache: "no-cache",
+            credentials: "include",
+            redirect: "follow",
+            referrerPolicy: "no-referrer",
+        });
     };
 
-    return fetch(END_POINT + PATH, requestOptions)
-        .then((response) => {
-            if (successCaseCode.includes(response.status)) {
-                return response.json();
-            }
-            throw {
-                errorStatus: response.status,
-                errorObject: response.json(),
-            };
-        })
-        .then((dataResponse) => successCallback(dataResponse))
-        .catch((error) => {
-            if (error.errorObject && typeof error.errorObject.then === "function") {
-                error.errorObject.then((errorResponse) => {
-                    if (error.errorStatus === 400 && errorResponse.message === "Token is required") {
-                        ApplicationStore().clearStorage();
-                    }
-                    errorCallBack(error.errorStatus, errorResponse.message);
-                });
+    try {
+        let response = await makeRequest(accessToken);
+
+        // ─────────────────────────────────────
+        // Access token expired
+        // ─────────────────────────────────────
+        if (response.status === 401) {
+            if (!isRefreshing) {
+                isRefreshing = true;
+
+                try {
+                    const newAccessToken = await refreshAccessToken();
+
+                    isRefreshing = false;
+                    onRefreshed(newAccessToken);
+
+                    // Retry original request
+                    response = await makeRequest(newAccessToken);
+                } catch (error) {
+                    isRefreshing = false;
+                    throw error;
+                }
             } else {
-                errorCallBack(0, error.message || "Network error");
+                // Wait until token refresh completes
+                const newToken = await new Promise((resolve) => {
+                    subscribeTokenRefresh((token) => {
+                        resolve(token);
+                    });
+                });
+
+                response = await makeRequest(newToken);
             }
-        });
+        }
+
+        // ─────────────────────────────────────
+        // Success Response
+        // ─────────────────────────────────────
+        if (successCaseCode.includes(response.status)) {
+            const dataResponse = await response.json();
+            successCallback?.(dataResponse);
+            return dataResponse;
+        }
+
+        const errorResponse = await response.json();
+
+        errorCallBack?.(
+            response.status,
+            errorResponse.message || "Something went wrong"
+        );
+    } catch (error) {
+        errorCallBack?.(0, error.message || "Network error");
+    }
 };
 
-// ─── Auth ───────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────
+// Login Service
+// ─────────────────────────────────────────────
 export const LoginService = (data) => {
     const PATH = "auth/login";
-    const END_POINT = import.meta.env.VITE_API_URL;
-    const headers = {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-    };
+
     return fetch(END_POINT + PATH, {
         method: "POST",
         mode: "cors",
         cache: "no-cache",
-        credentials: "same-origin",
-        headers,
+        credentials: "include",
+        headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+        },
         redirect: "follow",
         referrerPolicy: "no-referrer",
         body: JSON.stringify(data),

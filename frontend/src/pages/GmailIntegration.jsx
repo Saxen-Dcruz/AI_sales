@@ -1,6 +1,6 @@
 import { Float, MeshDistortMaterial, Sphere } from '@react-three/drei'
 import { Canvas } from '@react-three/fiber'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
@@ -370,44 +370,44 @@ function EmailDetail({ email, onRefresh }) {
       </div>
 
       {/* Action bar */}
-  <div className="px-6 py-5 border-t border-gray-100 bg-gray-50/50">
-    <div className="flex gap-3 flex-wrap">
-      {email.status === 'draft_ready' && email.ai_draft && (
-        <>
-          <button onClick={handleApprove} disabled={acting === 'approve'}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-60">
-            <Send size={14} />
-            {acting === 'approve' ? 'Sending...' : 'Approve & Send'}
-          </button>
-          <button onClick={handleDiscard} disabled={acting === 'discard'}
-            className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition-all disabled:opacity-60">
-            <X size={14} />
-            Discard
-          </button>
-        </>
-      )}
-      {(email.label === 'Support' || email.label === 'Grievance') &&
-        email.status !== 'replied' && !email.resolved_at && (
-          <button onClick={handleResolve} disabled={acting === 'resolve'}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
-            <CheckCircle size={14} />
-            {acting === 'resolve' ? 'Resolving...' : 'Mark Resolved'}
-          </button>
-        )}
-      {email.status === 'replied' && (
-        <div className="flex items-center gap-2 text-sm text-emerald-600 font-medium">
-          <CheckCircle size={16} />
-          Replied
+      <div className="px-6 py-5 border-t border-gray-100 bg-gray-50/50">
+        <div className="flex gap-3 flex-wrap">
+          {email.status === 'draft_ready' && email.ai_draft && (
+            <>
+              <button onClick={handleApprove} disabled={acting === 'approve'}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-60">
+                <Send size={14} />
+                {acting === 'approve' ? 'Sending...' : 'Approve & Send'}
+              </button>
+              <button onClick={handleDiscard} disabled={acting === 'discard'}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition-all disabled:opacity-60">
+                <X size={14} />
+                Discard
+              </button>
+            </>
+          )}
+          {(email.label === 'Support' || email.label === 'Grievance') &&
+            email.status !== 'replied' && !email.resolved_at && (
+              <button onClick={handleResolve} disabled={acting === 'resolve'}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
+                <CheckCircle size={14} />
+                {acting === 'resolve' ? 'Resolving...' : 'Mark Resolved'}
+              </button>
+            )}
+          {email.status === 'replied' && (
+            <div className="flex items-center gap-2 text-sm text-emerald-600 font-medium">
+              <CheckCircle size={16} />
+              Replied
+            </div>
+          )}
+          {email.resolved_at && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 font-bold">
+              <CheckCircle size={16} className="text-emerald-500" />
+              Resolved by {email.resolved_by} · {relTime(email.resolved_at)}
+            </div>
+          )}
         </div>
-      )}
-      {email.resolved_at && (
-        <div className="flex items-center gap-2 text-sm text-gray-500 font-bold">
-          <CheckCircle size={16} className="text-emerald-500" />
-          Resolved by {email.resolved_by} · {relTime(email.resolved_at)}
-        </div>
-      )}
-    </div>
-  </div>
+      </div>
     </div>
   )
 }
@@ -571,7 +571,7 @@ export default function GmailIntegration() {
   const fetchAnalytics = useCallback(() => {
     GetGmailAnalyticsService(
       (res) => setAnalytics(res),
-      () => {}
+      () => { }
     )
   }, [])
 
@@ -616,11 +616,11 @@ export default function GmailIntegration() {
       () => { }
     )
   }, [location.state])
-  
+
   // Reset page and selection when tab or search changes
-  useEffect(() => { 
-    setPage(1); 
-    setSelected(null); 
+  useEffect(() => {
+    setPage(1);
+    setSelected(null);
   }, [activeTab, search])
 
   const handleSync = () => {
@@ -650,7 +650,7 @@ export default function GmailIntegration() {
   const filtered = search
     ? emails.filter(e =>
       (e.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-      (e.sender || '').toLowerCase().includes(search.toLowerCase()) ||   
+      (e.sender || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.body_text || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.label || '').toLowerCase().includes(search.toLowerCase())
     )
@@ -680,11 +680,12 @@ export default function GmailIntegration() {
               <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-200">
                 <Mail size={18} />
               </div>
-              <span className="text-sm font-black text-indigo-600 uppercase tracking-[0.2em]">Communications</span>
+              <span className="text-xl font-black text-indigo-600 text-4xl uppercase tracking-[0.2em]">Inbox</span>
             </div>
-            <h1 className="text-4xl font-black tracking-tight text-slate-900">
-              Intelligence <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-500">Inbox</span>
-            </h1>
+            {/* <h1 className="text-4xl font-black tracking-tight text-slate-900">
+              Inbox */}
+            {/* <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-500">Inbox</span> */}
+            {/* </h1> */}
             <p className="text-slate-500 font-bold text-base">Managing AI-driven customer interactions and sentiment analysis</p>
           </div>
 
@@ -775,7 +776,7 @@ export default function GmailIntegration() {
                   </div>
                 </div>
               ) : (
-                <motion.div 
+                <motion.div
                   initial="hidden"
                   animate="visible"
                   variants={{

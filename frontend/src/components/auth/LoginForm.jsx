@@ -1,10 +1,10 @@
+import { AnimatePresence, motion } from 'framer-motion'
+import { ArrowRight, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react'
 import { useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
 
-import { LoginService, GetCurrentUserService } from '../../services/ApiService'
+import { GetCurrentUserService, LoginService } from '../../services/ApiService'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -30,22 +30,23 @@ export default function LoginForm() {
     try {
       const response = await LoginService({ email, password })
       const data = await response.json()
-      
+
       if (!response.ok) {
         setError(data.detail || 'Invalid email or password')
         setIsLoading(false)
         return
       }
 
-      ApplicationStore().setStorage("userDetails", { 
-        accessToken: data.access_token, 
-        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" } 
+      ApplicationStore().setStorage("userDetails", {
+        accessToken: data.access_token,
+        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" }
       })
 
       GetCurrentUserService(
         (userData) => {
           ApplicationStore().setStorage("userDetails", {
             accessToken: data.access_token,
+            refreshToken: data.refresh_token,
             userDetails: {
               id: userData.id,
               email: userData.email,
