@@ -11,43 +11,78 @@ const refreshAccessToken = async () => {
 
         const storedData = ApplicationStore().getStorage("userDetails");
 
+        console.log("📦 Stored Data:", storedData);
+
         if (!storedData) {
             throw new Error("No user storage found");
         }
 
-        const response = await fetch(`${END_POINT}auth/refresh`, {
-            method: "POST",
-            credentials: "include", // IMPORTANT for cookies
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ refresh_token: storedData.refreshToken || "" })
-        });
+        // Get refresh token safely
+        const refreshToken = storedData.refreshToken;
 
-        if (!response.ok) {
-            throw new Error("Refresh token expired");
+        if (!refreshToken) {
+            throw new Error("No refresh token found");
         }
 
-        const data = await response.json();
+        console.log("⚠️ Calling refresh API...");
 
-        // Update access token and refresh token
+        const response = await fetch(`${END_POINT}auth/refresh`, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify({
+                refresh_token: refreshToken,
+            }),
+        });
+
+        console.log("📡 Refresh Response Status:", response.status);
+
+        // Read response body
+        const responseData = await response.json();
+
+        console.log("📡 Refresh Response Data:", responseData);
+
+        if (!response.ok) {
+            throw new Error(
+                responseData.detail ||
+                responseData.message ||
+                "Refresh token expired"
+            );
+        }
+
+        // Update storage with new tokens
         const updatedStorage = {
             ...storedData,
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token || storedData.refreshToken,
+            accessToken: responseData.access_token,
+            refreshToken:
+                responseData.refresh_token || refreshToken,
         };
 
-        // Save updated token
-        ApplicationStore().setStorage("userDetails", updatedStorage);
+        console.log("✅ Updating Storage:", updatedStorage);
 
-        return data.access_token;
+        // Save updated tokens
+        ApplicationStore().setStorage(
+            "userDetails",
+            updatedStorage
+        );
+
+        console.log("✅ Token refreshed successfully");
+
+        return responseData.access_token;
+
     } catch (error) {
+        console.error("❌ Refresh Token Error:", error);
+
         ApplicationStore().clearStorage();
+
         window.location.href = "/login";
+
         throw error;
     }
 };
-
 // ─────────────────────────────────────────────
 // Queue Requests While Refreshing
 // ─────────────────────────────────────────────
@@ -109,9 +144,9 @@ const _fetchService = async (
         const headers = isFormData
             ? authHeaders
             : {
-                  "Content-Type": "application/json",
-                  ...authHeaders,
-              };
+                "Content-Type": "application/json",
+                ...authHeaders,
+            };
 
         return fetch(END_POINT + PATH, {
             method: serviceMethod,
@@ -120,8 +155,8 @@ const _fetchService = async (
                 serviceMethod === "GET" || serviceMethod === "DELETE"
                     ? undefined
                     : isFormData
-                    ? data
-                    : JSON.stringify(data),
+                        ? data
+                        : JSON.stringify(data),
             mode: "cors",
             cache: "no-cache",
             credentials: "include",
@@ -131,12 +166,16 @@ const _fetchService = async (
     };
 
     try {
+        console.log("🚀 Sending API Request:", PATH);
+
         let response = await makeRequest(accessToken);
 
+        console.log("📡 Response Status:", response.status);
         // ─────────────────────────────────────
         // Access token expired
         // ─────────────────────────────────────
         if (response.status === 401) {
+            console.log("🔴 401 detected");
             if (!isRefreshing) {
                 isRefreshing = true;
 
