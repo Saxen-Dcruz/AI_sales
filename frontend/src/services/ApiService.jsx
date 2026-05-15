@@ -7,12 +7,21 @@ const successCaseCode = [200, 201];
 // ─────────────────────────────────────────────
 const refreshAccessToken = async () => {
     try {
+        console.log("⚠️ Access token expired! Using refresh token...");
+
+        const storedData = ApplicationStore().getStorage("userDetails");
+
+        if (!storedData) {
+            throw new Error("No user storage found");
+        }
+
         const response = await fetch(`${END_POINT}auth/refresh`, {
             method: "POST",
             credentials: "include", // IMPORTANT for cookies
             headers: {
                 "Content-Type": "application/json",
             },
+            body: JSON.stringify({ refresh_token: storedData.refreshToken || "" })
         });
 
         if (!response.ok) {
@@ -21,16 +30,11 @@ const refreshAccessToken = async () => {
 
         const data = await response.json();
 
-        const storedData = ApplicationStore().getStorage("userDetails");
-
-        if (!storedData) {
-            throw new Error("No user storage found");
-        }
-
-        // Update access token
+        // Update access token and refresh token
         const updatedStorage = {
             ...storedData,
             accessToken: data.access_token,
+            refreshToken: data.refresh_token || storedData.refreshToken,
         };
 
         // Save updated token
