@@ -62,8 +62,12 @@ class Email(Base):
     competitor_mention = Column(String, nullable=True)   # competitor name if detected in email
 
     needs_human = Column(Boolean, default=False, index=True)
-    resolved_by = Column(String, nullable=True)         # email of human who handled it
+    resolved_by = Column(String, nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Multi-account Gmail — which account received/sent this email
+    account_id    = Column(PGUUID(as_uuid=True), ForeignKey("email_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    account_email = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

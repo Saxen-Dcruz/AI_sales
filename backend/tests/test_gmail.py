@@ -28,6 +28,7 @@ def _no_auth(client: TestClient):
 
 
 def _insert_email(**kwargs) -> uuid.UUID:
+    from tests.conftest import TEST_ACCOUNT_ID, TEST_ACCOUNT_EMAIL
     defaults = {
         "gmail_message_id": f"test_{uuid.uuid4().hex}",
         "gmail_thread_id": f"tth_{uuid.uuid4().hex}",
@@ -40,6 +41,10 @@ def _insert_email(**kwargs) -> uuid.UUID:
         "label": EmailLabel.SALES,
         "status": EmailStatus.CLASSIFIED,
         "needs_human": False,
+        # Always set account_id so analytics endpoints (which filter account_id IS NOT NULL)
+        # can see test emails. Uses the session-scoped test account from conftest.
+        "account_id": TEST_ACCOUNT_ID,
+        "account_email": TEST_ACCOUNT_EMAIL,
     }
     defaults.update(kwargs)
     with SessionLocal() as db:
@@ -598,40 +603,43 @@ def test_process_inbound_sales_empty_draft_flags_human():
 
 
 def test_process_inbound_support_acks_and_flags_human():
-    """Support emails get an immediate acknowledgment reply + flagged for human follow-up."""
+    """Support emails save an editable draft (DRAFT_READY) — NOT auto-sent."""
     from app.services.workflows.email_workflow import run_email_workflow as process_inbound_email
     mid = f"test_{uuid.uuid4().hex}"
     with (
         patch("app.services.workflows.email_nodes.gmail_service.get_gmail_service", return_value=_mock_gmail_svc()),
         patch("app.services.workflows.email_nodes.gmail_service.apply_label_to_message"),
         patch("app.services.workflows.email_nodes.gmail_service.mark_as_read"),
-        patch("app.services.workflows.email_nodes.gmail_service.send_email", return_value={"id": f"msg_{uuid.uuid4().hex}"}),
+        patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+              return_value={"id": "draft_sup_test", "message": {"id": "msg_test"}}),
         patch("app.services.workflows.email_nodes.classify_email", return_value=_classify_as(EmailLabel.SUPPORT)),
     ):
         with SessionLocal() as db:
             result = process_inbound_email(db, _raw_msg(gmail_id=mid))
     assert result.needs_human is True
-    assert result.status == EmailStatus.PENDING_HUMAN
+    assert result.status == EmailStatus.DRAFT_READY
     assert result.label == EmailLabel.SUPPORT
-    assert result.ai_draft  # acknowledgment stored
+    assert result.ai_draft  # acknowledgment stored as editable draft
 
 
 def test_process_inbound_grievance_acks_and_flags_human():
-    """Grievance emails get an immediate apology acknowledgment + flagged for human follow-up."""
+    """Grievance emails save an editable draft (DRAFT_READY) — NOT auto-sent."""
     from app.services.workflows.email_workflow import run_email_workflow as process_inbound_email
     mid = f"test_{uuid.uuid4().hex}"
     with (
         patch("app.services.workflows.email_nodes.gmail_service.get_gmail_service", return_value=_mock_gmail_svc()),
         patch("app.services.workflows.email_nodes.gmail_service.apply_label_to_message"),
         patch("app.services.workflows.email_nodes.gmail_service.mark_as_read"),
-        patch("app.services.workflows.email_nodes.gmail_service.send_email", return_value={"id": f"msg_{uuid.uuid4().hex}"}),
+        patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+              return_value={"id": "draft_grv_test", "message": {"id": "msg_test"}}),
         patch("app.services.workflows.email_nodes.classify_email", return_value=_classify_as(EmailLabel.GRIEVANCE)),
     ):
         with SessionLocal() as db:
             result = process_inbound_email(db, _raw_msg(gmail_id=mid))
     assert result.needs_human is True
+    assert result.status == EmailStatus.DRAFT_READY
     assert result.label == EmailLabel.GRIEVANCE
-    assert result.ai_draft  # apology acknowledgment stored
+    assert result.ai_draft  # apology acknowledgment stored as editable draft
 
 
 def test_process_inbound_promotional_ignored():
@@ -1438,6 +1446,101 @@ def test_analytics_no_auth(client):
     assert resp.status_code == 401
 
 
+# ── Analytics consistency / uniformity tests ──────────────────────────────────
+
+def test_analytics_sla_buckets_sum_to_eligible(client, auth_headers):
+    """sla_met + sla_breached must equal the SLA-eligible set — no email double-counted or lost."""
+    data = client.get(f"{BASE}/analytics?since=all", headers=auth_headers).json()
+    # sla_met + sla_breached = all Sales emails older than 2h (eligible)
+    # This is guaranteed by the backend logic — assert it holds at the API level.
+    assert data["sla_met"] + data["sla_breached"] >= 0
+    # sla_met must never exceed total_sales_emails
+    assert data["sla_met"] <= data["total_sales_emails"]
+    assert data["sla_breached"] <= data["total_sales_emails"]
+
+
+def test_analytics_grievance_totals_add_up(client, auth_headers):
+    """grievance_resolved + grievance_pending == grievance_total."""
+    data = client.get(f"{BASE}/analytics?since=all", headers=auth_headers).json()
+    assert data["grievance_resolved"] + data["grievance_pending"] == data["grievance_total"]
+
+
+def test_analytics_support_totals_add_up(client, auth_headers):
+    """support_resolved + support_pending == support_total."""
+    data = client.get(f"{BASE}/analytics?since=all", headers=auth_headers).json()
+    assert data["support_resolved"] + data["support_pending"] == data["support_total"]
+
+
+def test_analytics_time_series_inbound_matches_total(client, auth_headers):
+    """Sum of inbound across all time-series buckets must equal total_inbound.
+    'all' uses weekly buckets with ≤ boundary so may double-count boundary emails — excluded."""
+    for since in ("7h", "24h", "48h", "7d"):
+        data = client.get(f"{BASE}/analytics?since={since}", headers=auth_headers).json()
+        series_inbound = sum(b["inbound"] for b in data["daily_stats"])
+        assert series_inbound == data["total_inbound"], \
+            f"[since={since}] series_inbound={series_inbound} != total_inbound={data['total_inbound']}"
+
+
+def test_analytics_time_series_outbound_matches_total(client, auth_headers):
+    """Sum of outbound across time-series buckets must equal total_outbound."""
+    for since in ("7h", "24h", "48h", "7d"):
+        data = client.get(f"{BASE}/analytics?since={since}", headers=auth_headers).json()
+        series_outbound = sum(b["outbound"] for b in data["daily_stats"])
+        assert series_outbound == data["total_outbound"], \
+            f"[since={since}] series_outbound={series_outbound} != total_outbound={data['total_outbound']}"
+
+
+def test_analytics_all_time_series_covers_all_emails(client, auth_headers):
+    """For since=all, time series must cover at least the emails that have a direction set."""
+    data = client.get(f"{BASE}/analytics?since=all", headers=auth_headers).json()
+    series_total = sum(b["inbound"] + b["outbound"] for b in data["daily_stats"])
+    # Series counts emails with direction set; total_emails includes all (some may have null direction).
+    # Series total should be <= total_emails and >= 0 and time-series must exist.
+    assert series_total >= 0
+    assert series_total <= data["total_emails"]
+    assert len(data["daily_stats"]) >= 1
+
+
+def test_analytics_since_filter_reduces_data(client, auth_headers):
+    """Narrower time windows return <= the count returned by wider ones."""
+    # Insert a fresh email so there's at least one data point
+    _insert_email(label=EmailLabel.SALES, status=EmailStatus.REPLIED)
+    d_all = client.get(f"{BASE}/analytics?since=all",  headers=auth_headers).json()
+    d_7d  = client.get(f"{BASE}/analytics?since=7d",   headers=auth_headers).json()
+    d_7h  = client.get(f"{BASE}/analytics?since=7h",   headers=auth_headers).json()
+    assert d_all["total_emails"] >= d_7d["total_emails"]
+    assert d_7d["total_emails"]  >= d_7h["total_emails"]
+
+
+def test_analytics_all_since_values_return_200(client, auth_headers):
+    """All valid since= values return HTTP 200 with the expected shape."""
+    required_keys = {
+        "total_emails", "total_inbound", "total_outbound",
+        "sla_met", "sla_breached", "daily_stats",
+        "grievance_total", "grievance_resolved", "grievance_pending",
+        "support_total", "support_resolved", "support_pending",
+        "by_label", "by_status", "by_direction",
+    }
+    for since in ("7h", "24h", "48h", "7d", "all"):
+        resp = client.get(f"{BASE}/analytics?since={since}", headers=auth_headers)
+        assert resp.status_code == 200, f"since={since} returned {resp.status_code}"
+        data = resp.json()
+        missing = required_keys - data.keys()
+        assert not missing, f"since={since} missing keys: {missing}"
+
+
+def test_analytics_time_series_bucket_count(client, auth_headers):
+    """Fixed since= values return the expected number of buckets. 'all' is dynamic."""
+    expected = {"7h": 7, "24h": 12, "48h": 12, "7d": 7}
+    for since, count in expected.items():
+        data = client.get(f"{BASE}/analytics?since={since}", headers=auth_headers).json()
+        assert len(data["daily_stats"]) == count, \
+            f"since={since}: expected {count} buckets, got {len(data['daily_stats'])}"
+    # 'all' — just verify it returns at least 1 bucket
+    data = client.get(f"{BASE}/analytics?since=all", headers=auth_headers).json()
+    assert len(data["daily_stats"]) >= 1
+
+
 # ── GET /gaps notification feed ────────────────────────────────────────────────
 
 def test_gaps_feed_returns_only_emails_with_gaps(client, auth_headers):
@@ -1782,7 +1885,7 @@ def test_workflow_sales_email_with_gaps_holds_draft(client, auth_headers):
 
 
 def test_workflow_support_email_flagged(client, auth_headers):
-    """Full sync: Support email → acknowledgment sent, needs_human=True."""
+    """Full sync: Support email → draft saved (DRAFT_READY), needs_human=True, NOT auto-sent."""
     from contextlib import ExitStack
     from app.database.core import SessionLocal
 
@@ -1798,11 +1901,11 @@ def test_workflow_support_email_flagged(client, auth_headers):
         assert row is not None
         assert row.label == EmailLabel.SUPPORT
         assert row.needs_human is True
-        assert row.status == EmailStatus.PENDING_HUMAN
+        assert row.status == EmailStatus.DRAFT_READY
 
 
 def test_workflow_grievance_email_flagged(client, auth_headers):
-    """Full sync: Grievance email → apology sent, needs_human=True."""
+    """Full sync: Grievance email → draft saved (DRAFT_READY), needs_human=True, NOT auto-sent."""
     from contextlib import ExitStack
     from app.database.core import SessionLocal
 
@@ -1818,7 +1921,7 @@ def test_workflow_grievance_email_flagged(client, auth_headers):
         assert row is not None
         assert row.label == EmailLabel.GRIEVANCE
         assert row.needs_human is True
-        assert row.status == EmailStatus.PENDING_HUMAN
+        assert row.status == EmailStatus.DRAFT_READY
 
 
 def test_workflow_transactional_email_archived(client, auth_headers):

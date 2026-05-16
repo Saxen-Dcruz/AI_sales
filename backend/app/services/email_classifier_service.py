@@ -55,10 +55,13 @@ IMPORTANT: The reasoning field must be a plain sentence you write yourself. Neve
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
-    kwargs = dict(model="models/gemini-2.5-flash", temperature=0.1, max_output_tokens=512)
-    if settings.GOOGLE_API_KEY:
-        kwargs["google_api_key"] = settings.GOOGLE_API_KEY
-    return ChatGoogleGenerativeAI(**kwargs)
+    from google.api_core.exceptions import PermissionDenied, ResourceExhausted
+    base_kwargs = dict(temperature=0.1, max_output_tokens=512, max_retries=0)
+    primary_kwargs = {**base_kwargs, **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {})}
+    primary = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", **primary_kwargs)
+    # Fallback uses ADC (no api_key) — handles both quota exhaustion and blocked/invalid keys
+    fallback = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", **base_kwargs)
+    return primary.with_fallbacks([fallback], exceptions_to_handle=(ResourceExhausted, PermissionDenied))
 
 
 @traceable(run_type="chain", name="classify_email")

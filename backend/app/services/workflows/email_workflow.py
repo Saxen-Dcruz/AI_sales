@@ -221,29 +221,48 @@ def _get_graph():
 
 # ── Public entry points ───────────────────────────────────────────────────────
 
-def run_email_workflow(db: Session, raw_message: dict) -> Optional[Email]:
+def run_email_workflow(
+    db: Session,
+    raw_message: dict,
+    account_id: Optional[str] = None,
+    account_email: Optional[str] = None,
+) -> Optional[Email]:
     """
     Process one inbound Gmail message through the LangGraph workflow.
+    account_id / account_email: which EmailAccount this message came from.
     Returns the persisted Email row, or None if skipped (duplicate/untracked label).
     """
     from app.services import gmail_service as gs
 
-    gmail_svc = gs.get_gmail_service()
+    # Use account-specific service when account is provided
+    auto_send_enabled = True
+    if account_id:
+        from app.services.email_account_service import get_account
+        account = get_account(db, UUID(account_id))
+        gmail_svc = gs.get_gmail_service(account=account) if account else gs.get_gmail_service()
+        if account:
+            auto_send_enabled = account.auto_send_enabled
+    else:
+        gmail_svc = gs.get_gmail_service()
+
     graph = _get_graph()
 
-    # thread_id = gmail_message_id scopes the checkpoint to this specific email
-    # so we can resume it later (e.g. after gap fill)
     parsed_id = raw_message.get("id", "unknown")
     config: RunnableConfig = {
         "configurable": {
             "thread_id": f"email_{parsed_id}",
             "db": db,
             "gmail_svc": gmail_svc,
+            "account_id": account_id,
+            "account_email": account_email,
         }
     }
 
     try:
-        final_state = graph.invoke({"raw_message": raw_message}, config=config)
+        final_state = graph.invoke(
+            {"raw_message": raw_message, "auto_send_enabled": auto_send_enabled},
+            config=config,
+        )
     except Exception as e:
         logger.error(f"[EMAIL WORKFLOW] Graph invocation failed for {parsed_id}: {e}", exc_info=True)
         return None
@@ -281,7 +300,13 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
 
     try:
         from app.services import gmail_service as gs
-        gmail_svc = gs.get_gmail_service()
+        from app.services.email_account_service import get_account
+        # Reply from the same account that received the email
+        if email.account_id:
+            acct = get_account(db, email.account_id)
+            gmail_svc = gs.get_gmail_service(account=acct) if acct else gs.get_gmail_service()
+        else:
+            gmail_svc = gs.get_gmail_service()
         gs.send_draft(gmail_svc, email.gmail_draft_id)
         email.gmail_draft_id = None
         email.needs_human = False

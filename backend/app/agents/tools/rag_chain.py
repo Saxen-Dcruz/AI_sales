@@ -139,23 +139,50 @@ class RAGManager:
 
                 # Three LLM instances — identical except for token budget.
                 # streaming=True enables true token streaming on the bare answer chains.
-                def _make_llm(max_tokens: int) -> ChatGoogleGenerativeAI:
-                    return ChatGoogleGenerativeAI(
+                # Fallback uses ADC (no api_key) — handles quota exhaustion AND blocked/invalid keys.
+                from google.api_core.exceptions import PermissionDenied as _PermError
+                from google.api_core.exceptions import ResourceExhausted as _QuotaError
+                _FALLBACK_ERRORS = (_QuotaError, _PermError)
+                _primary_key_kwarg = ({"google_api_key": settings.GOOGLE_API_KEY}
+                                      if settings.GOOGLE_API_KEY else {})
+
+                def _make_llm(max_tokens: int):
+                    primary = ChatGoogleGenerativeAI(
                         model=settings.AGENT.rag.llm_model,
-                        **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
+                        **_primary_key_kwarg,
                         temperature=0.1,
                         streaming=True,
                         max_output_tokens=max_tokens,
+                        max_retries=0,
                     )
+                    fallback = ChatGoogleGenerativeAI(
+                        model="models/gemini-2.0-flash",
+                        temperature=0.1,
+                        streaming=True,
+                        max_output_tokens=max_tokens,
+                        max_retries=0,
+                    )
+                    return primary.with_fallbacks([fallback], exceptions_to_handle=_FALLBACK_ERRORS)
 
                 # ISSUE-010: sentiment uses non-streaming LLM — streaming=True on a 64-token
                 # response causes Gemini to return an empty stream, crashing the task.
-                sentiment_llm = ChatGoogleGenerativeAI(
+                _sentiment_primary = ChatGoogleGenerativeAI(
                     model=settings.AGENT.rag.llm_model,
-                    **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
+                    **_primary_key_kwarg,
                     temperature=0.1,
                     streaming=False,
                     max_output_tokens=64,
+                    max_retries=0,
+                )
+                _sentiment_fallback = ChatGoogleGenerativeAI(
+                    model="models/gemini-2.0-flash",
+                    temperature=0.1,
+                    streaming=False,
+                    max_output_tokens=64,
+                    max_retries=0,
+                )
+                sentiment_llm = _sentiment_primary.with_fallbacks(
+                    [_sentiment_fallback], exceptions_to_handle=_FALLBACK_ERRORS
                 )
                 sentiment_prompt = ChatPromptTemplate.from_template(
                     "Analyze sentiment: POSITIVE, NEUTRAL, or FRUSTRATED. Reply with ONE word.\nMsg: {question}"
@@ -405,8 +432,13 @@ class RAGManager:
         detected_ids = detect_product_ids(question, self._product_catalog)
 
         if detected_ids:
-            print(f"[PRODUCT FILTER] Matched {len(detected_ids)} product(s) — restricting retrieval")
-            docs = await self._build_retriever(detected_ids, chunk_filter).ainvoke(question)
+            # Scale k with product count so each product gets ≥2 chunks.
+            # Cap at 20 to keep reranker fast. Single product keeps k=8.
+            multi_k = min(max(8, len(detected_ids) * 3), 20)
+            print(f"[PRODUCT FILTER] Matched {len(detected_ids)} product(s) — k={multi_k}")
+            retriever = self._build_retriever(detected_ids, chunk_filter)
+            retriever.base_retriever.search_kwargs["k"] = multi_k
+            docs = await retriever.ainvoke(question)
         else:
             docs = await self._build_retriever(chunk_filter=chunk_filter).ainvoke(question)
 

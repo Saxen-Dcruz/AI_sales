@@ -207,6 +207,9 @@ export const UpdateDealService = (id, data, sucess, error) =>
 export const DeleteDealService = (id, sucess, error) =>
     _fetchService(`deals/${id}`, "DELETE", null, sucess, error);
 
+export const GetDealAnalyticsService = (sucess, error) =>
+    _fetchService("deals/analytics", "GET", null, sucess, error);
+
 // ─── Calls ───────────────────────────────────────────────────────────────────
 
 export const GetAllCallsService = (params, sucess, error) => {
@@ -232,8 +235,12 @@ export const GetCallAnalyticsService = (sucess, error) =>
 export const GetCallGapsService = (sucess, error) =>
     _fetchService("calls/gaps", "GET", null, sucess, error);
 
-export const ResolveCallGapService = (callId, gapIndex, answer, sucess, error) =>
-    _fetchService(`calls/${callId}/gaps/resolve`, "POST", { gap_index: gapIndex, answer }, sucess, error);
+export const ResolveCallGapService = (callId, gapIndex, answer, category, productId, sucess, error) =>
+    _fetchService(`calls/${callId}/gaps/resolve`, "POST", {
+        gap_index: gapIndex, answer,
+        ...(category ? { category } : {}),
+        ...(productId ? { product_id: productId } : {}),
+    }, sucess, error);
 
 // ─── AI & RAG Analytics ──────────────────────────────────────────────────────
 
@@ -267,8 +274,12 @@ export const SyncGmailService = (sucess, error) =>
 export const GetEmailGapsService = (sucess, error) =>
     _fetchService("gmail/gaps", "GET", null, sucess, error);
 
-export const ResolveEmailGapService = (emailId, gapIndex, answer, sucess, error) =>
-    _fetchService(`gmail/${emailId}/gaps/resolve`, "POST", { gap_index: gapIndex, answer }, sucess, error);
+export const ResolveEmailGapService = (emailId, gapIndex, answer, category, productId, sucess, error) =>
+    _fetchService(`gmail/${emailId}/gaps/resolve`, "POST", {
+        gap_index: gapIndex, answer,
+        ...(category ? { category } : {}),
+        ...(productId ? { product_id: productId } : {}),
+    }, sucess, error);
 
 export const ApproveDraftService = (emailId, data, sucess, error) =>
     _fetchService(`gmail/${emailId}/approve-draft`, "POST", data, sucess, error);
@@ -285,8 +296,27 @@ export const GenerateDraftService = (data, sucess, error) =>
 export const SendEmailService = (data, sucess, error) =>
     _fetchService("gmail/send", "POST", data, sucess, error);
 
-export const GetGmailAnalyticsService = (sucess, error) =>
-    _fetchService("gmail/analytics", "GET", null, sucess, error);
+export const GetGmailAnalyticsService = (since = "7d", accountId = null, sucess, error) => {
+    const q = new URLSearchParams({ since })
+    if (accountId) q.set("account_id", accountId)
+    return _fetchService(`gmail/analytics?${q}`, "GET", null, sucess, error)
+}
+
+// ── Settings — Email Accounts ─────────────────────────────────────────────────
+export const GetEmailAccountsService = (sucess, error) =>
+    _fetchService("settings/email-accounts", "GET", null, sucess, error)
+
+export const GetEmailAccountAuthUrlService = (sucess, error) =>
+    _fetchService("settings/email-accounts/auth-url", "GET", null, sucess, error)
+
+export const UpdateEmailAccountService = (id, data, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}`, "PATCH", data, sucess, error)
+
+export const SetPrimaryEmailAccountService = (id, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}/set-primary`, "POST", null, sucess, error)
+
+export const DeleteEmailAccountService = (id, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}`, "DELETE", null, sucess, error)
 
 export const GetEmailSequencesService = (params, sucess, error) => {
     const query = new URLSearchParams(params || {}).toString();

@@ -39,15 +39,42 @@ _GMAIL_LABEL_MAP = {
 
 _SALES_DRAFT_PROMPT = """You are the RDL Technologies sales assistant. Write a concise, professional reply that answers only what the customer asked.
 
-Use the RAG context below to answer the specific questions. Do not volunteer information that was not asked for.
-If something is not in the RAG context, write one sentence: "Our team will follow up with you on this shortly." — do not guess.
+Use the RAG context below to answer. For anything not in the RAG context, promise a follow-up email — never expose internal wording like "not available in the provided context" to the customer.
 
 Rules:
 - Answer ONLY the questions explicitly asked — nothing more
-- Keep each answer to 1-3 sentences — be direct and specific
 - Use exact figures from the RAG context (price, order code, spec values) — never approximate
-- If information is not in the RAG context, say you will follow up — do not speculate
 - FORBIDDEN: never write [LEAD TIME], [BULK PRICE], [WARRANTY DETAILS], or any word inside square brackets
+- FORBIDDEN: never write "not available in the provided context" or any mention of "context" — customers must never see internal language
+
+- AMBIGUOUS CATEGORY (multiple variants found): If the customer uses a generic term (e.g. "data loggers", "sensors")
+  and the RAG context contains MULTIPLE matching variants, do NOT say "Our team will follow up."
+  Instead, list all variants from the context as options so the customer can choose:
+    "We have several [category] models — here are the options:
+     1. [Product Name] (Order Code: [code]) — ₹[price] — [1-line spec summary]
+     2. [Product Name] (Order Code: [code]) — ₹[price] — [1-line spec summary]
+     ..."
+  Then ask which specific model they need so you can confirm the quantity pricing.
+
+- QUANTITY PRICING (specific product identified): If the customer specifies a quantity AND the product is
+  unambiguously identified, calculate: total = unit price × quantity. Show the math clearly.
+  Example: "10 × ₹4,681 = ₹46,810." Do this for each product separately.
+  Use bulk_price per unit if present, otherwise use unit price.
+
+- MULTIPLE DISTINCT PRODUCTS asked about: Answer each product (or product group) in its own section.
+
+- MISSING INFORMATION — follow-up promise:
+  When a specific detail (warranty, bulk discount tiers, lead time, feature comparison) is not in the RAG context:
+  DO NOT scatter multiple "will follow up" sentences through the email.
+  Instead, answer everything you CAN from the RAG context first, then add ONE consolidated sentence
+  at the end (before the sign-off) listing all the items you will follow up on. Format:
+    "We will send you a follow-up email shortly with details on: [item 1], [item 2]."
+  Keep it to one sentence. Never say "not available", "not in our context", or "we don't have this information".
+
+- FREQUENTLY BOUGHT TOGETHER: If the RAG context contains a "You may also be interested in:" section,
+  include a brief upsell line BEFORE the sign-off — one sentence mentioning the related product(s) by name.
+  Example: "Customers who purchase this often pair it with the [Product Name] — let us know if you'd like details."
+
 - Sign off as: RDL Technologies Sales Team
 
 RAG Context (product knowledge):
@@ -182,6 +209,7 @@ def node_parse(state: dict, config: RunnableConfig) -> dict:
         "duplicate": False,
         "gmail_message_id": gmail_message_id,
         "gmail_thread_id": parsed.get("gmail_thread_id"),
+        "rfc_message_id": parsed.get("rfc_message_id", ""),
         "sender_raw": sender_raw,
         "sender_email": sender_email,
         "subject": subject,
@@ -230,6 +258,11 @@ def node_persist(state: dict, config: RunnableConfig) -> dict:
     """Write email row to DB after classification."""
     db = _get_db(config)
     label = EmailLabel(state["label"])
+    # account_id/account_email live in config["configurable"], not in state
+    _account_id_str = config["configurable"].get("account_id")
+    _account_email = config["configurable"].get("account_email")
+    _account_id = UUID(_account_id_str) if _account_id_str else None
+
     email_row = Email(
         gmail_message_id=state["gmail_message_id"],
         gmail_thread_id=state.get("gmail_thread_id"),
@@ -247,6 +280,8 @@ def node_persist(state: dict, config: RunnableConfig) -> dict:
         transactional_type=state.get("transactional_type"),
         transactional_data=state.get("transactional_data"),
         competitor_mention=state.get("competitor_mention"),
+        account_id=_account_id,
+        account_email=_account_email,
     )
     db.add(email_row)
     try:
@@ -316,13 +351,13 @@ def generate_sales_draft(sender: str, subject: str, body: str, rag_context: Opti
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
+        from google.api_core.exceptions import PermissionDenied, ResourceExhausted
         from app.core.config import settings
-        llm = ChatGoogleGenerativeAI(
-            model="models/gemini-2.5-flash",
-            **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {}),
-            temperature=0.3,
-            max_output_tokens=1024,
-        )
+        base_kwargs = dict(temperature=0.3, max_output_tokens=4096, max_retries=0)
+        primary_kwargs = {**base_kwargs, **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {})}
+        primary = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", **primary_kwargs)
+        fallback = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", **base_kwargs)
+        llm = primary.with_fallbacks([fallback], exceptions_to_handle=(ResourceExhausted, PermissionDenied))
         response = llm.invoke([HumanMessage(content=prompt)])
         return sanitize_ai_response(response.content.strip())
     except Exception as e:
@@ -332,16 +367,19 @@ def generate_sales_draft(sender: str, subject: str, body: str, rag_context: Opti
 
 def node_generate_draft(state: dict, config: RunnableConfig) -> dict:
     """Generate a sales reply draft — delegates to generate_sales_draft for testability."""
+    rag_context = state.get("rag_context") or ""
+    if state.get("product_id"):
+        fbt = _get_fbt(state["product_id"])
+        if fbt:
+            rag_context = rag_context + fbt
     draft = generate_sales_draft(
         sender=state["sender_raw"],
         subject=state["subject"],
         body=state["effective_body"],
-        rag_context=state.get("rag_context"),
+        # Always pass a non-None value — RAG already ran in node_fetch_rag.
+        # Passing None would trigger a redundant second RAG call inside generate_sales_draft.
+        rag_context=rag_context or "No specific product context retrieved.",
     )
-    if draft and state.get("product_id"):
-        fbt = _get_fbt(state["product_id"])
-        if fbt:
-            draft = draft.rstrip() + fbt
     return {"draft": draft}
 
 
@@ -384,7 +422,7 @@ def node_auto_send(state: dict, config: RunnableConfig) -> dict:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            body=draft_text, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
@@ -424,7 +462,7 @@ def node_hold_draft(state: dict, config: RunnableConfig) -> dict:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            body=draft_text, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
         )
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {
@@ -484,7 +522,7 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
         reply_subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
         draft = gmail_service.create_draft(
             gmail_svc, to=state["sender_email"], subject=reply_subject,
-            body=clarification, thread_id=state.get("gmail_thread_id"),
+            body=clarification, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
@@ -505,7 +543,7 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
 
 
 def node_flag_human(state: dict, config: RunnableConfig) -> dict:
-    """Send auto-acknowledgement and flag for human (Support/Grievance)."""
+    """Save draft for human review — Support/Grievance replies must NOT be auto-sent."""
     db = _get_db(config)
     gmail_svc = _get_gmail_svc(config)
     label_str = state["label"]
@@ -518,19 +556,26 @@ def node_flag_human(state: dict, config: RunnableConfig) -> dict:
 
     try:
         reply_subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
-        gmail_service.send_email(
+        # Save to Gmail Drafts — human reviews, edits, and sends manually
+        draft = gmail_service.create_draft(
             gmail_svc, to=state["sender_email"],
             subject=reply_subject, body=ack_body,
             thread_id=state.get("gmail_thread_id"),
+            reply_to_message_id=state.get("rfc_message_id") or None,
         )
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"needs_human": True, "status": EmailStatus.PENDING_HUMAN, "ai_draft": ack_body},
+            {
+                "needs_human": True,
+                "status": EmailStatus.DRAFT_READY,
+                "ai_draft": ack_body,
+                "gmail_draft_id": draft["id"],
+            },
             synchronize_session=False,
         )
         db.flush()
-        logger.info(f"[EMAIL WORKFLOW] {label_str} ack sent, flagged for human: {state['subject']}")
+        logger.info(f"[EMAIL WORKFLOW] {label_str} draft saved for human review: {state['subject']}")
     except Exception as e:
-        logger.error(f"[EMAIL WORKFLOW] Ack send failed for {label_str}: {e}")
+        logger.error(f"[EMAIL WORKFLOW] Draft save failed for {label_str}: {e}")
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {"needs_human": True, "status": EmailStatus.PENDING_HUMAN},
             synchronize_session=False,
@@ -699,4 +744,9 @@ def route_after_confidence(state: dict) -> str:
 
 
 def route_after_gaps(state: dict) -> str:
-    return "hold_draft" if state.get("gaps") else "auto_send"
+    # Hold if gaps exist OR if the receiving account has auto_send disabled
+    if state.get("gaps"):
+        return "hold_draft"
+    if not state.get("auto_send_enabled", True):
+        return "hold_draft"
+    return "auto_send"

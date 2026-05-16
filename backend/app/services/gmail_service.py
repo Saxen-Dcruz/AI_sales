@@ -20,12 +20,18 @@ GMAIL_TOKEN_PATH = Path("gmail_token.json")
 # Labels we create/manage in Gmail
 MANAGED_LABELS = ["RDL/Sales", "RDL/Support", "RDL/Grievance", "RDL/Transactional", "RDL/Promotional", "RDL/Personal"]
 
-_label_cache: dict[str, str] = {}  # name → Gmail label id
+# Per-account label caches: email_address → {label_name: label_id}
+_label_caches: dict[str, dict[str, str]] = {}
+_label_cache: dict[str, str] = {}  # backward-compat alias for single-account code
 
 
 def _load_credentials():
+    """Load credentials from the legacy gmail_token.json file (single-account fallback)."""
     if not GMAIL_TOKEN_PATH.exists():
-        raise FileNotFoundError(f"Gmail token not found at {GMAIL_TOKEN_PATH}. Run app/scripts/google_auth.py first.")
+        raise FileNotFoundError(
+            f"Gmail token not found at {GMAIL_TOKEN_PATH}. "
+            "Either run app/scripts/google_auth.py or add an account via Settings."
+        )
     with open(GMAIL_TOKEN_PATH, "rb") as f:
         creds = pickle.load(f)
     if creds.expired and creds.refresh_token:
@@ -35,7 +41,17 @@ def _load_credentials():
     return creds
 
 
-def get_gmail_service():
+def get_gmail_service(account=None):
+    """
+    Return a Gmail API service instance.
+    - account: EmailAccount model instance → use DB-stored token
+    - account=None → fall back to legacy gmail_token.json
+    """
+    if account is not None:
+        from app.services.email_account_service import get_gmail_service_for_account
+        from app.database.core import SessionLocal
+        with SessionLocal() as db:
+            return get_gmail_service_for_account(db, account)
     return build("gmail", "v1", credentials=_load_credentials(), cache_discovery=False)
 
 
@@ -46,10 +62,12 @@ def _fetch_all_labels(service) -> dict[str, str]:
     return {lbl["name"]: lbl["id"] for lbl in result.get("labels", [])}
 
 
-def ensure_labels_exist(service) -> None:
+def ensure_labels_exist(service, account_key: str = "__default__") -> None:
+    """Ensure RDL/* labels exist. Uses per-account cache keyed by email address."""
     global _label_cache
-    if _label_cache:
-        return  # Already initialised — skip the network call on every subsequent cycle
+    cache = _label_caches.setdefault(account_key, {})
+    if cache:
+        return
     existing = _fetch_all_labels(service)
     for label_name in MANAGED_LABELS:
         if label_name not in existing:
@@ -60,14 +78,18 @@ def ensure_labels_exist(service) -> None:
             }
             created = service.users().labels().create(userId="me", body=body).execute()
             existing[label_name] = created["id"]
-            logger.info(f"Created Gmail label: {label_name}")
-    _label_cache = existing
+            logger.info(f"[{account_key}] Created Gmail label: {label_name}")
+    _label_caches[account_key] = existing
+    if account_key == "__default__":
+        _label_cache = existing   # keep backward-compat alias
 
 
-def get_label_id(service, label_name: str) -> Optional[str]:
-    if not _label_cache:
-        ensure_labels_exist(service)
-    return _label_cache.get(label_name)
+def get_label_id(service, label_name: str, account_key: str = "__default__") -> Optional[str]:
+    cache = _label_caches.get(account_key, {})
+    if not cache:
+        ensure_labels_exist(service, account_key)
+        cache = _label_caches.get(account_key, {})
+    return cache.get(label_name)
 
 
 # ── Email fetching ────────────────────────────────────────────────────────────
@@ -92,6 +114,42 @@ def fetch_thread_context(service, thread_id: str, current_message_id: str) -> Op
     except Exception as e:
         logger.warning(f"[GMAIL] Could not fetch thread context for {thread_id}: {e}")
         return None
+
+
+def fetch_messages_since(service, since_dt, max_results: int = 500) -> list[dict]:
+    """
+    Fetch all INBOX messages received after since_dt. Used for initial historical sync.
+    Uses 'in:inbox' (not 'in:anywhere') so sent/spam/trash are excluded — only inbound
+    emails that arrived in the inbox are returned. The regular poller handles new unread
+    messages going forward; this function back-fills historical ones.
+    """
+    import math
+    epoch = math.floor(since_dt.timestamp())
+    # in:inbox after:<epoch> — inbox only, not sent/spam/trash
+    query = f"in:inbox after:{epoch}"
+    all_ids = []
+    page_token = None
+    while len(all_ids) < max_results:
+        kwargs = dict(userId="me", q=query, maxResults=min(500, max_results - len(all_ids)))
+        if page_token:
+            kwargs["pageToken"] = page_token
+        resp = service.users().messages().list(**kwargs).execute()
+        all_ids.extend(resp.get("messages", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+
+    full = []
+    for msg in all_ids:
+        try:
+            full.append(
+                service.users().messages().get(
+                    userId="me", id=msg["id"], format="full"
+                ).execute()
+            )
+        except HttpError as e:
+            logger.warning(f"[SYNC HISTORY] Failed to fetch message {msg['id']}: {e}")
+    return full
 
 
 def fetch_unread_messages(service, max_results: int = 20) -> list[dict]:
@@ -153,6 +211,7 @@ def parse_message(message: dict) -> dict:
     return {
         "gmail_message_id": message["id"],
         "gmail_thread_id": message.get("threadId"),
+        "rfc_message_id": headers.get("message-id", ""),  # RFC 2822 Message-ID for In-Reply-To
         "sender": sender,
         "recipients": recipients,
         "subject": subject,
@@ -225,9 +284,10 @@ def archive_message(service, message_id: str) -> None:
 
 # ── Draft management ──────────────────────────────────────────────────────────
 
-def create_draft(service, to: str, subject: str, body: str, thread_id: Optional[str] = None) -> dict:
+def create_draft(service, to: str, subject: str, body: str,
+                 thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None) -> dict:
     """Save a draft in Gmail. Returns the draft object (includes draft id)."""
-    msg = _build_mime(to, subject, body)
+    msg = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id)
     draft_body: dict = {"message": {"raw": msg}}
     if thread_id:
         draft_body["message"]["threadId"] = thread_id
@@ -243,9 +303,10 @@ def send_draft(service, draft_id: str) -> dict:
     return sent
 
 
-def send_email(service, to: str, subject: str, body: str, thread_id: Optional[str] = None) -> dict:
+def send_email(service, to: str, subject: str, body: str,
+               thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None) -> dict:
     """Send immediately without saving a draft."""
-    raw = _build_mime(to, subject, body)
+    raw = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id)
     msg_body: dict = {"raw": raw}
     if thread_id:
         msg_body["threadId"] = thread_id
@@ -281,10 +342,13 @@ def _markdown_to_html(text: str) -> str:
     )
 
 
-def _build_mime(to: str, subject: str, body: str) -> str:
+def _build_mime(to: str, subject: str, body: str, reply_to_message_id: Optional[str] = None) -> str:
     msg = MIMEMultipart("alternative")
     msg["to"] = to
     msg["subject"] = subject
+    if reply_to_message_id:
+        msg["In-Reply-To"] = reply_to_message_id
+        msg["References"] = reply_to_message_id
     # plain text fallback (strips markdown syntax for clients that don't render HTML)
     plain = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', body)
     msg.attach(MIMEText(plain, "plain"))

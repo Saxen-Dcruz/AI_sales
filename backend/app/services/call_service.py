@@ -392,6 +392,7 @@ def resolve_gap(
     answer: str,
     category: Optional[str],
     resolved_by: str,
+    product_id: Optional[str] = None,
 ) -> Call:
     gaps = list(call.followup_gaps or [])
     if gap_index < 0 or gap_index >= len(gaps):
@@ -400,19 +401,24 @@ def resolve_gap(
     if gap.get("resolved"):
         raise ValueError("Gap already resolved")
 
-    product_id_str = gap.get("product_id")
+    product_id_str = product_id or gap.get("product_id")
     eff_category = category or gap.get("topic", "general")
 
     if product_id_str:
         from app.services import product_knowledge_service
-        product_knowledge_service.add_entry(
-            db=db,
-            product_id=UUID(product_id_str),
-            category=eff_category,
-            content=f"Q: {gap['question']}\nA: {answer}",
-            added_by=resolved_by,
-        )
-        product_knowledge_service.update_coverage_score(db, product_id_str)
+        from app.database.core import SessionLocal
+        kb_db = SessionLocal()
+        try:
+            product_knowledge_service.add_entry(
+                db=kb_db,
+                product_id=UUID(product_id_str),
+                category=eff_category,
+                content=f"Q: {gap['question']}\nA: {answer}",
+                added_by=resolved_by,
+            )
+            product_knowledge_service.update_coverage_score(kb_db, product_id_str)
+        finally:
+            kb_db.close()
 
     gaps[gap_index] = {**gap, "resolved": True, "answer": answer, "resolved_by": resolved_by}
     call.followup_gaps = gaps

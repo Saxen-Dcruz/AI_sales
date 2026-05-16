@@ -171,6 +171,7 @@ def resolve_call_gap(
             gap_index=payload.gap_index,
             answer=payload.answer,
             category=payload.category,
+            product_id=payload.product_id,
             resolved_by=current_user.email,
         )
     except ValueError as e:

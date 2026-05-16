@@ -93,12 +93,14 @@ def _make_raw_message(gmail_id=None, subject="Test inquiry", body="Hello, what i
     }
 
 
-def _make_config(db, gmail_svc=None):
+def _make_config(db, gmail_svc=None, account_id=None, account_email=None):
     return {
         "configurable": {
             "thread_id": f"test_{uuid.uuid4().hex}",
             "db": db,
             "gmail_svc": gmail_svc or MagicMock(),
+            "account_id": account_id,
+            "account_email": account_email,
         }
     }
 
@@ -239,6 +241,76 @@ def test_node_persist_creates_email_row(db):
     row = db.query(Email).filter(Email.gmail_message_id == state["gmail_message_id"]).first()
     assert row is not None
     assert str(row.id) == result["email_id"]
+
+
+def test_node_persist_sets_account_id_and_email(db):
+    """account_id and account_email must be read from config, not state."""
+    from app.services.workflows.email_nodes import node_persist
+    from app.models.email_account import EmailAccount
+    from app.core.utils import new_uuid
+
+    # Create a real EmailAccount so FK constraint is satisfied
+    fake_account_id = new_uuid()
+    acct = EmailAccount(
+        id=fake_account_id,
+        email_address=f"acct_{uuid.uuid4().hex[:6]}@test.com",
+        display_name="Test",
+        token_data="dGVzdA==",  # base64 "test" — won't be decoded in this test
+    )
+    db.add(acct)
+    db.commit()
+
+    mid = f"test_{uuid.uuid4().hex}"
+    state = {
+        "gmail_message_id": mid,
+        "gmail_thread_id": None,
+        "sender_raw": "customer@example.com",
+        "recipients": [],
+        "subject": "Account test",
+        "effective_body": "Test body",
+        "body_html": None,
+        "received_at": datetime.now(timezone.utc),
+        "label": EmailLabel.SALES.value,
+        "classifier_confidence": "high",
+        "classifier_reasoning": None,
+        "transactional_type": None,
+        "transactional_data": None,
+        "competitor_mention": None,
+    }
+    cfg = _make_config(db, account_id=str(fake_account_id), account_email=acct.email_address)
+    node_persist(state, cfg)
+
+    row = db.query(Email).filter(Email.gmail_message_id == mid).first()
+    assert row is not None, "Email row must be created"
+    assert row.account_id == fake_account_id, "account_id must be set from config, not state"
+    assert row.account_email == acct.email_address, "account_email must be set from config, not state"
+
+
+def test_node_persist_account_id_null_when_not_in_config(db):
+    """When config has no account_id, row.account_id must be NULL (not crash)."""
+    from app.services.workflows.email_nodes import node_persist
+    mid = f"test_{uuid.uuid4().hex}"
+    state = {
+        "gmail_message_id": mid,
+        "gmail_thread_id": None,
+        "sender_raw": "x@example.com",
+        "recipients": [],
+        "subject": "No account",
+        "effective_body": "body",
+        "body_html": None,
+        "received_at": datetime.now(timezone.utc),
+        "label": EmailLabel.PROMOTIONAL.value,
+        "classifier_confidence": None,
+        "classifier_reasoning": None,
+        "transactional_type": None,
+        "transactional_data": None,
+        "competitor_mention": None,
+    }
+    node_persist(state, _make_config(db))  # no account_id/account_email in config
+    row = db.query(Email).filter(Email.gmail_message_id == mid).first()
+    assert row is not None
+    assert row.account_id is None
+    assert row.account_email is None
 
 
 # ── Node: upsert_lead ─────────────────────────────────────────────────────────
@@ -517,7 +589,7 @@ def test_full_graph_sales_auto_send(db):
 
 
 def test_full_graph_support_flags_human(db):
-    """Support email → flag_human → pending_human status."""
+    """Support email → flag_human → draft saved (DRAFT_READY), needs_human=True."""
     from langgraph.checkpoint.memory import MemorySaver
     import app.services.workflows.email_workflow as wf
     wf.get_checkpointer = lambda: MemorySaver()
@@ -530,7 +602,8 @@ def test_full_graph_support_flags_human(db):
          patch("app.services.workflows.email_nodes.gmail_service.extract_email_address", return_value="customer@example.com"), \
          patch("app.services.workflows.email_nodes.gmail_service.apply_label_to_message"), \
          patch("app.services.workflows.email_nodes.gmail_service.mark_as_read"), \
-         patch("app.services.workflows.email_nodes.gmail_service.send_email"), \
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_test", "message": {"id": "msg_test"}}), \
          patch("app.services.workflows.email_nodes.classify_email", return_value={
              "label": EmailLabel.SUPPORT, "confidence": "high",
              "reasoning": "Device issue", "transactional_type": None,
@@ -543,13 +616,14 @@ def test_full_graph_support_flags_human(db):
             "sender": "customer@example.com", "recipients": ["dev@rdltech.in"],
             "subject": "Device not working", "body_text": "My device stopped working",
             "body_html": None, "date_str": "Mon, 05 May 2026 10:00:00 +0530",
+            "rfc_message_id": "",
         }
 
         from app.services.workflows.email_workflow import run_email_workflow
         result = run_email_workflow(db, raw)
 
     assert result is not None
-    assert result.status == EmailStatus.PENDING_HUMAN
+    assert result.status == EmailStatus.DRAFT_READY
     assert result.needs_human is True
 
 
@@ -689,7 +763,8 @@ def test_node_hold_draft_sets_draft_ready(db):
 
 # ── Edge cases: node_flag_human ───────────────────────────────────────────────
 
-def test_node_flag_human_sends_grievance_ack(db):
+def test_node_flag_human_saves_draft_not_sends(db):
+    """Grievance must save a Gmail draft (not auto-send) so human can edit before sending."""
     from app.services.workflows.email_nodes import node_flag_human
     from app.database.core import SessionLocal
 
@@ -704,25 +779,39 @@ def test_node_flag_human_sends_grievance_ack(db):
         s.add(row); s.commit(); s.refresh(row)
         email_id = str(row.id)
 
-    with patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
+    mock_draft = {"id": "draft_abc123", "message": {"id": "msg_xyz"}}
+    with patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value=mock_draft) as mock_create, \
+         patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
         result = node_flag_human(
             {"email_id": email_id, "label": "Grievance",
              "sender_raw": "Angry Customer <angry@customer.com>",
              "sender_email": "angry@customer.com",
-             "subject": "Terrible product!", "gmail_thread_id": None},
+             "subject": "Terrible product!", "gmail_thread_id": None,
+             "rfc_message_id": ""},
             _make_config(db),
         )
     assert result["action"] == "flagged_human"
-    mock_send.assert_called_once()
-    # Verify "apologise" is in the acknowledgment body
-    body_sent = mock_send.call_args.kwargs.get("body", "") or mock_send.call_args[1].get("body", "")
-    assert "apologise" in body_sent.lower() or "apolog" in body_sent.lower()
+    mock_create.assert_called_once()          # draft saved
+    mock_send.assert_not_called()             # NOT auto-sent
+    # Verify ack body contains apology language
+    body_arg = mock_create.call_args.kwargs.get("body", "") or mock_create.call_args[1].get("body", "")
+    assert "apologise" in body_arg.lower() or "apolog" in body_arg.lower()
+    # Verify DB status is DRAFT_READY (not PENDING_HUMAN)
+    db.commit()
+    from app.database.core import SessionLocal as _SL
+    with _SL() as s:
+        row = s.query(Email).filter(Email.id == uuid.UUID(email_id)).first()
+        assert row.status == EmailStatus.DRAFT_READY
+        assert row.needs_human is True
+        assert row.gmail_draft_id == "draft_abc123"
+        s.delete(row); s.commit()
 
     _delete_rows(db, email_ids=[email_id])
 
 
-def test_node_flag_human_still_sets_pending_when_ack_fails(db):
-    """Ack send failure must not block — email still gets flagged for human."""
+def test_node_flag_human_still_sets_pending_when_draft_fails(db):
+    """Draft creation failure must not block — email falls back to pending_human."""
     from app.services.workflows.email_nodes import node_flag_human
     from app.database.core import SessionLocal
 
@@ -737,12 +826,12 @@ def test_node_flag_human_still_sets_pending_when_ack_fails(db):
         s.add(row); s.commit(); s.refresh(row)
         email_id = str(row.id)
 
-    with patch("app.services.workflows.email_nodes.gmail_service.send_email",
-               side_effect=Exception("SMTP error")):
+    with patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               side_effect=Exception("Gmail error")):
         result = node_flag_human(
             {"email_id": email_id, "label": "Support",
              "sender_raw": "x@x.com", "sender_email": "x@x.com",
-             "subject": "Help", "gmail_thread_id": None},
+             "subject": "Help", "gmail_thread_id": None, "rfc_message_id": ""},
             _make_config(db),
         )
     assert result["action"] == "flagged_human"
@@ -1168,3 +1257,157 @@ def test_full_graph_personal_email_ignored(db):
 
     assert result is not None
     assert result.status == EmailStatus.IGNORED
+
+
+# ── sales_gap_service unit tests ─────────────────────────────────────────────
+
+class TestExtractNumberedItems:
+    """Tests for _extract_numbered_items — covers bugs found in production."""
+
+    def _fn(self, text):
+        from app.services.sales_gap_service import _extract_numbered_items
+        return _extract_numbered_items(text)
+
+    def test_numbered_list_at_start_of_string(self):
+        """First question must NOT be dropped when list starts at position 0."""
+        text = "1. What is the price?\n2. What is the warranty?\n3. Bulk discount?"
+        items = self._fn(text)
+        assert len(items) == 3, f"Expected 3 items, got {len(items)}: {items}"
+        assert "What is the price?" in items[0]
+
+    def test_numbered_list_after_intro(self):
+        items = self._fn("Hello,\n1. Price?\n2. Warranty?")
+        assert len(items) == 2
+        assert "Price?" in items[0]
+
+    def test_bullet_list_parsed(self):
+        """Bullet points (- item) must be parsed as separate items."""
+        text = "I have questions:\n- What is the price?\n- Is it waterproof?\n- Delivery time?"
+        items = self._fn(text)
+        assert len(items) == 3, f"Expected 3, got {len(items)}: {items}"
+        assert all("-" not in i for i in items), "Bullet marker leaked into item text"
+
+    def test_asterisk_bullet_list(self):
+        text = "* What is the price?\n* Warranty period?"
+        items = self._fn(text)
+        assert len(items) == 2
+
+    def test_fallback_question_split(self):
+        """Single-line questions split on ? when no list detected."""
+        text = "What is the price of Industrial Data Logger 4G LTE? Does it have warranty?"
+        items = self._fn(text)
+        assert len(items) == 2
+
+    def test_empty_text(self):
+        assert self._fn("") == []
+
+    def test_no_questions_or_list(self):
+        assert self._fn("Just a statement with no questions.") == []
+
+
+class TestExtractStructuredGaps:
+    """Tests for extract_structured_gaps."""
+
+    def _fn(self, customer, response, pname=None, pid=None):
+        from app.services.sales_gap_service import extract_structured_gaps
+        return extract_structured_gaps(customer, response, pname, pid)
+
+    def test_numbered_list_at_start_maps_correctly(self):
+        """Regression: first gap must not be missed when customer uses a list at position 0."""
+        customer = "1. What is the price?\n2. What is the warranty?"
+        response = "1. The price is ₹4,500.\n2. Our team will follow up on warranty details."
+        gaps = self._fn(customer, response, "Product A", "pid-1")
+        assert len(gaps) == 1
+        assert "warranty" in gaps[0]["question"].lower()
+        assert gaps[0]["topic"] == "warranty"
+
+    def test_bullet_list_customer_questions(self):
+        customer = "- What is the price?\n- Warranty period?"
+        response = "1. Price is ₹4,500.\n2. Our team will follow up on the warranty."
+        gaps = self._fn(customer, response, "Product A", "pid-1")
+        assert len(gaps) == 1
+        assert "warranty" in gaps[0]["question"].lower()
+
+    def test_no_gaps_when_all_answered(self):
+        customer = "1. Price?\n2. Warranty?"
+        response = "1. Price is ₹4,000.\n2. Warranty is 1 year."
+        gaps = self._fn(customer, response)
+        assert gaps == []
+
+    def test_fallback_gap_uses_customer_text(self):
+        """When no list structure, fallback gap question is the customer's text."""
+        customer = "Can you tell me about the data logger?"
+        response = "Our team will follow up with full specifications."
+        gaps = self._fn(customer, response, "DL", "pid-x")
+        assert len(gaps) == 1
+        assert "data logger" in gaps[0]["question"].lower()
+
+    def test_fallback_gap_truncated_at_600(self):
+        """Gap question must not be cut short below 600 chars."""
+        customer = "x" * 700
+        response = "Our team will confirm this and follow up shortly."
+        gaps = self._fn(customer, response)
+        assert len(gaps) == 1
+        assert len(gaps[0]["question"]) == 600
+
+    def test_product_name_propagated(self):
+        customer = "What is the warranty?"
+        response = "Our team will follow up on the warranty."
+        gaps = self._fn(customer, response, "Industrial Data Logger", "pid-dl")
+        assert gaps[0]["product_name"] == "Industrial Data Logger"
+        assert gaps[0]["product_id"] == "pid-dl"
+
+    def test_empty_response_no_gaps(self):
+        assert self._fn("Some question?", "") == []
+
+    def test_empty_customer_text_no_gaps(self):
+        assert self._fn("", "Our team will follow up.") == []
+
+
+class TestInferTopic:
+    def _fn(self, text):
+        from app.services.sales_gap_service import infer_topic
+        return infer_topic(text)
+
+    def test_warranty_detected(self):
+        assert self._fn("what is the warranty period?") == "warranty"
+
+    def test_pricing_detected(self):
+        assert self._fn("what is the bulk price for 10 units?") == "pricing"
+
+    def test_technical_detected(self):
+        assert self._fn("what accuracy does the sensor have?") == "technical"
+
+    def test_availability_detected(self):
+        assert self._fn("what is the lead time for delivery?") == "availability"
+
+    def test_general_fallback(self):
+        assert self._fn("tell me more about this") == "general"
+
+
+class TestNodeGenerateDraftNoDuplicateRag:
+    """Regression: node_generate_draft must not trigger a second RAG fetch."""
+
+    def test_no_second_rag_fetch_when_rag_context_empty(self, db):
+        """If node_fetch_rag returned '' (failed), generate_sales_draft must not re-fetch."""
+        from app.services.workflows.email_nodes import node_generate_draft
+        from unittest.mock import patch, MagicMock
+
+        state = {
+            "sender_raw": "cust@example.com",
+            "subject": "Price query",
+            "effective_body": "What is the price?",
+            "rag_context": "",     # RAG already ran and returned nothing
+            "product_id": None,
+        }
+        config = {"configurable": {"db": db, "gmail_svc": MagicMock()}}
+
+        with patch("app.services.sales_gap_service.fetch_rag_context") as mock_rag, \
+             patch("app.services.workflows.email_nodes.generate_sales_draft", return_value="Draft") as mock_draft:
+            node_generate_draft(state, config)
+            mock_rag.assert_not_called()
+            # generate_sales_draft must be called with non-None rag_context
+            call_kwargs = mock_draft.call_args
+            assert call_kwargs.kwargs.get("rag_context") is not None or \
+                   (call_kwargs.args and call_kwargs.args[3] is not None), \
+                   "rag_context must not be None — would trigger second RAG fetch"

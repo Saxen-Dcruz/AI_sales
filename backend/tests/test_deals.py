@@ -329,3 +329,54 @@ def test_no_stage_change_skips_signal_eval(client: TestClient, auth_headers: dic
         )
     assert resp.status_code == 200
     mock_signal.assert_not_called()
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+def test_analytics_response_shape(client: TestClient, auth_headers: dict, company_id: str):
+    resp = client.get(f"{BASE_DEALS}/analytics", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    for key in (
+        "total_deals", "open_deals", "total_open_value", "avg_deal_size",
+        "total_won", "total_lost", "total_won_value", "win_rate",
+        "avg_sales_cycle_days", "pipeline_velocity", "by_stage", "revenue",
+    ):
+        assert key in data, f"missing key: {key}"
+    for key in ("this_month", "last_month", "this_quarter", "ytd"):
+        assert key in data["revenue"], f"missing revenue key: {key}"
+
+
+def test_analytics_counts_increase(client: TestClient, auth_headers: dict, company_id: str):
+    before = client.get(f"{BASE_DEALS}/analytics", headers=auth_headers).json()["total_deals"]
+    client.post(f"{BASE_DEALS}/", json=_deal_payload(company_id), headers=auth_headers)
+    after = client.get(f"{BASE_DEALS}/analytics", headers=auth_headers).json()["total_deals"]
+    assert after == before + 1
+
+
+def test_analytics_win_rate_reflects_closed_won(client: TestClient, auth_headers: dict, company_id: str):
+    with (
+        patch("app.services.lead_scoring_service.update_lead_score"),
+        patch("app.services.deal_signal_service.evaluate_deal_signal", return_value=False),
+    ):
+        deal = client.post(f"{BASE_DEALS}/", json=_deal_payload(company_id), headers=auth_headers).json()
+        client.patch(f"{BASE_DEALS}/{deal['id']}", json={"stage": "Closed Won"}, headers=auth_headers)
+
+    data = client.get(f"{BASE_DEALS}/analytics", headers=auth_headers).json()
+    assert data["total_won"] >= 1
+    assert data["win_rate"] > 0
+
+
+def test_analytics_by_stage_contains_entry(client: TestClient, auth_headers: dict, company_id: str):
+    client.post(f"{BASE_DEALS}/", json={**_deal_payload(company_id), "stage": "Proposal"}, headers=auth_headers)
+    data = client.get(f"{BASE_DEALS}/analytics", headers=auth_headers).json()
+    assert "Proposal" in data["by_stage"]
+    entry = data["by_stage"]["Proposal"]
+    assert entry["count"] >= 1
+    assert entry["total_value"] >= 0
+
+
+def test_analytics_no_auth(client: TestClient):
+    with _no_auth(client):
+        resp = client.get(f"{BASE_DEALS}/analytics")
+    assert resp.status_code == 401
