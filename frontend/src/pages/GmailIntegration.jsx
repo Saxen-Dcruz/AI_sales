@@ -5,6 +5,7 @@ import {
   Archive,
   CheckCircle,
   ChevronRight,
+  Inbox,
   Mail, MailOpen,
   RefreshCw, Search,
   Send,
@@ -14,38 +15,47 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, ResolveEmailService, SendEmailService, SyncGmailService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService } from '../services/ApiService'
+import GapResolveForm from '../components/GapResolveForm'
+
+// ─── Account color palette — cycles through these for each connected account ─
+const ACCOUNT_COLORS = [
+  { bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500', pill: 'bg-violet-100 text-violet-700 border-violet-200' },
+  { bg: 'bg-sky-100',    text: 'text-sky-700',    dot: 'bg-sky-500',    pill: 'bg-sky-100 text-sky-700 border-sky-200'    },
+  { bg: 'bg-rose-100',   text: 'text-rose-700',   dot: 'bg-rose-500',   pill: 'bg-rose-100 text-rose-700 border-rose-200'   },
+  { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-500',  pill: 'bg-amber-100 text-amber-700 border-amber-200'  },
+]
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const LABEL_CONFIG = {
-  Sales: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-l-emerald-400', dot: 'bg-emerald-400', badge: 'bg-emerald-100 text-emerald-700' },
-  Support: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-l-amber-400', dot: 'bg-amber-400', badge: 'bg-amber-100 text-amber-700' },
-  Grievance: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-l-red-400', dot: 'bg-red-400', badge: 'bg-red-100 text-red-700' },
-  Transactional: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-l-blue-300', dot: 'bg-blue-300', badge: 'bg-blue-100 text-blue-700' },
-  Promotional: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-l-purple-300', dot: 'bg-purple-300', badge: 'bg-purple-100 text-purple-700' },
-  Personal: { bg: 'bg-pink-50', text: 'text-pink-700', border: 'border-l-pink-300', dot: 'bg-pink-300', badge: 'bg-pink-100 text-pink-700' },
-  Unclassified: { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-l-gray-300', dot: 'bg-gray-300', badge: 'bg-gray-100 text-gray-600' },
+  Sales:         { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-l-emerald-500', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700', avatar: 'bg-emerald-500' },
+  Support:       { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-l-blue-500',    dot: 'bg-blue-500',    badge: 'bg-blue-100 text-blue-700',    avatar: 'bg-blue-500' },
+  Grievance:     { bg: 'bg-red-50',     text: 'text-red-700',     border: 'border-l-red-600',     dot: 'bg-red-600',     badge: 'bg-red-100 text-red-700',     avatar: 'bg-red-600' },
+  Transactional: { bg: 'bg-gray-50',    text: 'text-gray-600',    border: 'border-l-gray-400',    dot: 'bg-gray-400',    badge: 'bg-gray-100 text-gray-600',    avatar: 'bg-gray-400' },
+  Promotional:   { bg: 'bg-purple-50',  text: 'text-purple-700',  border: 'border-l-purple-400',  dot: 'bg-purple-400',  badge: 'bg-purple-100 text-purple-700',  avatar: 'bg-purple-400' },
+  Personal:      { bg: 'bg-pink-50',    text: 'text-pink-700',    border: 'border-l-pink-400',    dot: 'bg-pink-400',    badge: 'bg-pink-100 text-pink-700',    avatar: 'bg-pink-400' },
+  Unclassified:  { bg: 'bg-gray-50',    text: 'text-gray-500',    border: 'border-l-gray-300',    dot: 'bg-gray-300',    badge: 'bg-gray-100 text-gray-500',    avatar: 'bg-gray-300' },
 }
 
 const STATUS_CONFIG = {
-  new: { icon: Mail, color: 'text-blue-500', label: 'New' },
-  classified: { icon: Tag, color: 'text-gray-400', label: 'Classified' },
-  draft_ready: { icon: Star, color: 'text-amber-500', label: 'Draft Ready' },
-  pending_human: { icon: AlertCircle, color: 'text-red-500', label: 'Needs Review' },
-  replied: { icon: CheckCircle, color: 'text-emerald-500', label: 'Replied' },
-  archived: { icon: Archive, color: 'text-gray-400', label: 'Archived' },
-  ignored: { icon: X, color: 'text-gray-300', label: 'Ignored' },
+  new:           { icon: Mail,         color: 'text-blue-500',    label: 'New' },
+  classified:    { icon: Tag,          color: 'text-gray-400',    label: 'Classified' },
+  draft_ready:   { icon: Star,         color: 'text-amber-500',   label: 'Draft Ready' },
+  pending_human: { icon: AlertCircle,  color: 'text-red-500',     label: 'Needs Review' },
+  replied:       { icon: CheckCircle,  color: 'text-emerald-500', label: 'Replied' },
+  archived:      { icon: Archive,      color: 'text-gray-400',    label: 'Archived' },
+  ignored:       { icon: X,            color: 'text-gray-300',    label: 'Ignored' },
 }
 
-
 const TABS = [
-  { key: '', label: 'All', icon: Mail },
-  { key: 'Sales', label: 'Sales', icon: Zap },
-  { key: 'Support', label: 'Support', icon: Users },
-  { key: 'Grievance', label: 'Grievance', icon: AlertCircle },
-  { key: 'needs_human', label: 'Needs Review', icon: Star },
-  { key: 'draft_ready', label: 'Draft Ready', icon: Send },
+  { key: '',             label: 'Inbox',       icon: Mail,        businessOnly: true  },
+  { key: 'Sales',        label: 'Sales',       icon: Zap,         businessOnly: true  },
+  { key: 'Support',      label: 'Support',     icon: Users,       businessOnly: true  },
+  { key: 'Grievance',    label: 'Grievance',   icon: AlertCircle, businessOnly: true  },
+  { key: 'needs_human',  label: 'Needs Review',icon: AlertCircle, businessOnly: true  },
+  { key: 'draft_ready',  label: 'Drafts',      icon: Star,        businessOnly: true  },
+  { key: 'other',        label: 'Other',       icon: Archive,     businessOnly: false },
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -77,26 +87,30 @@ function senderName(sender) {
 
 // ─── Email row ───────────────────────────────────────────────────────────────
 
-function EmailRow({ email, selected, onClick }) {
+function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const statusCfg = STATUS_CONFIG[email.status] || STATUS_CONFIG.classified
   const StatusIcon = statusCfg.icon
   const isUnread = email.status === 'new'
+  const isGrievance = email.label === 'Grievance'
+  const unresolvedGaps = (email.followup_gaps || []).filter(g => !(typeof g === 'object' ? g.resolved : false)).length
+  const acctColor = email.account_email ? accountColorMap[email.account_email] : null
+
+  // For replied emails show when it was sent (updated_at ≈ reply time); otherwise show received time
+  const displayTime = email.status === 'replied' && email.updated_at
+    ? relTime(email.updated_at)
+    : relTime(email.received_at)
+  const timeLabel = email.status === 'replied' ? 'Sent' : 'Rcvd'
 
   return (
     <button onClick={onClick}
       className={`w-full text-left border-l-4 px-4 py-3 transition-all
-        ${selected ? 'bg-blue-50 border-l-blue-500' : `hover:bg-gray-50 ${labelCfg.border}`}
-        ${email.needs_human ? 'bg-red-50/30' : ''}
+        ${selected ? 'bg-blue-50 border-l-blue-500' : `hover:bg-gray-50/80 ${labelCfg.border}`}
+        ${isGrievance && !email.resolved_at ? 'bg-red-50/20' : ''}
         border-b border-gray-100 last:border-b-0`}>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
         {/* Avatar */}
-        <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white
-          ${email.label === 'Sales' ? 'bg-emerald-500' :
-            email.label === 'Support' ? 'bg-amber-500' :
-              email.label === 'Grievance' ? 'bg-red-500' :
-                email.label === 'Transactional' ? 'bg-blue-400' :
-                  'bg-gray-400'}`}>
+        <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold text-white ${labelCfg.avatar}`}>
           {senderInitial(email.sender)}
         </div>
 
@@ -106,25 +120,49 @@ function EmailRow({ email, selected, onClick }) {
             <span className={`text-xs truncate ${isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
               {senderName(email.sender)}
             </span>
-            <span className="text-[10px] text-gray-400 flex-shrink-0">{relTime(email.received_at)}</span>
+            <span className="text-[9px] text-gray-400 flex-shrink-0 tabular-nums">
+              {timeLabel} {displayTime}
+            </span>
           </div>
           {/* Subject */}
           <p className={`text-[11px] truncate ${isUnread ? 'font-semibold text-gray-800' : 'text-gray-600'}`}>
             {email.subject || '(no subject)'}
           </p>
           {/* Bottom row: badges */}
-          <div className="flex items-center gap-1.5 mt-1">
+          <div className="flex items-center gap-1 mt-1 flex-wrap">
             <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${labelCfg.badge}`}>
               {email.label || 'Unclassified'}
             </span>
-            {email.needs_human && (
+            {isGrievance && !email.resolved_at && (
               <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">
-                Review
+                ⚠ Urgent
               </span>
             )}
-            {email.status === 'draft_ready' && (
+            {email.status === 'draft_ready' && !email.needs_human && (
               <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600">
                 Draft
+              </span>
+            )}
+            {email.status === 'draft_ready' && email.needs_human && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600">
+                Review Draft
+              </span>
+            )}
+            {unresolvedGaps > 0 && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700">
+                {unresolvedGaps} gap{unresolvedGaps > 1 ? 's' : ''}
+              </span>
+            )}
+            {email.status === 'replied' && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                ✓ Sent
+              </span>
+            )}
+            {/* Account pill — always shown, color-coded per account */}
+            {email.account_email && acctColor && (
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border flex-shrink-0 flex items-center gap-0.5 ${acctColor.pill}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${acctColor.dot} inline-block`}></span>
+                {email.account_email}
               </span>
             )}
             <StatusIcon size={10} className={`${statusCfg.color} ml-auto flex-shrink-0`} />
@@ -139,15 +177,22 @@ function EmailRow({ email, selected, onClick }) {
 
 // ─── Email detail ─────────────────────────────────────────────────────────────
 
-function EmailDetail({ email, onRefresh }) {
+function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
+  const acctColor = email.account_email ? accountColorMap[email.account_email] : null
   const [acting, setActing] = useState(null)
+  const [activeGapIndex, setActiveGapIndex] = useState(null)  // which gap form is open
+  const [gapResolving, setGapResolving] = useState(false)
   const [note, setNote] = useState('')
   const [done, setDone] = useState(false)
+  const [editDraftBody, setEditDraftBody] = useState(email.ai_draft || '')
+
+  const isHumanDraft = (email.label === 'Grievance' || email.label === 'Support') && email.status === 'draft_ready'
 
   const handleApprove = () => {
     setActing('approve')
-    ApproveDraftService(email.id, {},
+    const payload = isHumanDraft && editDraftBody !== email.ai_draft ? { edit_body: editDraftBody } : {}
+    ApproveDraftService(email.id, payload,
       () => { setActing(null); setDone(true); setTimeout(onRefresh, 800) },
       (_s, err) => { setActing(null); alert('Failed: ' + err) }
     )
@@ -205,11 +250,21 @@ function EmailDetail({ email, onRefresh }) {
             </div>
           </div>
         </div>
-        {/* From / Date */}
+        {/* From / Date / Account */}
         <div className="mt-3 text-xs text-gray-500 space-y-0.5">
           <p><span className="font-medium">From:</span> {email.sender}</p>
           {email.received_at && (
             <p><span className="font-medium">Date:</span> {new Date(email.received_at).toLocaleString()}</p>
+          )}
+          {email.account_email && (
+            <p className="flex items-center gap-1.5">
+              <span className="font-medium">Received by:</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1
+                ${acctColor ? `${acctColor.bg} ${acctColor.text} border-transparent` : 'bg-blue-50 text-blue-600 border-blue-100'}`}>
+                {acctColor && <span className={`w-2 h-2 rounded-full ${acctColor.dot}`}></span>}
+                {email.account_email}
+              </span>
+            </p>
           )}
         </div>
       </div>
@@ -234,30 +289,107 @@ function EmailDetail({ email, onRefresh }) {
           </div>
         )}
 
-        {/* AI Draft */}
+        {/* AI Draft — editable for Grievance/Support, read-only for Sales */}
         {email.ai_draft && (
-          <div className={`rounded-xl border p-4 ${LABEL_CONFIG.Sales.bg} border-emerald-200`}>
-            <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide mb-2">AI Draft Reply</p>
-            <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{email.ai_draft}</p>
-          </div>
+          isHumanDraft ? (
+            <div className="rounded-xl border border-red-200 bg-red-50/40 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-semibold text-red-600 uppercase tracking-wide">Draft Reply — Edit before sending</p>
+                <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">Not sent yet</span>
+              </div>
+              <textarea
+                value={editDraftBody}
+                onChange={e => setEditDraftBody(e.target.value)}
+                className="w-full text-xs text-gray-700 leading-relaxed border border-red-200 rounded-lg p-3 resize-none focus:outline-none focus:border-red-400 transition-all bg-white"
+                rows={10}
+              />
+            </div>
+          ) : (
+            <div className={`rounded-xl border p-4 ${LABEL_CONFIG.Sales.bg} border-emerald-200`}>
+              <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide mb-2">AI Draft Reply</p>
+              <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{email.ai_draft}</p>
+            </div>
+          )
         )}
 
-        {/* Gaps */}
+        {/* Knowledge Gaps — inline fill form when draft is ready */}
         {email.followup_gaps?.length > 0 && (
           <div>
             <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-2">
-              Knowledge Gaps ({email.followup_gaps.filter(g => !g.resolved).length} unresolved)
+              Knowledge Gaps ({email.followup_gaps.filter(g => typeof g === 'object' ? !g.resolved : true).length} unresolved)
             </p>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {email.followup_gaps.map((gap, i) => {
-                const q = typeof gap === 'string' ? gap : gap.question
-                const resolved = typeof gap === 'object' && gap.resolved
+                const gapObj  = typeof gap === 'string' ? { question: gap, topic: 'general' } : gap
+                const resolved = gapObj.resolved
+                const isOpen   = activeGapIndex === i
+
                 return (
-                  <div key={i} className={`flex items-start gap-2 p-2.5 rounded-lg text-xs
-                    ${resolved ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                    {resolved ? <CheckCircle size={12} className="mt-0.5 flex-shrink-0" /> :
-                      <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />}
-                    <span>{q}</span>
+                  <div key={i} className={`rounded-xl border text-xs transition-all
+                    ${resolved
+                      ? 'bg-emerald-50 border-emerald-200'
+                      : isOpen
+                        ? 'bg-white border-indigo-300 shadow-sm'
+                        : 'bg-amber-50 border-amber-200'}`}>
+
+                    {/* Gap header row */}
+                    <div className="flex items-start gap-2 p-2.5">
+                      {resolved
+                        ? <CheckCircle size={13} className="text-emerald-500 mt-0.5 flex-shrink-0" />
+                        : <AlertCircle size={13} className="text-amber-500 mt-0.5 flex-shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-medium leading-snug ${resolved ? 'text-emerald-700' : 'text-amber-800'}`}>
+                          {gapObj.question}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          {gapObj.topic && gapObj.topic !== 'general' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold uppercase">
+                              {gapObj.topic}
+                            </span>
+                          )}
+                          {gapObj.product_name && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">
+                              {gapObj.product_name}
+                            </span>
+                          )}
+                          {resolved && gapObj.answer && (
+                            <span className="text-[9px] text-emerald-600 italic truncate max-w-[200px]">
+                              "{gapObj.answer}"
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Fill / collapse button — only when draft exists */}
+                      {!resolved && email.status === 'draft_ready' && (
+                        <button
+                          onClick={() => setActiveGapIndex(isOpen ? null : i)}
+                          className={`flex-shrink-0 text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all
+                            ${isOpen
+                              ? 'bg-gray-100 text-gray-600'
+                              : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
+                          {isOpen ? 'Cancel' : 'Fill Gap'}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Inline resolve form */}
+                    {isOpen && !resolved && (
+                      <div className="border-t border-indigo-200 px-3 pb-3 pt-2.5">
+                        <GapResolveForm
+                          gap={gapObj}
+                          loading={gapResolving}
+                          onCancel={() => setActiveGapIndex(null)}
+                          onResolve={(answer, category, productId) => {
+                            setGapResolving(true)
+                            ResolveEmailGapService(
+                              email.id, i, answer, category, productId,
+                              () => { setGapResolving(false); setActiveGapIndex(null); onRefresh() },
+                              (_s, err) => { setGapResolving(false); alert('Failed: ' + err) }
+                            )
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -265,8 +397,9 @@ function EmailDetail({ email, onRefresh }) {
           </div>
         )}
 
-        {/* Resolution note (for Grievance/Support) */}
-        {(email.label === 'Grievance' || email.label === 'Support') && email.status !== 'replied' && !email.resolved_at && (
+        {/* Resolution note — only for pending_human (not draft_ready, draft is editable above) */}
+        {(email.label === 'Grievance' || email.label === 'Support') &&
+          email.status === 'pending_human' && !email.resolved_at && (
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Resolution Note</p>
             <textarea value={note} onChange={e => setNote(e.target.value)}
@@ -280,7 +413,25 @@ function EmailDetail({ email, onRefresh }) {
       {/* Action bar */}
       <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50">
         <div className="flex gap-2 flex-wrap">
-          {email.status === 'draft_ready' && email.ai_draft && (
+
+          {/* Grievance / Support — editable draft ready to send */}
+          {isHumanDraft && (
+            <>
+              <button onClick={handleApprove} disabled={acting === 'approve'}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-all disabled:opacity-60">
+                <Send size={12} />
+                {acting === 'approve' ? 'Sending...' : 'Send Reply'}
+              </button>
+              <button onClick={handleResolve} disabled={acting === 'resolve'}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 text-gray-600 text-xs font-medium hover:bg-gray-200 transition-all disabled:opacity-60">
+                <CheckCircle size={12} />
+                {acting === 'resolve' ? 'Resolving...' : 'Resolve Without Reply'}
+              </button>
+            </>
+          )}
+
+          {/* Sales draft ready */}
+          {!isHumanDraft && email.status === 'draft_ready' && email.ai_draft && (
             <>
               <button onClick={handleApprove} disabled={acting === 'approve'}
                 className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-all disabled:opacity-60">
@@ -294,8 +445,10 @@ function EmailDetail({ email, onRefresh }) {
               </button>
             </>
           )}
+
+          {/* Pending human (fallback state when draft creation failed) */}
           {(email.label === 'Support' || email.label === 'Grievance') &&
-            email.status !== 'replied' && !email.resolved_at && (
+            email.status === 'pending_human' && !email.resolved_at && (
               <button onClick={handleResolve} disabled={acting === 'resolve'}
                 className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all disabled:opacity-60">
                 <CheckCircle size={12} />
@@ -325,25 +478,37 @@ function EmailDetail({ email, onRefresh }) {
 function ComposeModal({ onClose, onSent }) {
   const [to, setTo] = useState('')
   const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
-  const [draft, setDraft] = useState('')
+  const [context, setContext] = useState('')       // customer context fed to AI
+  const [body, setBody] = useState('')             // editable email body
   const [generating, setGenerating] = useState(false)
   const [sending, setSending] = useState(false)
-  const [step, setStep] = useState('compose') // compose | draft
+  const [aiGenerated, setAiGenerated] = useState(false)
+  const [contextOpen, setContextOpen] = useState(true)
 
   const handleGenerate = () => {
     if (!to || !subject) return
     setGenerating(true)
-    GenerateDraftService({ to, subject, body },
-      (data) => { setDraft(data.draft); setStep('draft'); setGenerating(false) },
+    GenerateDraftService({ to, subject, body: context },
+      (data) => {
+        setBody(data.draft)
+        setAiGenerated(true)
+        setContextOpen(false)   // collapse context after generation
+        setGenerating(false)
+      },
       (_s, err) => { alert('Draft generation failed: ' + err); setGenerating(false) }
     )
   }
 
+  const handleRegenerate = () => {
+    setContextOpen(true)
+    setAiGenerated(false)
+    handleGenerate()
+  }
+
   const handleSend = () => {
-    if (!to || !subject || !draft) return
+    if (!to || !subject || !body) return
     setSending(true)
-    SendEmailService({ to, subject, body: draft },
+    SendEmailService({ to, subject, body },
       () => { setSending(false); onSent(); onClose() },
       (_s, err) => { alert('Send failed: ' + err); setSending(false) }
     )
@@ -356,10 +521,10 @@ function ComposeModal({ onClose, onSent }) {
 
       <motion.div initial={{ opacity: 0, y: 40, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 40 }} transition={{ type: 'spring', damping: 28 }}
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 overflow-hidden">
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 overflow-hidden flex flex-col max-h-[90vh]">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-blue-50">
               <Send size={15} className="text-blue-600" />
@@ -367,7 +532,7 @@ function ComposeModal({ onClose, onSent }) {
             <div>
               <h2 className="text-sm font-bold text-gray-900">New Email</h2>
               <p className="text-[10px] text-gray-400">
-                {step === 'compose' ? 'Fill in details then generate an AI draft' : 'Review and edit the AI draft before sending'}
+                {aiGenerated ? 'AI draft loaded — edit directly below' : 'Add context and generate an AI draft'}
               </p>
             </div>
           </div>
@@ -376,81 +541,90 @@ function ComposeModal({ onClose, onSent }) {
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-3 overflow-y-auto flex-1">
           {/* To + Subject */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-2">
               <span className="text-xs font-semibold text-gray-400 w-14 flex-shrink-0">To</span>
               <input value={to} onChange={e => setTo(e.target.value)} type="email"
                 placeholder="customer@example.com"
-                className="flex-1 text-sm text-gray-800 border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-400 transition-all" />
+                className="flex-1 text-sm text-gray-800 focus:outline-none" />
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-2">
               <span className="text-xs font-semibold text-gray-400 w-14 flex-shrink-0">Subject</span>
               <input value={subject} onChange={e => setSubject(e.target.value)}
                 placeholder="Re: Product Inquiry"
-                className="flex-1 text-sm text-gray-800 border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-400 transition-all" />
+                className="flex-1 text-sm text-gray-800 focus:outline-none" />
             </div>
           </div>
 
-          {/* Context body (always visible) */}
-          <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-              Customer's message / context for AI
-            </p>
-            <textarea value={body} onChange={e => setBody(e.target.value)} rows={3}
-              placeholder="Paste the customer's question or describe what the email is about..."
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:border-blue-400 transition-all" />
+          {/* Context for AI — collapsible */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setContextOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-all">
+              <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                Context for AI {aiGenerated && '(used for generation)'}
+              </span>
+              <span className="text-[10px] text-gray-400">{contextOpen ? '▲' : '▼'}</span>
+            </button>
+            <AnimatePresence>
+              {contextOpen && (
+                <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
+                  className="overflow-hidden">
+                  <textarea value={context} onChange={e => setContext(e.target.value)} rows={3}
+                    placeholder="Paste the customer's question or describe what the email is about…"
+                    className="w-full text-sm text-gray-700 px-4 py-3 resize-none focus:outline-none border-t border-gray-100" />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
-          {/* AI Draft section */}
-          <AnimatePresence>
-            {step === 'draft' && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-emerald-200">
-                    <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">
-                      AI Draft — edit before sending
-                    </p>
-                    <button onClick={() => setStep('compose')}
-                      className="text-[10px] text-emerald-600 hover:text-emerald-800 underline">
-                      Regenerate
-                    </button>
-                  </div>
-                  <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={8}
-                    className="w-full text-sm text-gray-800 bg-transparent px-4 py-3 resize-none focus:outline-none" />
-                </div>
-              </motion.div>
+          {/* Main email body — always visible, editable */}
+          <div className="relative">
+            {aiGenerated && (
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+                <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                  AI Draft
+                </span>
+                <button onClick={handleRegenerate} disabled={generating}
+                  className="text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-all disabled:opacity-50">
+                  {generating ? 'Generating…' : 'Regenerate'}
+                </button>
+              </div>
             )}
-          </AnimatePresence>
+            <textarea
+              value={body}
+              onChange={e => { setBody(e.target.value); setAiGenerated(false) }}
+              rows={aiGenerated ? 12 : 8}
+              placeholder={aiGenerated ? '' : 'Write your email here, or use "Generate AI Draft" to auto-fill…'}
+              className={`w-full text-sm text-gray-800 border rounded-xl px-4 py-3 resize-none focus:outline-none transition-all ${
+                aiGenerated
+                  ? 'border-emerald-200 bg-emerald-50/30 focus:border-emerald-400 focus:bg-white'
+                  : 'border-gray-200 focus:border-blue-400'
+              }`}
+            />
+          </div>
         </div>
 
-        {/* Footer actions */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/60">
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/60 flex-shrink-0">
           <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
             Discard
           </button>
           <div className="flex items-center gap-2">
-            {step === 'compose' ? (
+            {!aiGenerated && (
               <button onClick={handleGenerate} disabled={!to || !subject || generating}
-                className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-50">
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition-all disabled:opacity-50">
                 <Zap size={13} className={generating ? 'animate-pulse' : ''} />
-                {generating ? 'Generating...' : 'Generate AI Draft'}
+                {generating ? 'Generating…' : 'Generate AI Draft'}
               </button>
-            ) : (
-              <>
-                <button onClick={() => setStep('compose')}
-                  className="px-4 py-2 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition-all">
-                  Edit Details
-                </button>
-                <button onClick={handleSend} disabled={!draft || sending}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-50">
-                  <Send size={13} />
-                  {sending ? 'Sending...' : 'Send Email'}
-                </button>
-              </>
             )}
+            <button onClick={handleSend} disabled={!to || !subject || !body || sending}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-50">
+              <Send size={13} />
+              {sending ? 'Sending…' : 'Send'}
+            </button>
           </div>
         </div>
       </motion.div>
@@ -472,16 +646,20 @@ export default function GmailIntegration() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(null)
-  const [directEmail, setDirectEmail] = useState(null) // email fetched directly from gaps nav
+  const [directEmail, setDirectEmail] = useState(null)
   const [composeOpen, setComposeOpen] = useState(false)
+  const [accounts, setAccounts] = useState([])
+  const [activeAccount, setActiveAccount] = useState('') // '' = all accounts
+  // accountColorMap: email_address → ACCOUNT_COLORS[i]
+  const [accountColorMap, setAccountColorMap] = useState({})
 
-  const queryClient = useQueryClient()
+  useQueryClient()
 
   const syncMutation = useMutation({
     mutationFn: () => new Promise((resolve, reject) => {
       SyncGmailService(
         resolve,
-        (s, err) => reject(new Error(err))
+        (_s, err) => reject(new Error(err))
       )
     }),
     onSuccess: () => {
@@ -499,21 +677,48 @@ export default function GmailIntegration() {
     )
   }, [location.state])
 
+  // Load accounts on mount and build color map
+  useEffect(() => {
+    GetEmailAccountsService(
+      (data) => {
+        const items = data?.items || []
+        setAccounts(items)
+        // Assign a stable color to each account by index
+        const colorMap = {}
+        items.forEach((a, i) => {
+          colorMap[a.email_address] = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
+        })
+        setAccountColorMap(colorMap)
+      },
+      () => {}
+    )
+  }, [])
+
   const fetchEmails = useCallback(() => {
     setLoading(true)
+    const tab = TABS.find(t => t.key === activeTab) || TABS[0]
     const params = { page, limit: PAGE_SIZE }
     if (activeTab === 'needs_human') params.needs_human = true
     else if (activeTab === 'draft_ready') params.status = 'draft_ready'
-    else if (activeTab) params.label = activeTab
+    else if (activeTab === 'other') {
+      // Other tab: show noise emails (Promotional/Transactional/Personal/Unclassified)
+      params.business_only = false
+    } else if (activeTab) {
+      params.label = activeTab
+    }
+    // For business tabs keep business_only default (true). For 'other' explicitly false.
+    if (activeTab !== 'other') params.business_only = true
+    if (activeAccount) params.account_id = activeAccount
 
     GetGmailMessagesService(params,
       (data) => { setEmails(data?.items || []); setTotal(data?.total || 0); setLoading(false) },
       () => setLoading(false)
     )
-  }, [page, activeTab])
+  }, [page, activeTab, activeAccount])
 
   useEffect(() => { fetchEmails() }, [fetchEmails])
   useEffect(() => { setPage(1); setSelected(null) }, [activeTab])
+  useEffect(() => { setPage(1); setSelected(null) }, [activeAccount])
 
   const handleSync = () => {
     syncMutation.mutate()
@@ -528,7 +733,7 @@ export default function GmailIntegration() {
           fetchEmails()
           resolve(true)
         },
-        (s, err) => reject(new Error(err))
+        (_s, err) => reject(new Error(err))
       )
     }),
     refetchInterval: 60000,
@@ -562,9 +767,12 @@ export default function GmailIntegration() {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-gray-900">Gmail Inbox</h1>
-          <p className="text-xs text-gray-400">{total} emails · auto-classified by AI</p>
+          <p className="text-xs text-gray-400">
+            {total} emails · auto-classified by AI
+            {activeAccount && <span className="ml-1 text-blue-500">· {activeAccount}</span>}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {needsReview > 0 && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-600">
               {needsReview} need review
@@ -575,6 +783,34 @@ export default function GmailIntegration() {
               {draftReady} drafts ready
             </span>
           )}
+
+          {/* Account selector pills — shown when multiple accounts */}
+          {accounts.length > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setActiveAccount(''); setPage(1); setSelected(null) }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all
+                  ${!activeAccount ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                <Inbox size={11} />
+                All
+              </button>
+              {accounts.map((a, i) => {
+                const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
+                const isActive = activeAccount === a.id
+                return (
+                  <button key={a.id}
+                    onClick={() => { setActiveAccount(a.id); setPage(1); setSelected(null) }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border
+                      ${isActive ? `${color.bg} ${color.text} border-transparent shadow-sm` : 'bg-white text-gray-600 hover:bg-gray-50 border-gray-200'}`}>
+                    <span className={`w-2 h-2 rounded-full ${color.dot}`}></span>
+                    {a.email_address.split('@')[0]}
+                    {a.is_primary && <span className="text-[8px] opacity-60">★</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
           <button onClick={fetchEmails}
             className="p-2 rounded-xl bg-gray-50 border border-gray-200 text-gray-400 hover:bg-gray-100 transition-all">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -646,6 +882,7 @@ export default function GmailIntegration() {
                       email={email}
                       selected={selected === email.id}
                       onClick={() => setSelected(selected === email.id ? null : email.id)}
+                      accountColorMap={accountColorMap}
                     />
                   </motion.div>
                 ))}
@@ -653,20 +890,24 @@ export default function GmailIntegration() {
             )}
           </div>
 
-          {/* Pagination */}
-          {total > PAGE_SIZE && (
-            <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-gray-50/50">
-              <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
-                className="text-[10px] text-gray-500 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed">
-                ← Prev
-              </button>
-              <span className="text-[10px] text-gray-400">{page} / {Math.ceil(total / PAGE_SIZE)}</span>
-              <button disabled={page >= Math.ceil(total / PAGE_SIZE)} onClick={() => setPage(p => p + 1)}
-                className="text-[10px] text-gray-500 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed">
-                Next →
-              </button>
-            </div>
-          )}
+          {/* Pagination — always visible */}
+          <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-gray-50/50 flex-shrink-0">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage(p => p - 1)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-all disabled:opacity-30 disabled:cursor-not-allowed">
+              ← Prev
+            </button>
+            <span className="text-[10px] text-gray-500 font-medium">
+              {total === 0 ? '0 emails' : `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`}
+            </span>
+            <button
+              disabled={page >= Math.ceil(total / PAGE_SIZE) || total === 0}
+              onClick={() => setPage(p => p + 1)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-all disabled:opacity-30 disabled:cursor-not-allowed">
+              Next →
+            </button>
+          </div>
         </div>
 
         {/* Right: detail */}
@@ -675,7 +916,7 @@ export default function GmailIntegration() {
             {selectedEmail ? (
               <motion.div key={selectedEmail.id} className="h-full"
                 initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-                <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); setSelected(null) }} />
+                <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); setSelected(null) }} accountColorMap={accountColorMap} />
               </motion.div>
             ) : (
               <motion.div key="empty" className="flex flex-col items-center justify-center h-full gap-3 text-center p-8"

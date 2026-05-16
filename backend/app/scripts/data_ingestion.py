@@ -52,10 +52,12 @@ def extract_section_text(product_data: dict, section_name: str) -> str:
 
 def process_knowledge_base():
     # 1. Setup Database and Embedding Model
+    # Always use ADC (service account via GOOGLE_APPLICATION_CREDENTIALS) for ingestion.
+    # The API key path is subject to per-project monthly spend caps; ADC uses the service
+    # account's quota which is unaffected by AI Studio spend limits.
     print(f"☁️ Loading Google Cloud Embedding Model: {settings.AGENT.rag.embedding_model}...")
     embedding_model = GoogleGenerativeAIEmbeddings(
         model=settings.AGENT.rag.embedding_model,
-        google_api_key=settings.GOOGLE_API_KEY
     )
     
     # 👇 NEW: Initialize LangChain's Vector Store for ingestion
@@ -70,11 +72,22 @@ def process_knowledge_base():
     )
     
     db: Session = SessionLocal()
-    
+
+    # Pre-fetch which product IDs already have embeddings so we can skip them
+    from sqlalchemy import text as _text
+    _already_embedded = set()
+    with engine.connect() as _conn:
+        for row in _conn.execute(_text(
+            "SELECT DISTINCT cmetadata->>'product_id' FROM langchain_pg_embedding"
+        )):
+            if row[0]:
+                _already_embedded.add(row[0])
+    print(f"ℹ️  {len(_already_embedded)} products already have embeddings — will skip them.")
+
     # Define the directory containing your JSON files
     directory_path = os.getenv("KNOWLEDGE_BASE_PATH", "/data/knowledge_base")
     file_paths = glob.glob(os.path.join(directory_path, "**/*.json"), recursive=True)
-    
+
     if not file_paths:
         print(f"❌ No .json files found in {directory_path}")
         return
@@ -158,7 +171,12 @@ def process_knowledge_base():
                 print(f"  ✨ Created Relational DB: {product_name}")
             
             # --- VECTOR DATABASE LOGIC (LangChain Integration) ---
-            docs_to_add =[]
+            # Skip if this product already has embeddings (incremental re-run support)
+            if str(product.id) in _already_embedded:
+                print(f"  ⏭️  Skipping embeddings for {product_name} (already embedded)")
+                continue
+
+            docs_to_add = []
             ids_to_add = []
 
             sections_to_embed =[
@@ -223,8 +241,8 @@ def process_knowledge_base():
                     processed_chunks += len(docs_to_add)
                     print(f"  ✅ Embedded {len(docs_to_add)} chunks for {product_name}")
                     
-                    # Sleep once per product to respect Google API limits
-                    time.sleep(1.0) 
+                    # Sleep per product scaled by chunk count to stay under 100 req/min free tier
+                    time.sleep(max(2.0, len(docs_to_add) * 0.8))
                 except Exception as e:
                     print(f"  ❌ Failed to embed vectors for {product_name}: {e}")
                     error_count += 1

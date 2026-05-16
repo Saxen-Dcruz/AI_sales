@@ -10,7 +10,8 @@ from app.core.utils import new_uuid
 
 class EventTrigger(str, enum.Enum):
     DEAL_SIGNAL = "deal_signal"       # positive deal metrics crossed threshold
-    RAG_INSUFFICIENT = "rag_insufficient"  # knowledge base couldn't answer
+    RAG_INSUFFICIENT = "rag_insuffic" \
+    "ient"  # knowledge base couldn't answer
     MANUAL = "manual"                 # human-triggered via API
 
 

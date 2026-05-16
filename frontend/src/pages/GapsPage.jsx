@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react'
 import {
   Container, Typography, Box, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Button, Chip, CircularProgress,
-  IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  IconButton, Tooltip, Dialog, DialogTitle, DialogContent,
   Tabs, Tab
 } from '@mui/material'
 import { HelpOutline, CheckCircle, Refresh as RefreshIcon } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { GetEmailGapsService, ResolveEmailGapService, GetCallGapsService, ResolveCallGapService } from '../services/ApiService'
+import GapResolveForm from '../components/GapResolveForm'
 
 function flattenEmailGaps(emailItems) {
   const rows = []
@@ -62,7 +63,6 @@ export default function GapsPage() {
   const [loading, setLoading] = useState(true)
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false)
   const [selectedGap, setSelectedGap] = useState(null)
-  const [answer, setAnswer] = useState('')
   const [resolving, setResolving] = useState(false)
 
   const fetchGaps = () => {
@@ -81,11 +81,10 @@ export default function GapsPage() {
 
   const openResolve = (gap) => {
     setSelectedGap(gap)
-    setAnswer('')
     setResolveDialogOpen(true)
   }
 
-  const handleResolve = () => {
+  const handleResolve = (answer, category, productId) => {
     if (!selectedGap || !answer.trim()) return
     setResolving(true)
 
@@ -109,9 +108,9 @@ export default function GapsPage() {
     }
 
     if (selectedGap.type === 'email') {
-      ResolveEmailGapService(selectedGap.email_id, selectedGap.gap_index, answer, onSuccess, onError)
+      ResolveEmailGapService(selectedGap.email_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
     } else {
-      ResolveCallGapService(selectedGap.call_id, selectedGap.gap_index, answer, onSuccess, onError)
+      ResolveCallGapService(selectedGap.call_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
     }
   }
 
@@ -231,33 +230,19 @@ export default function GapsPage() {
           )}
         </TableContainer>
 
-        <Dialog open={resolveDialogOpen} onClose={() => setResolveDialogOpen(false)} fullWidth maxWidth="sm"
-          PaperProps={{ sx: { borderRadius: 3 } }}>
-          <DialogTitle sx={{ fontWeight: 700 }}>Resolve Gap</DialogTitle>
+        <Dialog open={resolveDialogOpen} onClose={() => !resolving && setResolveDialogOpen(false)}
+          fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 3 } }}>
+          <DialogTitle sx={{ fontWeight: 700, pb: 1 }}>Fill Knowledge Gap</DialogTitle>
           <DialogContent>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Answering: <strong>"{selectedGap?.question}"</strong>
-              {selectedGap?.product_name && (
-                <> — <em>{selectedGap.product_name}</em></>
-              )}
-            </Typography>
-            <TextField
-              fullWidth
-              label="Answer"
-              multiline
-              rows={4}
-              variant="outlined"
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Provide the answer to embed into the RAG knowledge base..."
-            />
+            {selectedGap && (
+              <GapResolveForm
+                gap={selectedGap}
+                loading={resolving}
+                onCancel={() => setResolveDialogOpen(false)}
+                onResolve={handleResolve}
+              />
+            )}
           </DialogContent>
-          <DialogActions sx={{ p: 2.5 }}>
-            <Button onClick={() => setResolveDialogOpen(false)} color="inherit">Cancel</Button>
-            <Button onClick={handleResolve} variant="contained" color="success" disabled={!answer.trim() || resolving}>
-              {resolving ? 'Saving...' : 'Save to Knowledge Base'}
-            </Button>
-          </DialogActions>
         </Dialog>
 
       </motion.div>

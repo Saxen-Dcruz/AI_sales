@@ -39,6 +39,9 @@ class EmailOut(BaseModel):
     needs_human: bool
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
+    account_id: Optional[UUID] = None
+    account_email: Optional[str] = None
+    updated_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -52,6 +55,17 @@ class EmailOut(BaseModel):
         for item in v:
             if isinstance(item, str):
                 result.append(GapItem(question=item, topic="general", product_name=None, product_id=None))
+            elif isinstance(item, dict):
+                # Backfill missing fields from older gap rows that predate the structured schema
+                result.append(GapItem(
+                    question=item.get("question", ""),
+                    topic=item.get("topic", "general"),
+                    product_name=item.get("product_name"),
+                    product_id=item.get("product_id"),
+                    resolved=item.get("resolved", False),
+                    answer=item.get("answer"),
+                    resolved_by=item.get("resolved_by"),
+                ))
             else:
                 result.append(item)
         return result
@@ -83,13 +97,17 @@ class GapNotificationListResponse(BaseModel):
 class GapResolveRequest(BaseModel):
     gap_index: int
     answer: str
-    category: Optional[str] = None   # overrides inferred topic if provided
+    category: Optional[str] = None     # overrides inferred topic if provided
+    product_id: Optional[str] = None   # overrides gap's product_id if provided
 
 
 class EmailSLAAnalytics(BaseModel):
     total_emails: int
     total_inbound: int
     total_outbound: int
+    # Breakdown to make "All" vs per-account transparent
+    total_attributed: int = 0   # emails linked to an active account
+    total_legacy: int = 0       # emails with no account info (pre-multi-account)
     total_sales_emails: int
     auto_sent: int
     drafted_for_review: int
@@ -97,10 +115,19 @@ class EmailSLAAnalytics(BaseModel):
     auto_sent_rate_pct: float
     avg_reply_minutes: float
     sla_breached: int
+    sla_met: int = 0
     competitor_mentions: int
+    grievance_total: int = 0
+    grievance_resolved: int = 0
+    grievance_pending: int = 0
+    support_total: int = 0
+    support_resolved: int = 0
+    support_pending: int = 0
+    daily_stats: list = []
     by_label: dict
     by_status: dict
     by_direction: dict
+    by_account: dict = {}  # email_address → count, for "All" view
 
 
 class GenerateDraftRequest(BaseModel):

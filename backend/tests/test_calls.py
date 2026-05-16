@@ -192,7 +192,7 @@ def test_submit_transcript_success(client, auth_headers):
     transcript = "Customer asked about the PIC Development Board pricing and lead time. Sales rep confirmed price and said lead time is 5 days."
     with (
         patch("app.services.call_service.fetch_rag_context", return_value="PIC Development Board price: Rs 11,439"),
-        patch("app.services.call_service.detect_product", return_value=(str(uuid.uuid4()), "PIC Development Board")),
+        patch("app.services.call_service.detect_product", return_value=(str(uuid.uuid4()), "PIC Development Board", "high")),
         patch("app.services.call_service._generate_call_summary", return_value=("Customer interested in PIC board. Price confirmed. Lead time discussed.", "POSITIVE", None)),
         patch("app.services.call_service.extract_structured_gaps", return_value=[]),
     ):
@@ -213,7 +213,7 @@ def test_submit_transcript_with_gaps(client, auth_headers):
     ]
     with (
         patch("app.services.call_service.fetch_rag_context", return_value=""),
-        patch("app.services.call_service.detect_product", return_value=(None, None)),
+        patch("app.services.call_service.detect_product", return_value=(None, None, "none")),
         patch("app.services.call_service._generate_call_summary", return_value=("Customer asked about warranty. Our team will confirm this.", "NEUTRAL", None)),
         patch("app.services.call_service.extract_structured_gaps", return_value=gaps),
     ):
@@ -340,7 +340,7 @@ def test_process_transcript_detects_product_and_gaps():
         call = create_call(db, direction=CallDirection.INBOUND, phone_number="+919876543297")
         with (
             patch("app.services.call_service.fetch_rag_context", return_value="Price: Rs 11,439"),
-            patch("app.services.call_service.detect_product", return_value=(str(uuid.uuid4()), "PIC Development Board")),
+            patch("app.services.call_service.detect_product", return_value=(str(uuid.uuid4()), "PIC Development Board", "high")),
             patch("app.services.call_service._generate_call_summary", return_value=("Customer interested.", "POSITIVE", None)),
             patch("app.services.call_service.extract_structured_gaps", return_value=[]),
         ):
@@ -439,7 +439,7 @@ def test_transcript_extracts_structured_fields(client, auth_headers):
 
     with (
         patch("app.services.call_service.fetch_rag_context", return_value=""),
-        patch("app.services.call_service.detect_product", return_value=(None, "PIC Board")),
+        patch("app.services.call_service.detect_product", return_value=(None, "PIC Board", "low")),
         patch("app.services.call_service._generate_call_summary", return_value=("Summary.", "POSITIVE", mock_client)),
         patch("app.services.call_service.extract_structured_gaps", return_value=[]),
         patch("app.services.call_service._send_post_call_email"),
@@ -458,7 +458,7 @@ def test_transcript_defaults_structured_fields_when_extraction_fails(client, aut
     cid = _insert_call(status=CallStatus.ACTIVE)
     with (
         patch("app.services.call_service.fetch_rag_context", return_value=""),
-        patch("app.services.call_service.detect_product", return_value=(None, None)),
+        patch("app.services.call_service.detect_product", return_value=(None, None, "none")),
         patch("app.services.call_service._generate_call_summary", return_value=("Summary.", "NEUTRAL", None)),
         patch("app.services.call_service.extract_structured_gaps", return_value=[]),
     ):
@@ -475,7 +475,7 @@ def test_transcript_structured_fields_in_response_schema(client, auth_headers):
     cid = _insert_call(status=CallStatus.ACTIVE)
     with (
         patch("app.services.call_service.fetch_rag_context", return_value=""),
-        patch("app.services.call_service.detect_product", return_value=(None, None)),
+        patch("app.services.call_service.detect_product", return_value=(None, None, "none")),
         patch("app.services.call_service._generate_call_summary", return_value=("S.", "NEUTRAL", None)),
         patch("app.services.call_service.extract_structured_gaps", return_value=[]),
     ):
@@ -504,7 +504,7 @@ def test_post_call_email_sent_on_ready_to_buy():
 
         with (
             patch("app.services.call_service.fetch_rag_context", return_value=""),
-            patch("app.services.call_service.detect_product", return_value=(None, "PIC Board")),
+            patch("app.services.call_service.detect_product", return_value=(None, "PIC Board", "low")),
             patch("app.services.call_service._generate_call_summary", return_value=("Summary.", "POSITIVE", mock_client)),
             patch("app.services.call_service.extract_structured_gaps", return_value=[]),
             patch("app.services.call_service._send_post_call_email") as mock_email,
@@ -531,7 +531,7 @@ def test_post_call_email_not_sent_on_not_interested():
 
         with (
             patch("app.services.call_service.fetch_rag_context", return_value=""),
-            patch("app.services.call_service.detect_product", return_value=(None, None)),
+            patch("app.services.call_service.detect_product", return_value=(None, None, "none")),
             patch("app.services.call_service._generate_call_summary", return_value=("Summary.", "NEUTRAL", mock_client)),
             patch("app.services.call_service.extract_structured_gaps", return_value=[]),
             patch("app.services.call_service._send_post_call_email") as mock_email,
@@ -553,7 +553,7 @@ def test_post_call_email_not_sent_when_no_lead():
         call = create_call(db, CallDirection.INBOUND, phone_number=None, lead_id=None)
         with (
             patch("app.services.call_service.fetch_rag_context", return_value=""),
-            patch("app.services.call_service.detect_product", return_value=(None, None)),
+            patch("app.services.call_service.detect_product", return_value=(None, None, "none")),
             patch("app.services.call_service._generate_call_summary", return_value=("Summary.", "POSITIVE", mock_client)),
             patch("app.services.call_service.extract_structured_gaps", return_value=[]),
             patch("app.services.call_service._send_post_call_email") as mock_email,

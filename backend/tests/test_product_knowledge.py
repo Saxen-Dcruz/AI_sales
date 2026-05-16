@@ -261,69 +261,88 @@ def test_delete_knowledge_no_auth(client):
 # ── Auto-send unit tests ──────────────────────────────────────────────────────
 
 def test_route_sales_autosends_when_no_gaps():
-    """When draft has no follow-up sentences, email is sent immediately."""
+    """When draft has no gaps, node_auto_send sends immediately — status=REPLIED."""
     from app.models.communication import Email, EmailLabel, EmailStatus
-    from app.services.email_router_service import _route_sales
+    from app.services.workflows.email_nodes import node_auto_send
+    from app.database.core import SessionLocal
     from datetime import datetime, timezone
+    import uuid as _uuid
 
-    email_row = Email(
-        gmail_message_id=f"test_{uuid.uuid4().hex}",
-        direction="inbound",
-        sender="buyer@example.com",
-        recipients=["developer20@rdltech.in"],
-        subject="Product query",
-        body_text="What is the price?",
-        received_at=datetime.now(timezone.utc),
-        label=EmailLabel.SALES,
-    )
+    email_id = None
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{_uuid.uuid4().hex}",
+            direction="inbound", sender="buyer@example.com",
+            recipients=["dev@rdltech.in"], subject="Product query",
+            body_text="What is the price?",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
 
-    mock_svc = MagicMock()
-    mock_svc.users.return_value.drafts.return_value.send.return_value.execute.return_value = {"id": "msg_sent"}
+    from app.database.core import SessionLocal as SL
+    with SL() as db:
+        config = {"configurable": {"thread_id": "test", "db": db, "gmail_svc": MagicMock()}}
+        with (
+            patch("app.services.workflows.email_nodes.gmail_service.create_draft", return_value={"id": "drf_tmp"}),
+            patch("app.services.workflows.email_nodes.gmail_service.send_draft"),
+        ):
+            result = node_auto_send(
+                {"email_id": email_id, "sender_email": "buyer@example.com",
+                 "subject": "Product query", "draft": "The price is Rs 5799.",
+                 "gmail_thread_id": None},
+                config,
+            )
+        assert result["action"] == "auto_sent"
+        db.commit()
 
-    complete_draft = "Dear Customer, the price is Rs 5799. It is available immediately.\n\nWould you like to schedule a quick call?"
-
-    with (
-        patch("app.services.email_router_service._generate_sales_draft", return_value=complete_draft),
-        patch("app.services.email_router_service.gmail_service.extract_email_address", return_value="buyer@example.com"),
-        patch("app.services.email_router_service.gmail_service.create_draft", return_value={"id": "drf_tmp"}),
-        patch("app.services.email_router_service.gmail_service.send_draft"),
-        patch("app.services.email_router_service.detect_product", return_value=(None, None)),
-    ):
-        _route_sales(mock_svc, MagicMock(), email_row, "buyer@example.com", "Product query", "What is the price?", None)
-
-    assert email_row.status == EmailStatus.REPLIED
-    assert email_row.gmail_draft_id is None
-    assert not email_row.followup_gaps
+    with SL() as s:
+        row = s.query(Email).filter(Email.id == _uuid.UUID(email_id)).first()
+        assert row.status == EmailStatus.REPLIED
+        assert row.gmail_draft_id is None
+        s.delete(row); s.commit()
 
 
 def test_route_sales_sends_and_logs_gaps():
-    """Even when gaps exist the reply is sent; gaps are logged for dashboard."""
+    """node_hold_draft: when gaps exist, draft is held for review with status=DRAFT_READY."""
     from app.models.communication import Email, EmailLabel, EmailStatus
-    from app.services.email_router_service import _route_sales
+    from app.services.workflows.email_nodes import node_hold_draft
+    from app.database.core import SessionLocal
     from datetime import datetime, timezone
+    import uuid as _uuid
 
-    email_row = Email(
-        gmail_message_id=f"test_{uuid.uuid4().hex}",
-        direction="inbound",
-        sender="buyer@example.com",
-        recipients=["developer20@rdltech.in"],
-        subject="Lead time query",
-        body_text="What is the lead time?",
-        received_at=datetime.now(timezone.utc),
-        label=EmailLabel.SALES,
-    )
+    email_id = None
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{_uuid.uuid4().hex}",
+            direction="inbound", sender="buyer@example.com",
+            recipients=["dev@rdltech.in"], subject="Lead time query",
+            body_text="What is the lead time?",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
 
-    draft_with_gaps = "Dear Customer, our team will confirm the lead time and follow up with you shortly.\n\nWould you like to schedule a quick call?"
+    from app.database.core import SessionLocal as SL
+    gaps = [{"question": "lead time?", "topic": "general", "resolved": False}]
+    with SL() as db:
+        config = {"configurable": {"thread_id": "test", "db": db, "gmail_svc": MagicMock()}}
+        with patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+                   return_value={"id": "drf_abc"}):
+            result = node_hold_draft(
+                {"email_id": email_id, "sender_email": "buyer@example.com",
+                 "subject": "Lead time query",
+                 "draft": "Our team will confirm the lead time shortly.",
+                 "gaps": gaps, "gmail_thread_id": None},
+                config,
+            )
+        assert result["action"] == "draft_held"
+        db.commit()
 
-    with (
-        patch("app.services.email_router_service._generate_sales_draft", return_value=draft_with_gaps),
-        patch("app.services.email_router_service.gmail_service.extract_email_address", return_value="buyer@example.com"),
-        patch("app.services.email_router_service.gmail_service.create_draft", return_value={"id": "drf_abc"}),
-        patch("app.services.email_router_service.gmail_service.send_draft"),
-        patch("app.services.email_router_service.detect_product", return_value=(None, None)),
-    ):
-        _route_sales(MagicMock(), MagicMock(), email_row, "buyer@example.com", "Lead time query", "What is the lead time?", None)
-
-    assert email_row.status == EmailStatus.REPLIED   # always sent
-    assert email_row.gmail_draft_id is None          # cleared after send
-    assert len(email_row.followup_gaps) > 0          # gaps still logged
+    with SL() as s:
+        row = s.query(Email).filter(Email.id == _uuid.UUID(email_id)).first()
+        assert row.status == EmailStatus.DRAFT_READY
+        assert row.needs_human is True
+        s.delete(row); s.commit()

@@ -114,7 +114,16 @@ class Settings(BaseSettings):
     LIVEKIT_WS_URL: str 
 
     # --- AI API Keys ---
-    GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+
+    # --- Google OAuth (multi-account Gmail) ---
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    # Override the redirect URI base for OAuth callbacks.
+    # Must match an authorized redirect URI in Google Cloud Console.
+    # Defaults to http://localhost:8001 (required — Google blocks private LAN IPs).
+    OAUTH_REDIRECT_BASE: str = ""
     
 
     # --- REDIS ---

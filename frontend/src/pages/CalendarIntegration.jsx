@@ -10,6 +10,7 @@ import {
   GetAvailabilityService,
   UpdateAvailabilityDayService,
   GetSchedulingConfigService,
+  GetEmailAccountsService,
   UpdateSchedulingConfigService,
 } from '../services/ApiService'
 
@@ -399,23 +400,34 @@ function AvailabilityPanel() {
 
 export default function CalendarIntegration() {
   const today = new Date()
-  const [activeTab, setActiveTab] = useState('calendar') // 'calendar' | 'availability'
+  const [activeTab, setActiveTab] = useState('calendar')
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedDay, setSelectedDay] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  const [activeAccount, setActiveAccount] = useState('')
+
+  useEffect(() => {
+    GetEmailAccountsService(
+      (data) => setAccounts(data?.items || []),
+      () => {}
+    )
+  }, [])
 
   const fetchEvents = () => {
     setLoading(true)
-    GetCalendarEventsService({ limit: 100 },
+    const params = { limit: 100 }
+    if (activeAccount) params.account_email = activeAccount
+    GetCalendarEventsService(params,
       (data) => { setEvents(data?.items || []); setLoading(false) },
       () => setLoading(false)
     )
   }
 
-  useEffect(() => { fetchEvents() }, [])
+  useEffect(() => { fetchEvents() }, [activeAccount])
 
   const eventsByDate = useMemo(() => {
     const map = {}
@@ -472,7 +484,21 @@ export default function CalendarIntegration() {
               {totalEvents} events · {dealSignals} deal signals · {manual} manual meetings
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Account selector */}
+            {accounts.length > 1 && (
+              <select
+                value={activeAccount}
+                onChange={e => setActiveAccount(e.target.value)}
+                className="text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 shadow-sm focus:outline-none focus:border-indigo-400">
+                <option value="">All accounts</option>
+                {accounts.map(a => (
+                  <option key={a.id} value={a.email_address}>
+                    {a.email_address}{a.is_primary ? ' ★' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
             {/* Tab switcher */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-white border border-gray-200 shadow-sm">
               <button onClick={() => setActiveTab('calendar')}

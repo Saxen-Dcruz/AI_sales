@@ -2,6 +2,12 @@ import logging
 import asyncio
 import json
 import os
+
+# Ensure GOOGLE_APPLICATION_CREDENTIALS is set from settings before any Google client is imported
+from app.core.config import settings
+if settings.GOOGLE_APPLICATION_CREDENTIALS:
+    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", settings.GOOGLE_APPLICATION_CREDENTIALS)
+
 from app.database.core import engine, Base
 from fastapi import Request
 import redis.asyncio as redis
@@ -13,9 +19,11 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard
+from app.routers import settings as settings_router
 
 
 import app.models.user
+import app.models.email_account
 import app.models.refresh_token
 import app.models.product
 import app.models.campaign
@@ -168,6 +176,7 @@ app.include_router(calendar.router, prefix="/api/v1")
 app.include_router(calls.router,    prefix="/api/v1")
 app.include_router(linkedin.router,   prefix="/api/v1")
 app.include_router(dashboard.router,  prefix="/api/v1")
+app.include_router(settings_router.router, prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 

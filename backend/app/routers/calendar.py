@@ -125,13 +125,41 @@ def _avail_row_to_out(r: OperatorAvailability) -> AvailabilityDayOut:
     )
 
 
+# Default schedule: Mon–Fri 9–18, Sat 9–14, Sun off
+_DEFAULT_AVAIL = {
+    0: (True,  9, 18),   # Mon
+    1: (True,  9, 18),   # Tue
+    2: (True,  9, 18),   # Wed
+    3: (True,  9, 18),   # Thu
+    4: (True,  9, 18),   # Fri
+    5: (True,  9, 14),   # Sat
+    6: (False, 9, 18),   # Sun
+}
+
+
 @router.get("/availability", response_model=list[AvailabilityDayOut])
 def get_availability(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    rows = db.query(OperatorAvailability).order_by(OperatorAvailability.day_of_week).all()
-    return [_avail_row_to_out(r) for r in rows]
+    existing = {r.day_of_week: r for r in db.query(OperatorAvailability).all()}
+    result = []
+    seeded = False
+    for day in range(7):
+        if day not in existing:
+            avail, sh, eh = _DEFAULT_AVAIL[day]
+            row = OperatorAvailability(
+                day_of_week=day, is_available=avail,
+                start_hour=sh, start_minute=0, end_hour=eh, end_minute=0,
+            )
+            db.add(row)
+            existing[day] = row
+            seeded = True
+    if seeded:
+        db.commit()
+        for row in existing.values():
+            db.refresh(row)
+    return [_avail_row_to_out(existing[d]) for d in range(7)]
 
 
 @router.put("/availability/{day_of_week}", response_model=AvailabilityDayOut)

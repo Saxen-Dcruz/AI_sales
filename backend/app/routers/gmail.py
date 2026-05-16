@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -29,7 +29,8 @@ from app.schema.gmail import (
 )
 from app.services import gmail_service, product_knowledge_service
 from app.services import email_sequence_service
-from app.services.email_router_service import process_inbound_email, _generate_sales_draft
+from app.services.workflows.email_workflow import run_email_workflow
+from app.services.workflows.email_nodes import generate_sales_draft as _gen_draft
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
 
@@ -48,7 +49,7 @@ def sync_inbox(
     messages = gmail_service.fetch_unread_messages(svc, max_results=max_results)
     processed = 0
     for raw_msg in messages:
-        result = process_inbound_email(db, raw_msg)
+        result = run_email_workflow(db, raw_msg)
         if result:
             processed += 1
     return {"processed": processed, "fetched": len(messages)}
@@ -56,12 +57,22 @@ def sync_inbox(
 
 # ── Email list ────────────────────────────────────────────────────────────────
 
+_NOISE_LABEL_VALUES = [
+    EmailLabel.PROMOTIONAL, EmailLabel.PERSONAL,
+    EmailLabel.TRANSACTIONAL, EmailLabel.UNCLASSIFIED,
+]
+
 @router.get("/", response_model=EmailListResponse)
 def list_emails(
     label: Optional[EmailLabel] = Query(default=None),
     status: Optional[EmailStatus] = Query(default=None),
     needs_human: Optional[bool] = Query(default=None),
     lead_id: Optional[UUID] = Query(default=None),
+    account_id: Optional[UUID] = Query(default=None),
+    account_email: Optional[str] = Query(default=None),
+    # business_only=true (default): show only Sales/Support/Grievance
+    # business_only=false: show all including Promotional/Transactional
+    business_only: bool = Query(default=True),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -69,13 +80,28 @@ def list_emails(
 ):
     q = db.query(Email)
     if label:
+        # Explicit label filter overrides business_only
         q = q.filter(Email.label == label)
+    elif business_only:
+        # Default inbox: only pipeline labels (Sales/Support/Grievance)
+        q = q.filter(Email.label.notin_(_NOISE_LABEL_VALUES))
+    else:
+        # Other tab: only noise labels
+        q = q.filter(Email.label.in_(_NOISE_LABEL_VALUES))
     if status:
         q = q.filter(Email.status == status)
     if needs_human is not None:
         q = q.filter(Email.needs_human == needs_human)
     if lead_id:
         q = q.filter(Email.lead_id == lead_id)
+    if account_id:
+        q = q.filter(Email.account_id == account_id)
+    elif account_email:
+        q = q.filter(Email.account_email == account_email)
+    else:
+        # Default: only emails from active accounts. Legacy (no account_id) and
+        # orphaned (deleted account) emails are not shown in the "All" inbox.
+        q = q.filter(Email.account_id.isnot(None))
     total = q.count()
     items = q.order_by(Email.received_at.desc()).offset((page - 1) * limit).limit(limit).all()
     return EmailListResponse(items=items, total=total, page=page, limit=limit)
@@ -115,51 +141,179 @@ def list_rag_gaps(
     return GapNotificationListResponse(items=items, total=len(items))
 
 
+_SINCE_HOURS = {
+    "7h":   7,
+    "24h":  24,
+    "48h":  48,
+    "7d":   168,   # 7 × 24
+    "all":  None,
+}
+
+
 @router.get("/analytics", response_model=EmailSLAAnalytics)
 def get_email_analytics(
+    since: str = "7d",
+    account_id: Optional[UUID] = Query(default=None),
+    account_email: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Email pipeline analytics: SLA compliance, auto-send rate, competitor mentions."""
+    """Email pipeline analytics. since=7h|24h|48h|7d|all. account_id/account_email filters to a specific Gmail account."""
     from sqlalchemy import case, extract
 
-    all_emails = db.query(Email).all()
-    sales = [e for e in all_emails if e.label == EmailLabel.SALES]
+    now = datetime.now(timezone.utc)
+    hours = _SINCE_HOURS.get(since)
+    if hours:
+        if since == "7d":
+            # Align to midnight 7 days ago so all emails land in a date bucket
+            cutoff = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - timedelta(days=6)
+        else:
+            cutoff = now - timedelta(hours=hours)
+    else:
+        cutoff = None
+
+    query = db.query(Email)
+    if cutoff:
+        query = query.filter(Email.received_at >= cutoff)
+    if account_id:
+        # Specific account filter
+        query = query.filter(Email.account_id == account_id)
+    elif account_email:
+        query = query.filter(Email.account_email == account_email)
+    else:
+        # "All accounts" default: ONLY emails linked to an active account.
+        # Legacy emails (account_email IS NULL, pre-multi-account) are excluded
+        # from dashboard metrics — they would inflate totals with unattributed data.
+        # Orphaned emails (deleted account) are also excluded.
+        query = query.filter(Email.account_id.isnot(None))
+    all_emails = query.all()
+
+    # ── Business pipeline labels (Sales + Support + Grievance) ────────────────
+    # Promotional / Transactional / Personal / Unclassified are inbox noise and
+    # must NOT pollute pipeline metrics (auto-sent rate, SLA, avg reply time).
+    _PIPELINE_LABELS = {EmailLabel.SALES, EmailLabel.SUPPORT, EmailLabel.GRIEVANCE}
+    _NOISE_LABELS = {EmailLabel.PROMOTIONAL, EmailLabel.PERSONAL, EmailLabel.TRANSACTIONAL}
+
+    pipeline_emails = [e for e in all_emails if e.label in _PIPELINE_LABELS]
+    sales    = [e for e in all_emails if e.label == EmailLabel.SALES]
+    grievances = [e for e in all_emails if e.label == EmailLabel.GRIEVANCE]
+    supports   = [e for e in all_emails if e.label == EmailLabel.SUPPORT]
+
+    # Inbound business emails only (exclude outbound + noise from volume counts)
+    inbound_pipeline = [e for e in pipeline_emails if e.direction == "inbound"]
+    inbound_all = [e for e in all_emails if e.direction == "inbound"]
+    outbound_all = [e for e in all_emails if e.direction == "outbound"]
 
     auto_sent = sum(1 for e in sales if e.status == EmailStatus.REPLIED and not e.needs_human)
-    drafted = sum(1 for e in sales if e.followup_gaps and e.status == EmailStatus.REPLIED)
-    pending = sum(1 for e in all_emails if e.needs_human and e.status == EmailStatus.PENDING_HUMAN)
+    drafted   = sum(1 for e in sales if e.followup_gaps and e.status == EmailStatus.DRAFT_READY)
+    pending   = sum(1 for e in all_emails if e.needs_human and e.status == EmailStatus.PENDING_HUMAN)
+    # Auto-sent rate = auto-sent Sales / total Sales (only meaningful over Sales emails)
     auto_sent_rate = round(auto_sent / len(sales) * 100, 1) if sales else 0.0
 
-    # Avg reply time for replied Sales emails
-    replied = [
-        e for e in sales
-        if e.status == EmailStatus.REPLIED and e.received_at
-    ]
-    # Use updated_at as proxy for reply time (when status changed to replied)
+    # Avg reply time — only for Sales emails that were actually replied to
     reply_minutes = []
-    for e in replied:
-        if hasattr(e, 'updated_at') and e.updated_at and e.received_at:
+    for e in sales:
+        if e.status == EmailStatus.REPLIED and e.received_at and e.updated_at:
             diff = (e.updated_at - e.received_at).total_seconds() / 60
-            if 0 < diff < 1440:  # ignore if >24h (likely manual)
+            if 0 < diff < 1440:
                 reply_minutes.append(diff)
     avg_reply = round(sum(reply_minutes) / len(reply_minutes), 1) if reply_minutes else 0.0
 
-    # SLA breach: Sales emails not replied within 2 hours
-    from datetime import timedelta
-    now = datetime.now(timezone.utc)
-    sla_breached = sum(
-        1 for e in sales
-        if e.status in (EmailStatus.DRAFT_READY, EmailStatus.PENDING_HUMAN, EmailStatus.CLASSIFIED)
-        and e.received_at
-        and (now - e.received_at).total_seconds() > 7200
+    # SLA — 2 hour target, only measured on Sales emails whose window has closed
+    sla_eligible = [
+        e for e in sales
+        if e.received_at and (now - e.received_at).total_seconds() > 7200
+    ]
+    sla_met = sum(
+        1 for e in sla_eligible
+        if e.status == EmailStatus.REPLIED and e.updated_at
+        and (e.updated_at - e.received_at).total_seconds() <= 7200
     )
+    sla_breached = len(sla_eligible) - sla_met
 
     competitor_mentions = sum(1 for e in all_emails if e.competitor_mention)
+
+    # Grievance breakdown
+    grv_resolved = sum(1 for e in grievances if e.resolved_at or e.status == EmailStatus.REPLIED)
+    grv_pending  = len(grievances) - grv_resolved
+
+    # Support breakdown
+    sup_resolved = sum(1 for e in supports if e.resolved_at or e.status == EmailStatus.REPLIED)
+    sup_pending  = len(supports) - sup_resolved
+
+    # Time-series — buckets show INBOUND volume (all) + SLA on pipeline emails only
+    def _make_bucket(label: str, bucket_emails: list) -> dict:
+        sales_b = [e for e in bucket_emails if e.label == EmailLabel.SALES]
+        eligible_b = [e for e in sales_b if e.received_at and (now - e.received_at).total_seconds() > 7200]
+        met_b = sum(
+            1 for e in eligible_b
+            if e.status == EmailStatus.REPLIED and e.updated_at
+            and (e.updated_at - e.received_at).total_seconds() <= 7200
+        )
+        return {
+            "date":    label,
+            "inbound":  sum(1 for e in bucket_emails if e.direction == "inbound"),
+            "outbound": sum(1 for e in bucket_emails if e.direction == "outbound"),
+            "sla_met":      met_b,
+            "sla_breached": len(eligible_b) - met_b,
+        }
+
+    daily_stats = []
+    if since == "7h":
+        # 7 hourly buckets
+        for i in range(6, -1, -1):
+            t_end = now - timedelta(hours=i)
+            t_start = t_end - timedelta(hours=1)
+            bucket = [e for e in all_emails if e.received_at and t_start <= e.received_at.astimezone(timezone.utc) < t_end]
+            daily_stats.append(_make_bucket(t_end.strftime("%H:%M"), bucket))
+    elif since == "24h":
+        # 12 two-hour buckets
+        for i in range(11, -1, -1):
+            t_end = now - timedelta(hours=i * 2)
+            t_start = t_end - timedelta(hours=2)
+            bucket = [e for e in all_emails if e.received_at and t_start <= e.received_at.astimezone(timezone.utc) < t_end]
+            daily_stats.append(_make_bucket(t_end.strftime("%H:%M"), bucket))
+    elif since == "48h":
+        # 12 four-hour buckets
+        for i in range(11, -1, -1):
+            t_end = now - timedelta(hours=i * 4)
+            t_start = t_end - timedelta(hours=4)
+            bucket = [e for e in all_emails if e.received_at and t_start <= e.received_at.astimezone(timezone.utc) < t_end]
+            daily_stats.append(_make_bucket(t_end.strftime("%d/%m %H:%M"), bucket))
+    elif since == "7d":
+        # Cutoff is midnight 6 days ago → exactly 7 calendar-day buckets, all emails land in one
+        for i in range(6, -1, -1):
+            day = (now - timedelta(days=i)).date()
+            bucket = [e for e in all_emails if e.received_at and e.received_at.astimezone(timezone.utc).date() == day]
+            daily_stats.append(_make_bucket(day.strftime("%d %b"), bucket))
+    else:
+        # "all" — span the full date range with weekly buckets so chart covers every email
+        dated = [e for e in all_emails if e.received_at]
+        if dated:
+            first_dt = min(e.received_at.astimezone(timezone.utc) for e in dated)
+            total_days = max((now - first_dt).days + 1, 1)
+            if total_days <= 14:
+                # Short history — daily buckets
+                for i in range(total_days - 1, -1, -1):
+                    day = (now - timedelta(days=i)).date()
+                    bucket = [e for e in all_emails if e.received_at and e.received_at.astimezone(timezone.utc).date() == day]
+                    daily_stats.append(_make_bucket(day.strftime("%d %b"), bucket))
+            else:
+                # Long history — weekly buckets covering everything
+                num_weeks = (total_days + 6) // 7
+                for i in range(num_weeks - 1, -1, -1):
+                    t_end = now - timedelta(weeks=i)
+                    t_start = t_end - timedelta(weeks=1)
+                    bucket = [e for e in all_emails if e.received_at and t_start <= e.received_at.astimezone(timezone.utc) <= t_end]
+                    daily_stats.append(_make_bucket(t_end.strftime("%d %b"), bucket))
 
     by_label = {}
     by_status = {}
     by_direction = {}
+    by_account = {}
+    total_attributed = 0
+    total_legacy = 0
+
     for e in all_emails:
         lbl = e.label.value if e.label else "Unclassified"
         by_label[lbl] = by_label.get(lbl, 0) + 1
@@ -170,10 +324,25 @@ def get_email_analytics(
         d = e.direction or "unknown"
         by_direction[d] = by_direction.get(d, 0) + 1
 
+        # Per-account breakdown — shows where each email came from
+        if e.account_email:
+            by_account[e.account_email] = by_account.get(e.account_email, 0) + 1
+            total_attributed += 1
+        else:
+            by_account["(legacy / unattributed)"] = by_account.get("(legacy / unattributed)", 0) + 1
+            total_legacy += 1
+
     return EmailSLAAnalytics(
+        # total_emails = ALL emails (inbound + outbound, all labels, all accounts)
+        # total_attributed = emails linked to a current active account
+        # total_legacy     = emails with no account info (pre-multi-account)
+        # So: total_attributed + total_legacy = total_emails (always true)
         total_emails=len(all_emails),
-        total_inbound=by_direction.get("inbound", 0),
-        total_outbound=by_direction.get("outbound", 0),
+        total_inbound=len(inbound_all),
+        total_outbound=len(outbound_all),
+        total_attributed=total_attributed,
+        total_legacy=total_legacy,
+        # Pipeline-scoped metrics — only Sales/Support/Grievance
         total_sales_emails=len(sales),
         auto_sent=auto_sent,
         drafted_for_review=drafted,
@@ -181,10 +350,19 @@ def get_email_analytics(
         auto_sent_rate_pct=auto_sent_rate,
         avg_reply_minutes=avg_reply,
         sla_breached=sla_breached,
+        sla_met=sla_met,
         competitor_mentions=competitor_mentions,
-        by_label=by_label,
+        daily_stats=daily_stats,
+        grievance_total=len(grievances),
+        grievance_resolved=grv_resolved,
+        grievance_pending=grv_pending,
+        support_total=len(supports),
+        support_resolved=sup_resolved,
+        support_pending=sup_pending,
+        by_label={k: v for k, v in by_label.items()},
         by_status=by_status,
         by_direction=by_direction,
+        by_account=by_account,
     )
 
 
@@ -259,20 +437,29 @@ def resolve_gap(
         raise HTTPException(status_code=400, detail="Gap already resolved")
 
     # Embed the answer into the product knowledge base
-    product_id_str = gap.get("product_id")
+    # payload.product_id overrides the gap's stored product_id (user may reassign)
+    product_id_str = payload.product_id or gap.get("product_id")
     category = payload.category or gap.get("topic", "general")
 
     if product_id_str:
         try:
             from uuid import UUID as _UUID
-            product_knowledge_service.add_entry(
-                db=db,
-                product_id=_UUID(product_id_str),
-                category=category,
-                content=f"Q: {gap['question']}\nA: {payload.answer}",
-                added_by=current_user.email,
-            )
-            product_knowledge_service.update_coverage_score(db, product_id_str)
+            from app.database.core import SessionLocal
+            # Use a SEPARATE session for knowledge embedding so internal commits
+            # inside add_entry/update_coverage_score don't expire the email ORM
+            # object in the route's session and corrupt the transaction state.
+            kb_db = SessionLocal()
+            try:
+                product_knowledge_service.add_entry(
+                    db=kb_db,
+                    product_id=_UUID(product_id_str),
+                    category=category,
+                    content=f"Q: {gap['question']}\nA: {payload.answer}",
+                    added_by=current_user.email,
+                )
+                product_knowledge_service.update_coverage_score(kb_db, product_id_str)
+            finally:
+                kb_db.close()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to embed knowledge: {e}")
 
@@ -286,6 +473,17 @@ def resolve_gap(
     email.followup_gaps = gaps
     db.commit()
     db.refresh(email)
+
+    # If all gaps are now resolved, auto-send the draft via the LangGraph resume path
+    all_resolved = all(g.get("resolved") for g in gaps)
+    if all_resolved and email.gmail_draft_id:
+        try:
+            from app.services.workflows.email_workflow import resume_after_gaps_resolved
+            resume_after_gaps_resolved(db, str(email_id))
+            db.refresh(email)
+        except Exception as e:
+            logger.warning(f"[GMAIL ROUTER] Workflow resume failed for {email_id}: {e}")
+
     return email
 
 
@@ -337,7 +535,13 @@ def resolve_email(
             "If you have any further questions, please don't hesitate to reach out.\n\n"
             "Best regards,\nRDL Technologies Support Team"
         )
-        gmail_svc = gmail_service.get_gmail_service()
+        # Reply from the account that received the email
+        if email.account_id:
+            from app.services.email_account_service import get_account as _get_acct
+            _acct = _get_acct(db, email.account_id)
+            gmail_svc = gmail_service.get_gmail_service(account=_acct) if _acct else gmail_service.get_gmail_service()
+        else:
+            gmail_svc = gmail_service.get_gmail_service()
         gmail_service.send_email(
             gmail_svc,
             to=sender_email_addr,
@@ -373,7 +577,13 @@ def approve_draft(
     if not email.gmail_draft_id:
         raise HTTPException(status_code=400, detail="No Gmail draft ID on record")
 
-    svc = gmail_service.get_gmail_service()
+    # Use the account that received the email for all send operations
+    if email.account_id:
+        from app.services.email_account_service import get_account as _get_acct
+        _acct = _get_acct(db, email.account_id)
+        svc = gmail_service.get_gmail_service(account=_acct) if _acct else gmail_service.get_gmail_service()
+    else:
+        svc = gmail_service.get_gmail_service()
 
     if payload.edit_body:
         # Delete old draft, create new one with edited body, then send
@@ -446,7 +656,7 @@ def generate_draft(
     Returns the draft text only — does NOT send or save anything.
     The caller edits the draft in the UI, then calls /send when ready.
     """
-    draft = _generate_sales_draft(
+    draft = _gen_draft(
         sender=payload.to,
         subject=payload.subject,
         body=payload.body,
