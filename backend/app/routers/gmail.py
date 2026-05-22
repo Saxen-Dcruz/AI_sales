@@ -150,6 +150,37 @@ _SINCE_HOURS = {
 }
 
 
+@router.post("/backfill-products", status_code=200)
+def backfill_product_detection(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Re-run product detection on all Sales emails missing detected_product_name."""
+    from app.services.sales_gap_service import detect_product
+    rows = (
+        db.query(Email)
+        .filter(
+            Email.label == EmailLabel.SALES,
+            Email.detected_product_name.is_(None),
+            Email.direction == "inbound",
+        )
+        .all()
+    )
+    updated = 0
+    for e in rows:
+        text = f"{e.subject or ''} {e.body_text or ''}"[:1000]
+        try:
+            product_id, product_name, _ = detect_product(db, text)
+            if product_name:
+                e.detected_product_id = product_id
+                e.detected_product_name = product_name
+                updated += 1
+        except Exception:
+            continue
+    db.commit()
+    return {"backfilled": updated, "total_checked": len(rows)}
+
+
 @router.get("/analytics", response_model=EmailSLAAnalytics)
 def get_email_analytics(
     since: str = "7d",
@@ -332,17 +363,200 @@ def get_email_analytics(
             by_account["(legacy / unattributed)"] = by_account.get("(legacy / unattributed)", 0) + 1
             total_legacy += 1
 
+    # ── Product analytics ─────────────────────────────────────────────────────
+    by_product: dict = {}
+    product_converted: dict = {}  # product_name → replied count
+    for e in sales:
+        name = e.detected_product_name
+        if name:
+            by_product[name] = by_product.get(name, 0) + 1
+            if e.status == EmailStatus.REPLIED:
+                product_converted[name] = product_converted.get(name, 0) + 1
+
+    top_products_purchased = sorted(
+        [
+            {
+                "name": name,
+                "inquiries": count,
+                "converted": product_converted.get(name, 0),
+                "conversion_pct": round(product_converted.get(name, 0) / count * 100, 1),
+            }
+            for name, count in by_product.items()
+        ],
+        key=lambda x: x["converted"],
+        reverse=True,
+    )[:15]
+
+    # ── Revenue & order analytics (from transactional emails) ─────────────────
+    revenue_total = 0.0
+    order_count = 0
+    po_count = 0
+    for e in all_emails:
+        if e.label != EmailLabel.TRANSACTIONAL:
+            continue
+        tdata = e.transactional_data or {}
+        ttype = (e.transactional_type or "").lower()
+        raw_amount = tdata.get("amount") or tdata.get("total") or tdata.get("value")
+        if raw_amount:
+            try:
+                cleaned = str(raw_amount).replace(",", "").replace("₹", "").replace("Rs", "").strip()
+                revenue_total += float("".join(c for c in cleaned if c.isdigit() or c == "."))
+            except (ValueError, TypeError):
+                pass
+        if "order" in ttype or "invoice" in ttype or "receipt" in ttype:
+            order_count += 1
+        ref = (tdata.get("reference_number") or "").upper()
+        if "PO" in ref or "P.O" in ref or "purchase" in ttype:
+            po_count += 1
+
+    # ── Conversion rate ───────────────────────────────────────────────────────
+    conversion_rate_pct = round(
+        sum(1 for e in sales if e.status == EmailStatus.REPLIED) / len(sales) * 100, 1
+    ) if sales else 0.0
+
+    # ── Lead pipeline (interest levels of leads linked to emails in period) ──
+    lead_pipeline: dict = {}
+    seen_lead_ids: set = set()
+    for e in sales:
+        if e.lead_id and e.lead_id not in seen_lead_ids:
+            seen_lead_ids.add(e.lead_id)
+    if seen_lead_ids:
+        from app.models.leads import Lead
+        leads = db.query(Lead).filter(Lead.id.in_(seen_lead_ids)).all()
+        for lead in leads:
+            lvl = lead.interest_level or "Unknown"
+            lead_pipeline[lvl] = lead_pipeline.get(lvl, 0) + 1
+
+    # ── Company / source segmentation ─────────────────────────────────────────
+    _KNOWN_SOURCES = {
+        "indiamart":        "IndiaMart",
+        "tradeindia":       "TradeIndia",
+        "justdial":         "JustDial",
+        "exportersindia":   "ExportersIndia",
+        "alibaba":          "Alibaba",
+        "amazon":           "Amazon",
+        "flipkart":         "Flipkart",
+        "snapdeal":         "Snapdeal",
+        "shopclues":        "ShopClues",
+        "meesho":           "Meesho",
+        "udaan":            "Udaan",
+        "gmail":            "Direct (Gmail)",
+        "yahoo":            "Direct (Yahoo)",
+        "outlook":          "Direct (Outlook)",
+        "hotmail":          "Direct (Hotmail)",
+        "rediffmail":       "Direct (Rediff)",
+    }
+    def _source_from_sender(sender: str) -> str:
+        import re as _re
+        m = _re.search(r'[\w.+-]+@([\w.-]+)', sender or "")
+        if not m:
+            return "Unknown"
+        domain = m.group(1).lower()
+        for key, label in _KNOWN_SOURCES.items():
+            if key in domain:
+                return label
+        # Use the second-level domain as the company name
+        parts = domain.split(".")
+        return parts[-2].capitalize() if len(parts) >= 2 else domain
+
+    by_company_source: dict = {}
+    for e in inbound_pipeline:
+        src = _source_from_sender(e.sender)
+        by_company_source[src] = by_company_source.get(src, 0) + 1
+
+    # ── Product × source matrix ───────────────────────────────────────────────
+    import re as _re
+    def _company_from_sender(sender: str) -> str:
+        """Extract display name; fall back to domain-based company."""
+        name_part = _re.split(r'\s*<', sender or "")[0].strip().strip('"').strip("'")
+        # Remove trailing punctuation/underscore junk
+        name_part = _re.sub(r'[_@]+$', '', name_part).strip()
+        if name_part and len(name_part) > 1:
+            return name_part
+        # Fall back to domain
+        m = _re.search(r'@([\w.-]+)', sender or "")
+        if m:
+            parts = m.group(1).split(".")
+            return parts[-2].capitalize() if len(parts) >= 2 else m.group(1)
+        return "Unknown"
+
+    # product × source
+    _ps_inquiries: dict = {}   # (product, source) → count
+    _ps_converted: dict = {}   # (product, source) → replied count
+    # company details
+    _company_data: dict = {}   # email_addr → {name, source, products: {product_name: count}}
+
+    for e in sales:
+        product = e.detected_product_name
+        src = _source_from_sender(e.sender)
+        company = _company_from_sender(e.sender)
+        # extract plain email
+        m = _re.search(r'<?([\w.+-]+@[\w.-]+)>?', e.sender or "")
+        email_addr = m.group(1).lower() if m else e.sender or ""
+
+        if product:
+            key = (product, src)
+            _ps_inquiries[key] = _ps_inquiries.get(key, 0) + 1
+            if e.status == EmailStatus.REPLIED:
+                _ps_converted[key] = _ps_converted.get(key, 0) + 1
+
+        if email_addr not in _company_data:
+            _company_data[email_addr] = {"name": company, "source": src, "email": email_addr, "products": {}, "total": 0}
+        _company_data[email_addr]["total"] += 1
+        if product:
+            pd = _company_data[email_addr]["products"]
+            pd[product] = pd.get(product, 0) + 1
+
+    product_source_rows = sorted(
+        [
+            {
+                "product": k[0],
+                "source": k[1],
+                "count": v,
+                "converted": _ps_converted.get(k, 0),
+            }
+            for k, v in _ps_inquiries.items()
+        ],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:50]
+
+    product_company_rows = sorted(
+        [
+            {
+                "company": v["name"],
+                "source": v["source"],
+                "email": v["email"],
+                "total_emails": v["total"],
+                "products": sorted(
+                    [{"name": p, "count": c} for p, c in v["products"].items()],
+                    key=lambda x: x["count"], reverse=True
+                ),
+            }
+            for v in _company_data.values()
+        ],
+        key=lambda x: x["total_emails"],
+        reverse=True,
+    )[:40]
+
+    # ── Total volume breakdown ─────────────────────────────────────────────────
+    total_volume_breakdown = {
+        "Total":      len(all_emails),
+        "Inbound":    len(inbound_all),
+        "Outbound":   len(outbound_all),
+        "Sales":      len(sales),
+        "Support":    len(supports),
+        "Grievance":  len(grievances),
+        "Replied":    sum(1 for e in pipeline_emails if e.status == EmailStatus.REPLIED),
+        "Pending":    pending,
+    }
+
     return EmailSLAAnalytics(
-        # total_emails = ALL emails (inbound + outbound, all labels, all accounts)
-        # total_attributed = emails linked to a current active account
-        # total_legacy     = emails with no account info (pre-multi-account)
-        # So: total_attributed + total_legacy = total_emails (always true)
         total_emails=len(all_emails),
         total_inbound=len(inbound_all),
         total_outbound=len(outbound_all),
         total_attributed=total_attributed,
         total_legacy=total_legacy,
-        # Pipeline-scoped metrics — only Sales/Support/Grievance
         total_sales_emails=len(sales),
         auto_sent=auto_sent,
         drafted_for_review=drafted,
@@ -363,6 +577,17 @@ def get_email_analytics(
         by_status=by_status,
         by_direction=by_direction,
         by_account=by_account,
+        by_product=by_product,
+        top_products_purchased=top_products_purchased,
+        revenue_total=round(revenue_total, 2),
+        order_count=order_count,
+        po_count=po_count,
+        conversion_rate_pct=conversion_rate_pct,
+        lead_pipeline=lead_pipeline,
+        by_company_source=by_company_source,
+        total_volume_breakdown=total_volume_breakdown,
+        product_source_rows=product_source_rows,
+        product_company_rows=product_company_rows,
     )
 
 

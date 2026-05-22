@@ -1,37 +1,69 @@
 import ApplicationStore from "../utils/ApplicationStore";
 
 const successCaseCode = [200, 201];
+const END_POINT = import.meta.env.VITE_API_URL;
 
-const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
-    const { accessToken, userDetails } = ApplicationStore().getStorage("userDetails") || {};
-    const END_POINT = import.meta.env.VITE_API_URL;
+// ── Silent token refresh ──────────────────────────────────────────────────────
+let _isRefreshing = false;
+let _refreshQueue = []; // [{resolve, reject}] — requests waiting for new token
 
-    if (!userDetails) {
-        if (typeof errorCallBack === "function") {
-            errorCallBack(401, "Session expired — please log in again.");
-        }
-        return Promise.reject("Unauthorized: No user details found.");
+function _processQueue(error, newToken = null) {
+    _refreshQueue.forEach(({ resolve, reject }) =>
+        error ? reject(error) : resolve(newToken)
+    );
+    _refreshQueue = [];
+}
+
+async function _doRefresh() {
+    const stored = ApplicationStore().getStorage("userDetails") || {};
+    const refreshToken = stored.refreshToken;
+    if (!refreshToken) throw new Error("No refresh token stored");
+
+    const res = await fetch(END_POINT + "auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+        mode: "cors",
+        credentials: "same-origin",
+    });
+
+    if (!res.ok) {
+        ApplicationStore().clearStorage();
+        throw new Error("Refresh failed");
     }
-    const { id, email, userRole, companyCode, semesterId } = userDetails;
 
-    const isFormData = data instanceof FormData;
+    const data = await res.json();
+    ApplicationStore().setStorage("userDetails", {
+        ...stored,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+    });
+    return data.access_token;
+}
 
-    const authHeaders = {
+function _getAuthHeaders(accessToken) {
+    const { userDetails } = ApplicationStore().getStorage("userDetails") || {};
+    if (!userDetails) return {};
+    const { id, email, userRole, companyCode, semesterId, branch, instituteid } = userDetails;
+    return {
         authorization: `Bearer ${accessToken}`,
         companyCode: `${companyCode}`,
         userId: `${id}`,
         userEmail: `${email}`,
         userRole: `${userRole}`,
         semesterId: `${semesterId}`,
-        branch: `${userDetails.branch}`,
-        instituteid: `${userDetails.instituteid}`,
+        branch: `${branch}`,
+        instituteid: `${instituteid}`,
     };
+}
 
+function _buildRequestOptions(serviceMethod, data, accessToken) {
+    const isFormData = data instanceof FormData;
+    const authHeaders = _getAuthHeaders(accessToken);
     const headers = isFormData
         ? authHeaders
         : { "Content-Type": "application/json", ...authHeaders };
-
-    const requestOptions = {
+    return {
         method: serviceMethod,
         headers,
         body:
@@ -46,28 +78,66 @@ const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack
         redirect: "follow",
         referrerPolicy: "no-referrer",
     };
+}
 
-    return fetch(END_POINT + PATH, requestOptions)
-        .then((response) => {
-            if (successCaseCode.includes(response.status)) {
-                return response.json();
+const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
+    const stored = ApplicationStore().getStorage("userDetails") || {};
+    const { accessToken, userDetails } = stored;
+
+    if (!userDetails) {
+        if (typeof errorCallBack === "function") {
+            errorCallBack(401, "Session expired — please log in again.");
+        }
+        return Promise.reject("Unauthorized: No user details found.");
+    }
+
+    const _execute = (token) =>
+        fetch(END_POINT + PATH, _buildRequestOptions(serviceMethod, data, token));
+
+    return _execute(accessToken)
+        .then(async (response) => {
+            // ── 401: attempt silent token refresh then retry once ─────────────
+            if (response.status === 401) {
+                if (_isRefreshing) {
+                    // Queue this request until the in-flight refresh finishes
+                    return new Promise((resolve, reject) => {
+                        _refreshQueue.push({ resolve, reject });
+                    }).then((newToken) =>
+                        _execute(newToken).then(async (retryRes) => {
+                            if (successCaseCode.includes(retryRes.status)) return retryRes.json();
+                            const err = await retryRes.json().catch(() => ({}));
+                            throw { errorStatus: retryRes.status, errorMessage: err.detail || err.message };
+                        })
+                    );
+                }
+
+                _isRefreshing = true;
+                try {
+                    const newToken = await _doRefresh();
+                    _processQueue(null, newToken);
+                    const retryRes = await _execute(newToken);
+                    if (successCaseCode.includes(retryRes.status)) return retryRes.json();
+                    const err = await retryRes.json().catch(() => ({}));
+                    throw { errorStatus: retryRes.status, errorMessage: err.detail || err.message };
+                } catch (refreshErr) {
+                    _processQueue(refreshErr, null);
+                    throw { errorStatus: 401, errorMessage: "Session expired — please log in again." };
+                } finally {
+                    _isRefreshing = false;
+                }
             }
-            throw {
-                errorStatus: response.status,
-                errorObject: response.json(),
-            };
+
+            if (successCaseCode.includes(response.status)) return response.json();
+            const errBody = await response.json().catch(() => ({}));
+            throw { errorStatus: response.status, errorMessage: errBody.detail || errBody.message };
         })
         .then((dataResponse) => successCallback(dataResponse))
         .catch((error) => {
-            if (error.errorObject && typeof error.errorObject.then === "function") {
-                error.errorObject.then((errorResponse) => {
-                    if (error.errorStatus === 400 && errorResponse.message === "Token is required") {
-                        ApplicationStore().clearStorage();
-                    }
-                    errorCallBack(error.errorStatus, errorResponse.message);
-                });
-            } else {
-                errorCallBack(0, error.message || "Network error");
+            if (error.errorStatus === 400 && error.errorMessage === "Token is required") {
+                ApplicationStore().clearStorage();
+            }
+            if (typeof errorCallBack === "function") {
+                errorCallBack(error.errorStatus ?? 0, error.errorMessage || error.message || "Network error");
             }
         });
 };
@@ -270,6 +340,9 @@ export const GetGmailMessagesService = (params, sucess, error) => {
 
 export const SyncGmailService = (sucess, error) =>
     _fetchService("gmail/sync", "POST", null, sucess, error);
+
+export const BackfillProductsService = (sucess, error) =>
+    _fetchService("gmail/backfill-products", "POST", null, sucess, error);
 
 export const GetEmailGapsService = (sucess, error) =>
     _fetchService("gmail/gaps", "GET", null, sucess, error);

@@ -1,13 +1,26 @@
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+    AlertCircle,
+    BarChart2,
+    Bot,
+    BrainCircuit,
+    Calendar,
+    ChevronDown,
+    ChevronRight,
+    LayoutDashboard, Linkedin,
+    Mail,
+    MailSearch,
+    MessageSquare,
+    Package,
+    PhoneCall,
+    PlusSquare,
+    Settings,
+    Target,
+    UserCheck,
+    X, Zap,
+} from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
-import {
-  LayoutDashboard, Linkedin, MessageSquare,
-  Target, Bot, Settings, ChevronRight, X, Zap,
-  PhoneCall, UserCheck, Package, PlusSquare,
-  BrainCircuit, AlertCircle, Mail, Calendar, MailSearch,
-  BarChart2, ChevronDown,
-} from 'lucide-react'
 
 const navSections = [
   {
@@ -186,7 +199,7 @@ export default function Sidebar({ open, mobileOpen, onMobileClose }) {
               transition={{ duration: 0.2 }}
               className="flex flex-col"
             >
-              <span className="text-sm font-bold text-gray-900 leading-none">NexusAI</span>
+              <span className="text-sm font-bold text-gray-900 leading-none">RDL Sales </span>
               <span className="text-[10px] text-gray-500 font-medium mt-0.5">Admin Dashboard</span>
             </motion.div>
           )}
@@ -227,7 +240,7 @@ export default function Sidebar({ open, mobileOpen, onMobileClose }) {
                 className="flex-1 min-w-0"
               >
                 <p className="text-xs font-semibold text-gray-900 truncate">Admin User</p>
-                <p className="text-[10px] text-gray-500 truncate">admin@nexusai.io</p>
+                <p className="text-[10px] text-gray-500 truncate">admin@RDL Sales .io</p>
               </motion.div>
             )}
           </AnimatePresence>

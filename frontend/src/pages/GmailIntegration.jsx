@@ -20,7 +20,7 @@ import {
   Users,
   X, Zap
 } from 'lucide-react'
-import { Suspense, useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import GapResolveForm from '../components/GapResolveForm'
 import {
@@ -129,7 +129,7 @@ function senderName(sender) {
 }
 
 // ─── Email row ───────────────────────────────────────────────────────────────
-function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
+function EmailRow({ email, selected, onClick, accountColorMap = {}, count = 1 }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const statusCfg = STATUS_CONFIG[email.status] || STATUS_CONFIG.classified
   const StatusIcon = statusCfg.icon
@@ -138,7 +138,7 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
   const unresolvedGaps = (email.followup_gaps || []).filter(g => !(typeof g === 'object' ? g.resolved : false)).length
   const acctColor = email.account_email ? accountColorMap[email.account_email] : null
 
-  const displayTime = email.status === 'replied' && email.updated_at ? relTime(email.updated_at) : relTime(email.received_at)
+  const displayTime = relTime(email.received_at)
   const timeLabel = email.status === 'replied' ? 'Sent' : 'Rcvd'
 
   return (
@@ -174,9 +174,14 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
           </div>
 
           {/* Subject */}
-          <p className={`text-base truncate leading-tight ${isUnread ? 'font-bold text-slate-800' : 'font-semibold text-slate-500'}`}>
-            {email.subject || '(no subject)'}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className={`text-base truncate leading-tight ${isUnread ? 'font-bold text-slate-800' : 'font-semibold text-slate-500'}`}>
+              {email.subject || '(no subject)'}
+            </p>
+            {count > 1 && (
+              <span className="flex-shrink-0 text-xs font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{count}</span>
+            )}
+          </div>
 
           {/* Bottom row: badges */}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -228,7 +233,7 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
 }
 
 // ─── Email detail ─────────────────────────────────────────────────────────────
-function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
+function EmailDetail({ email, threadEmails, onRefresh, accountColorMap = {} }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const acctColor = email.account_email ? accountColorMap[email.account_email] : null
   const [acting, setActing] = useState(null)
@@ -348,8 +353,34 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
           </motion.div>
         )}
 
-        {/* Email body */}
-        {email.body_text && (
+        {/* Conversation thread or single email body */}
+        {threadEmails && threadEmails.length > 1 ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <Mail size={18} className="text-slate-400" />
+              <p className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Conversation</p>
+              <span className="text-xs font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{threadEmails.length} messages</span>
+            </div>
+            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+              {threadEmails.map((msg, i) => {
+                const isOutbound = msg.direction === 'outbound' || msg.status === 'replied'
+                return (
+                  <div key={msg.id} className={`rounded-2xl p-4 border ${isOutbound ? 'bg-emerald-50/60 border-emerald-100 ml-6' : 'bg-slate-50/60 border-slate-100 mr-6'}`}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className={`text-xs font-black uppercase tracking-wider ${isOutbound ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {isOutbound ? 'RDL Technologies' : msg.sender?.split('<')[0].trim() || msg.sender}
+                      </span>
+                      <span className="text-xs font-bold text-slate-400">{new Date(msg.received_at).toLocaleString()}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700 leading-relaxed whitespace-pre-wrap">
+                      {isOutbound ? (msg.ai_draft || msg.body_text) : msg.body_text}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : email.body_text ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <Mail size={18} className="text-slate-400" />
@@ -359,7 +390,7 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
               {email.body_text}
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* AI Draft - Editable vs ReadOnly */}
         {email.ai_draft && (
@@ -712,13 +743,12 @@ export default function GmailIntegration() {
 
   const fetchEmails = useCallback(() => {
     setLoading(true)
-    const params = { page, limit: PAGE_SIZE }
+    const params = { page, limit: PAGE_SIZE, direction: 'inbound' }
     if (activeTab === 'needs_human') params.needs_human = true
     else if (activeTab === 'draft_ready') params.status = 'draft_ready'
     else if (activeTab === 'other') params.business_only = false
     else if (activeTab) params.label = activeTab
 
-    if (activeTab !== 'other') params.business_only = true
     if (activeAccount) params.account_id = activeAccount
 
     GetGmailMessagesService(params,
@@ -730,7 +760,7 @@ export default function GmailIntegration() {
   useEffect(() => { fetchEmails() }, [fetchEmails])
 
   const fetchAnalytics = useCallback(() => {
-    GetGmailAnalyticsService("7d", activeAccount || null, res => setAnalytics(res), () => { })
+    GetGmailAnalyticsService("all", activeAccount || null, res => setAnalytics(res), () => { })
   }, [activeAccount])
   useEffect(() => { fetchAnalytics() }, [fetchAnalytics])
 
@@ -781,7 +811,26 @@ export default function GmailIntegration() {
     ? emails.filter(e => (e.subject || '').toLowerCase().includes(search.toLowerCase()) || (e.sender || '').toLowerCase().includes(search.toLowerCase()))
     : emails
 
-  const selectedEmail = selected ? (directEmail?.id === selected ? directEmail : emails.find(e => e.id === selected)) : null
+  // Group emails by gmail_thread_id into conversation threads
+  const threadedList = useMemo(() => {
+    const map = {}
+    filtered.forEach(email => {
+      const key = email.gmail_thread_id || email.id
+      if (!map[key]) map[key] = []
+      map[key].push(email)
+    })
+    return Object.values(map)
+      .map(threadEmails => {
+        const sorted = [...threadEmails].sort((a, b) => new Date(a.received_at) - new Date(b.received_at))
+        return { latest: sorted[sorted.length - 1], emails: sorted }
+      })
+      .sort((a, b) => new Date(b.latest.received_at) - new Date(a.latest.received_at))
+  }, [filtered])
+
+  const selectedThread = selected
+    ? (threadedList.find(t => t.latest.id === selected) || threadedList.find(t => t.emails.some(e => e.id === selected)))
+    : null
+  const selectedEmail = selectedThread?.latest || (directEmail?.id === selected ? directEmail : null)
   const totalVolume = total || 0
 
   return (
@@ -872,9 +921,14 @@ export default function GmailIntegration() {
                 {TABS.map(tab => {
                   const Icon = tab.icon
                   let count = 0
-                  if (tab.key === "") count = analytics?.total_emails || 0
+                  if (tab.key === "") count = (analytics?.total_inbound || 0) - (analytics?.by_label?.["Unclassified"] || 0)
                   else if (tab.key === "needs_human") count = analytics?.pending_human || 0
-                  else if (tab.key === "draft_ready") count = analytics?.draft_ready || 0
+                  else if (tab.key === "draft_ready") count = analytics?.drafted_for_review || 0
+                  else if (tab.key === "other") {
+                    count = (analytics?.by_label?.["Promotional"] || 0) +
+                            (analytics?.by_label?.["Personal"] || 0) +
+                            (analytics?.by_label?.["Transactional"] || 0)
+                  }
                   else count = analytics?.by_label?.[tab.key] || 0
 
                   return (
@@ -883,7 +937,7 @@ export default function GmailIntegration() {
                       ${activeTab === tab.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                       <Icon size={16} />
                       {tab.label}
-                      {count > 0 && (
+                      {analytics && (
                         <span className={`ml-1 px-1.5 py-0.5 rounded-md text-[10px] leading-none ${activeTab === tab.key ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
                           {count}
                         </span>
@@ -922,9 +976,9 @@ export default function GmailIntegration() {
                 </div>
               ) : (
                 <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.05 } } }} className="divide-y divide-slate-100">
-                  {filtered.map(email => (
-                    <motion.div key={email.id} variants={{ hidden: { opacity: 0, x: -10 }, visible: { opacity: 1, x: 0 } }}>
-                      <EmailRow email={email} selected={selected === email.id} onClick={() => setSelected(selected === email.id ? null : email.id)} accountColorMap={accountColorMap} />
+                  {threadedList.map(({ latest, emails: tEmails }) => (
+                    <motion.div key={latest.id} variants={{ hidden: { opacity: 0, x: -10 }, visible: { opacity: 1, x: 0 } }}>
+                      <EmailRow email={latest} count={tEmails.length} selected={selected === latest.id} onClick={() => setSelected(selected === latest.id ? null : latest.id)} accountColorMap={accountColorMap} />
                     </motion.div>
                   ))}
                 </motion.div>
@@ -932,21 +986,19 @@ export default function GmailIntegration() {
             </div>
 
             {/* Pagination */}
-            {total > PAGE_SIZE && (
-              <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-white/60 backdrop-blur-sm">
-                <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
-                  <ChevronRight size={18} className="rotate-180" /> Prev
-                </button>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-black text-slate-900">{page}</span>
-                  <span className="text-sm font-bold text-slate-300">/</span>
-                  <span className="text-sm font-black text-slate-400">{Math.ceil(total / PAGE_SIZE)}</span>
-                </div>
-                <button disabled={page >= Math.ceil(total / PAGE_SIZE)} onClick={() => setPage(p => p + 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
-                  Next <ChevronRight size={18} />
-                </button>
+            <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-white/60 backdrop-blur-sm">
+              <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                <ChevronRight size={18} className="rotate-180" /> Prev
+              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-black text-slate-900">{page}</span>
+                <span className="text-sm font-bold text-slate-300">/</span>
+                <span className="text-sm font-black text-slate-400">{Math.ceil(total / PAGE_SIZE) || 1}</span>
               </div>
-            )}
+              <button disabled={page >= Math.ceil(total / PAGE_SIZE) || Math.ceil(total / PAGE_SIZE) === 0} onClick={() => setPage(p => p + 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                Next <ChevronRight size={18} />
+              </button>
+            </div>
           </div>
 
           {/* Right Panel: Detail View */}
@@ -954,7 +1006,7 @@ export default function GmailIntegration() {
             <AnimatePresence mode="wait">
               {selectedEmail ? (
                 <motion.div key={selectedEmail.id} className="h-full" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-                  <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); setSelected(null) }} accountColorMap={accountColorMap} />
+                  <EmailDetail email={selectedEmail} threadEmails={selectedThread?.emails} onRefresh={() => { fetchEmails(); setSelected(null) }} accountColorMap={accountColorMap} />
                 </motion.div>
               ) : (
                 <motion.div key="empty" className="flex flex-col items-center justify-center h-full gap-5 text-center p-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

@@ -1,10 +1,10 @@
+import { AnimatePresence, motion } from 'framer-motion'
+import { ArrowRight, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react'
 import { useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
 
-import { LoginService, GetCurrentUserService } from '../../services/ApiService'
+import { GetCurrentUserService, LoginService } from '../../services/ApiService'
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -37,15 +37,17 @@ export default function LoginForm() {
         return
       }
 
-      ApplicationStore().setStorage("userDetails", { 
-        accessToken: data.access_token, 
-        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" } 
+      ApplicationStore().setStorage("userDetails", {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" }
       })
 
       GetCurrentUserService(
         (userData) => {
           ApplicationStore().setStorage("userDetails", {
             accessToken: data.access_token,
+            refreshToken: data.refresh_token,
             userDetails: {
               id: userData.id,
               email: userData.email,
@@ -90,50 +92,39 @@ export default function LoginForm() {
   }
 
   return (
-    <motion.div
-      variants={formVariants}
-      initial="hidden"
-      animate="visible"
-      className="w-full max-w-md relative z-20"
-    >
-      {/* Decorative blurred blobs behind the card */}
-      <div className="absolute -top-10 -left-10 w-40 h-40 bg-blue-100 rounded-full blur-[40px] pointer-events-none" />
-      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-indigo-100 rounded-full blur-[40px] pointer-events-none" />
+    <motion.div variants={formVariants} initial="hidden" animate="visible" className="w-full max-w-md relative z-20">
 
-      <div className="relative p-8 rounded-3xl border border-gray-200 overflow-hidden bg-white/80"
+      {/* Subtle glow blobs */}
+      <div className="absolute -top-10 -left-10 w-40 h-40 bg-indigo-100 rounded-full blur-[50px] pointer-events-none opacity-60" />
+      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-violet-100 rounded-full blur-[50px] pointer-events-none opacity-60" />
+
+      <div className="relative p-8 rounded-3xl border border-gray-200/80 overflow-hidden bg-white/85"
         style={{
-          backdropFilter: 'blur(30px)',
-          WebkitBackdropFilter: 'blur(30px)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.5)'
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          boxShadow: '0 8px 40px rgba(99,102,241,0.08), 0 1px 0 rgba(255,255,255,0.9) inset'
         }}
       >
         <motion.div variants={itemVariants} className="text-center mb-8">
           <h2 className="text-3xl font-bold tracking-tight text-gray-900 mb-2">Welcome Back</h2>
-          <p className="text-sm text-gray-500">Sign in to your NexusAI admin dashboard</p>
+          <p className="text-sm text-gray-500">Sign in to your RDL Sales admin dashboard</p>
         </motion.div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Email Input */}
+          {/* Email */}
           <motion.div variants={itemVariants} className="space-y-1.5 relative">
             <label className="text-sm font-medium text-gray-700 ml-1">Work Email</label>
             <div className="relative group">
               <Mail size={18} className={`absolute text-gray-400 left-3.5 top-1/2 -translate-y-1/2 transition-colors duration-300 ${focusedInput === 'email' ? 'text-blue-500' : ''}`} />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onFocus={() => setFocusedInput('email')}
-                onBlur={() => setFocusedInput(null)}
-                className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 outline-none transition-all duration-300 focus:border-blue-500 hover:border-gray-300 shadow-sm"
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                onFocus={() => setFocusedInput('email')} onBlur={() => setFocusedInput(null)}
+                className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 outline-none transition-all duration-300 focus:border-blue-500 hover:border-gray-300"
                 placeholder="name@company.com"
-                style={{
-                  boxShadow: focusedInput === 'email' ? '0 0 0 1px #3b82f6, 0 0 20px rgba(59,130,246,0.1)' : 'none'
-                }}
-              />
+                style={{ boxShadow: focusedInput === 'email' ? '0 0 0 3px rgba(99,102,241,0.12)' : 'none' }} />
             </div>
           </motion.div>
 
-          {/* Password Input */}
+          {/* Password */}
           <motion.div variants={itemVariants} className="space-y-1.5 relative">
             <div className="flex items-center justify-between ml-1">
               <label className="text-sm font-medium text-gray-700">Password</label>
@@ -141,24 +132,13 @@ export default function LoginForm() {
             </div>
             <div className="relative group">
               <Lock size={18} className={`absolute text-gray-400 left-3.5 top-1/2 -translate-y-1/2 transition-colors duration-300 ${focusedInput === 'password' ? 'text-blue-500' : ''}`} />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onFocus={() => setFocusedInput('password')}
-                onBlur={() => setFocusedInput(null)}
-                className="w-full pl-11 pr-11 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 outline-none transition-all duration-300 focus:border-blue-500 hover:border-gray-300 shadow-sm"
+              <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                onFocus={() => setFocusedInput('password')} onBlur={() => setFocusedInput(null)}
+                className="w-full pl-11 pr-11 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 outline-none transition-all duration-300 focus:border-blue-500 hover:border-gray-300"
                 placeholder="••••••••••••"
-                style={{
-                  boxShadow: focusedInput === 'password' ? '0 0 0 1px #3b82f6, 0 0 20px rgba(59,130,246,0.1)' : 'none'
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                tabIndex={-1}
-              >
+                style={{ boxShadow: focusedInput === 'password' ? '0 0 0 3px rgba(99,102,241,0.12)' : 'none' }} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} tabIndex={-1}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
@@ -194,22 +174,14 @@ export default function LoginForm() {
 
           {/* Submit */}
           <motion.div variants={itemVariants} className="pt-2">
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full relative group h-12 bg-blue-600 text-white font-medium rounded-xl overflow-hidden transition-all duration-300 hover:bg-blue-700 active:scale-95 disabled:opacity-70 disabled:hover:scale-100 shadow-md"
+            <button type="submit" disabled={isLoading}
+              className="w-full relative group h-12 bg-blue-600 text-white font-medium rounded-xl overflow-hidden transition-all duration-300 hover:bg-blue-700 active:scale-95 disabled:opacity-70 shadow-md shadow-blue-200"
             >
               <div className="absolute inset-0 flex items-center justify-center gap-2">
                 {isLoading ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin text-white" />
-                    <span className="text-white">Signing in...</span>
-                  </>
+                  <><Loader2 size={18} className="animate-spin" /><span>Signing in…</span></>
                 ) : (
-                  <>
-                    <span>Sign In</span>
-                    <ArrowRight size={16} className="text-white group-hover:translate-x-1 transition-transform" />
-                  </>
+                  <><span>Sign In</span><ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" /></>
                 )}
               </div>
             </button>
@@ -244,7 +216,7 @@ export default function LoginForm() {
 
       {/* Footer minimal terms */}
       {/* <motion.div variants={itemVariants} className="mt-8 text-center text-xs text-dark-500">
-        By continuing, you agree to NexusAI's{' '}
+        By continuing, you agree to RDL Sales 's{' '}
         <a href="#" className="text-dark-400 hover:text-primary-400 transition-colors">Terms of Service</a> and{' '}
         <a href="#" className="text-dark-400 hover:text-primary-400 transition-colors">Privacy Policy</a>.
       </motion.div> */}
