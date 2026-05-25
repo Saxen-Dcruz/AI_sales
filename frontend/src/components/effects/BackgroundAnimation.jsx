@@ -34,8 +34,8 @@ export default function BackgroundAnimation() {
       const material = new THREE.ShaderMaterial({
         uniforms: {
           time: { value: 0 },
-          color1: { value: new THREE.Color('#6172f3') },
-          color2: { value: new THREE.Color('#8b5cf6') },
+          color1: { value: new THREE.Color('#6366f1') },
+          color2: { value: new THREE.Color('#a855f7') },
           color3: { value: new THREE.Color('#06b6d4') },
           color4: { value: new THREE.Color('#10b981') },
         },
@@ -91,12 +91,10 @@ export default function BackgroundAnimation() {
           varying float vElevation;
           void main() {
             float mixStrength = (vElevation + 2.3) / 4.6;
-            vec3 colorA = mix(color1, color2, vUv.x + sin(time * 0.5) * 0.2);
-            vec3 colorB = mix(color3, color4, vUv.y + cos(time * 0.3) * 0.2);
+            vec3 colorA = mix(color1, color2, vUv.x + sin(time * 0.5) * 0.3);
+            vec3 colorB = mix(color3, color4, vUv.y + cos(time * 0.3) * 0.3);
             vec3 finalColor = mix(colorA, colorB, mixStrength);
-            float alpha = 0.4 + smoothstep(-0.5, 0.5, mixStrength) * 0.3;
-            float dist = distance(vUv, vec2(0.5));
-            alpha *= smoothstep(0.0, 0.4, dist);
+            float alpha = 0.55 + smoothstep(-0.5, 0.5, mixStrength) * 0.35;
             gl_FragColor = vec4(finalColor, alpha);
           }
         `,
@@ -118,11 +116,11 @@ export default function BackgroundAnimation() {
       }
       particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3))
       const particleMaterial = new THREE.PointsMaterial({
-        color: 0xffffff,
-        size: 0.05,
+        color: 0x6366f1,
+        size: 0.08,
         transparent: true,
-        opacity: 0.4,
-        blending: THREE.AdditiveBlending
+        opacity: 0.55,
+        blending: THREE.NormalBlending
       })
       const particles = new THREE.Points(particleGeometry, particleMaterial)
       scene.add(particles)
@@ -178,18 +176,18 @@ export default function BackgroundAnimation() {
   if (!hasWebGL) {
     return (
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute inset-0 bg-[#0d0d12] z-[-1]" />
-        <div className="absolute inset-0 bg-gradient-to-br from-primary-900/10 via-transparent to-accent-purple/10 opacity-50" />
+        <div className="absolute inset-0 bg-white z-[-1]" />
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-200 via-purple-100 to-cyan-200 opacity-60" />
       </div>
     )
   }
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-      <div className="absolute inset-0 bg-[#0d0d12] z-[-1]" />
-      <div ref={mountRef} className="absolute inset-0 mix-blend-screen opacity-80" />
-      <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#0d0d12] to-transparent z-10" />
-      <div className="absolute inset-y-0 left-0 w-1/4 bg-gradient-to-r from-[#0d0d12] to-transparent z-10 hidden lg:block" />
+      <div className="absolute inset-0 bg-white z-[-1]" />
+      <div ref={mountRef} className="absolute inset-0 mix-blend-multiply opacity-90" />
+      <div className="absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-white to-transparent z-10" />
+      <div className="absolute inset-y-0 left-0 w-1/6 bg-gradient-to-r from-white to-transparent z-10 hidden lg:block" />
     </div>
   )
 }

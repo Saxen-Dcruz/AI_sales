@@ -237,23 +237,29 @@ function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
           {isActive ? 'Active' : 'Inactive'}
         </span>
       </td>
+      
+      {/* Updated Actions Column */}
       <td className="py-3 px-4">
         <div className="flex items-center gap-1">
-          <button onClick={() => onEdit(product.id)}
-            className="p-1.5 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-400 transition-all">
-            <Edit2 size={13} />
-          </button>
-          <button onClick={() => onKb(product.id)}
-            className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all">
+          {/* View Button */}
+          <button onClick={() => onView(product)}
+            className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all"
+            title="View Details">
             <BookOpen size={13} />
           </button>
+          
+          {/* Toggle Active/Inactive Button */}
           <button onClick={() => onToggle(product)}
             className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
-              }`}>
+              }`}
+            title={isActive ? "Deactivate" : "Activate"}>
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
           </button>
+          
+          {/* Delete Button */}
           <button onClick={() => onDelete(product)}
-            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all">
+            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all"
+            title="Delete Product">
             <Trash2 size={13} />
           </button>
         </div>

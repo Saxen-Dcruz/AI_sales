@@ -36,6 +36,8 @@ class EmailOut(BaseModel):
     gmail_draft_id: Optional[str]
     followup_gaps: Optional[list[Union[GapItem, str]]]
     competitor_mention: Optional[str]
+    detected_product_id: Optional[str] = None
+    detected_product_name: Optional[str] = None
     needs_human: bool
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
@@ -128,6 +130,18 @@ class EmailSLAAnalytics(BaseModel):
     by_status: dict
     by_direction: dict
     by_account: dict = {}  # email_address → count, for "All" view
+    # Product & revenue analytics
+    by_product: dict = {}           # product_name → inquiry count
+    top_products_purchased: list = []  # [{name, inquiries, converted, conversion_pct}]
+    revenue_total: float = 0.0      # sum of amounts from transactional order/invoice emails
+    order_count: int = 0            # confirmed orders / order_confirmation emails
+    po_count: int = 0               # PO-related transactional emails
+    conversion_rate_pct: float = 0.0  # Sales replied / total Sales * 100
+    lead_pipeline: dict = {}        # interest_level → count (from leads linked to emails)
+    by_company_source: dict = {}    # source name → email count (IndiaMart, TradeIndia, direct, etc.)
+    total_volume_breakdown: dict = {}  # inbound/outbound/sales/support/grievance counts
+    product_source_rows: list = []  # [{product, source, count, converted}] — product × source matrix
+    product_company_rows: list = []  # [{company, source, email, products:[{name,count}]}] — company details
 
 
 class GenerateDraftRequest(BaseModel):

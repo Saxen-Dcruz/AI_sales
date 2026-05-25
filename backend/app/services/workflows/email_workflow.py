@@ -27,11 +27,14 @@ logger = logging.getLogger("rdl_app_logger")
 class EmailWorkflowState(TypedDict, total=False):
     # Input
     raw_message: dict
+    auto_send_enabled: bool
 
     # Parse stage
     duplicate: bool
     gmail_message_id: str
     gmail_thread_id: Optional[str]
+    rfc_message_id: Optional[str]   # RFC 2822 Message-ID — used for In-Reply-To threading
+    rfc_references: Optional[str]   # RFC 2822 References chain — for full thread header
     sender_raw: str
     sender_email: str
     subject: str

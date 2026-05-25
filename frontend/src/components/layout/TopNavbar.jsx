@@ -1,19 +1,25 @@
-import { useState, useEffect, useRef } from 'react'
-import { Bell, Search, ChevronDown, Menu, CheckCircle2, User, Settings as SettingsIcon, LogOut } from 'lucide-react'
-import { useLocation, Link, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Bell, CheckCircle2, ChevronDown, LogOut, Menu, Settings as SettingsIcon, User } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import ApplicationStore from '../../utils/ApplicationStore'
 
 const pageTitles = {
-  '/dashboard': { title: 'Dashboard', sub: 'Welcome back, Admin' },
-  '/linkedin': { title: 'LinkedIn Analytics', sub: 'Lead generation insights' },
-  '/calls': { title: 'Call Analytics', sub: 'Inbound & outbound performance' },
-  '/users': { title: 'User Analytics', sub: 'Engagement & behavior metrics' },
-  '/leads': { title: 'Lead Management', sub: 'Pipeline & qualification tracking' },
-  '/feedback': { title: 'User Feedback', sub: 'Sentiment & feature requests' },
-  '/ai-logs': { title: 'AI Call Logs', sub: 'Automated call history' },
-  '/settings': { title: 'Settings', sub: 'System configuration' },
-  '/products': { title: 'Products', sub: 'Product management' },
-  '/add-product': { title: 'Add Product', sub: 'Create new product' },
+  '/dashboard':      { title: 'Dashboard',          sub: 'Pipeline overview & key metrics' },
+  '/gmail':          { title: 'Gmail Inbox',         sub: 'AI-driven email management' },
+  '/gmail-analytics':{ title: 'Email Analytics',     sub: 'Pipeline performance & SLA compliance' },
+  '/calls':          { title: 'Call Analytics',      sub: 'Inbound & outbound performance' },
+  '/ai-analytics':   { title: 'AI Analytics',        sub: 'Model performance & automation insights' },
+  '/linkedin':       { title: 'LinkedIn Analytics',  sub: 'Lead generation insights' },
+  '/users':          { title: 'Team Analytics',      sub: 'Engagement & behaviour metrics' },
+  '/leads':          { title: 'Lead Management',     sub: 'Pipeline & qualification tracking' },
+  '/gaps':           { title: 'Knowledge Gaps',      sub: 'Unanswered questions & missing product info' },
+  '/feedback':       { title: 'User Feedback',       sub: 'Sentiment & feature requests' },
+  '/ai-logs':        { title: 'AI Call Logs',        sub: 'Automated call history' },
+  '/calendar':       { title: 'Calendar',            sub: 'Meetings & follow-up schedule' },
+  '/products':       { title: 'Products',            sub: 'Product catalogue management' },
+  '/add-product':    { title: 'Add Product',         sub: 'Create a new product listing' },
+  '/settings':       { title: 'Settings',            sub: 'Account & system configuration' },
 }
 
 const dummyNotifications = [
@@ -24,8 +30,13 @@ const dummyNotifications = [
 
 export default function TopNavbar({ onMenuClick, sidebarOpen }) {
   const location = useLocation()
+  const storage = ApplicationStore().getStorage("userDetails") || {};
+  const userDetails = storage.userDetails || {};
+  const email = userDetails.email || "admin@RDL Sales .io";
+  const name = email.split('@')[0];
+  const initials = name.substring(0, 2).toUpperCase();
   const navigate = useNavigate()
-  const page = pageTitles[location.pathname] || { title: 'Dashboard', sub: '' }
+  const page = pageTitles[location.pathname] || { title: location.pathname.replace('/', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Dashboard', sub: '' }
 
   const [showNotifications, setShowNotifications] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
@@ -179,7 +190,7 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
           >
             <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm"
               style={{ background: 'linear-gradient(135deg, #2563eb, #3b82f6)' }}>
-              AD
+              {initials}
             </div>
             <ChevronDown size={12} className={`text-gray-500 hidden sm:block transition-transform duration-200 ${showProfile ? 'rotate-180' : ''}`} />
           </button>
@@ -194,8 +205,8 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                 className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden origin-top-right"
               >
                 <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
-                  <p className="text-sm font-semibold text-gray-900">Admin User</p>
-                  <p className="text-xs text-gray-500 mt-0.5">admin@nexusai.io</p>
+                  <p className="text-sm font-semibold text-gray-900">{name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{email}</p>
                 </div>
                 <div className="p-2 space-y-0.5">
                   <Link

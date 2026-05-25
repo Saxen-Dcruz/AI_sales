@@ -24,6 +24,7 @@ COPY requirements.txt .
 RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
 # 3. Download Playwright Chromium browser (headless mode — no display needed)
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN python -m playwright install chromium
 
 

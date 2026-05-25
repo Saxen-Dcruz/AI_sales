@@ -210,6 +210,7 @@ def node_parse(state: dict, config: RunnableConfig) -> dict:
         "gmail_message_id": gmail_message_id,
         "gmail_thread_id": parsed.get("gmail_thread_id"),
         "rfc_message_id": parsed.get("rfc_message_id", ""),
+        "rfc_references": parsed.get("rfc_references", ""),
         "sender_raw": sender_raw,
         "sender_email": sender_email,
         "subject": subject,
@@ -266,6 +267,7 @@ def node_persist(state: dict, config: RunnableConfig) -> dict:
     email_row = Email(
         gmail_message_id=state["gmail_message_id"],
         gmail_thread_id=state.get("gmail_thread_id"),
+        rfc_message_id=state.get("rfc_message_id"),
         direction="inbound",
         sender=state["sender_raw"],
         recipients=state.get("recipients", []),
@@ -321,6 +323,12 @@ def node_detect_product(state: dict, config: RunnableConfig) -> dict:
     db = _get_db(config)
     text = f"{state['subject']} {state['effective_body']}"
     product_id, product_name, confidence = detect_product(db, text)
+    if state.get("email_id") and product_name:
+        db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
+            {"detected_product_id": product_id, "detected_product_name": product_name},
+            synchronize_session=False,
+        )
+        db.flush()
     return {
         "product_id": product_id,
         "product_name": product_name,
@@ -422,7 +430,9 @@ def node_auto_send(state: dict, config: RunnableConfig) -> dict:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
+            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            reply_to_message_id=state.get("rfc_message_id") or None,
+            references=state.get("rfc_references") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
@@ -462,7 +472,9 @@ def node_hold_draft(state: dict, config: RunnableConfig) -> dict:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
+            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            reply_to_message_id=state.get("rfc_message_id") or None,
+            references=state.get("rfc_references") or None,
         )
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {
@@ -522,7 +534,9 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
         reply_subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
         draft = gmail_service.create_draft(
             gmail_svc, to=state["sender_email"], subject=reply_subject,
-            body=clarification, thread_id=state.get("gmail_thread_id"), reply_to_message_id=state.get("rfc_message_id") or None,
+            body=clarification, thread_id=state.get("gmail_thread_id"),
+            reply_to_message_id=state.get("rfc_message_id") or None,
+            references=state.get("rfc_references") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
@@ -562,6 +576,7 @@ def node_flag_human(state: dict, config: RunnableConfig) -> dict:
             subject=reply_subject, body=ack_body,
             thread_id=state.get("gmail_thread_id"),
             reply_to_message_id=state.get("rfc_message_id") or None,
+            references=state.get("rfc_references") or None,
         )
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {

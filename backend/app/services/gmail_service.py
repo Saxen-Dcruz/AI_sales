@@ -212,6 +212,7 @@ def parse_message(message: dict) -> dict:
         "gmail_message_id": message["id"],
         "gmail_thread_id": message.get("threadId"),
         "rfc_message_id": headers.get("message-id", ""),  # RFC 2822 Message-ID for In-Reply-To
+        "rfc_references": headers.get("references", ""),  # full References chain for threading
         "sender": sender,
         "recipients": recipients,
         "subject": subject,
@@ -285,9 +286,10 @@ def archive_message(service, message_id: str) -> None:
 # ── Draft management ──────────────────────────────────────────────────────────
 
 def create_draft(service, to: str, subject: str, body: str,
-                 thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None) -> dict:
+                 thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None,
+                 references: Optional[str] = None) -> dict:
     """Save a draft in Gmail. Returns the draft object (includes draft id)."""
-    msg = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id)
+    msg = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id, references=references)
     draft_body: dict = {"message": {"raw": msg}}
     if thread_id:
         draft_body["message"]["threadId"] = thread_id
@@ -304,9 +306,10 @@ def send_draft(service, draft_id: str) -> dict:
 
 
 def send_email(service, to: str, subject: str, body: str,
-               thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None) -> dict:
+               thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None,
+               references: Optional[str] = None) -> dict:
     """Send immediately without saving a draft."""
-    raw = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id)
+    raw = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id, references=references)
     msg_body: dict = {"raw": raw}
     if thread_id:
         msg_body["threadId"] = thread_id
@@ -342,13 +345,16 @@ def _markdown_to_html(text: str) -> str:
     )
 
 
-def _build_mime(to: str, subject: str, body: str, reply_to_message_id: Optional[str] = None) -> str:
+def _build_mime(to: str, subject: str, body: str, reply_to_message_id: Optional[str] = None,
+                references: Optional[str] = None) -> str:
     msg = MIMEMultipart("alternative")
     msg["to"] = to
     msg["subject"] = subject
     if reply_to_message_id:
         msg["In-Reply-To"] = reply_to_message_id
-        msg["References"] = reply_to_message_id
+        # Build the full References chain: prior chain + this message's ID
+        ref_chain = f"{references} {reply_to_message_id}".strip() if references else reply_to_message_id
+        msg["References"] = ref_chain
     # plain text fallback (strips markdown syntax for clients that don't render HTML)
     plain = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', body)
     msg.attach(MIMEText(plain, "plain"))

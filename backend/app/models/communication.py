@@ -33,6 +33,7 @@ class Email(Base):
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
     gmail_message_id = Column(String, unique=True, index=True, nullable=False)
     gmail_thread_id = Column(String, index=True, nullable=True)
+    rfc_message_id = Column(String, nullable=True)          # RFC 2822 Message-ID for reply threading
 
     lead_id = Column(PGUUID(as_uuid=True), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)
 
@@ -60,6 +61,8 @@ class Email(Base):
     followup_gaps = Column(JSON, nullable=True)         # list of follow-up items RAG couldn't answer
 
     competitor_mention = Column(String, nullable=True)   # competitor name if detected in email
+    detected_product_id = Column(String, nullable=True)  # product_id matched by workflow
+    detected_product_name = Column(String, nullable=True)  # product name matched by workflow
 
     needs_human = Column(Boolean, default=False, index=True)
     resolved_by = Column(String, nullable=True)

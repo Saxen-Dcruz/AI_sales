@@ -11,6 +11,8 @@ from app.services.workflows.email_workflow import run_email_workflow
 
 POLL_INTERVAL_SECONDS = 120
 HEARTBEAT_CYCLES = 5
+# 180 cycles × 120 s = 6 hours between LinkedIn auto-searches
+LINKEDIN_SEARCH_CYCLES = 180
 _poller_task: asyncio.Task | None = None
 
 
@@ -23,6 +25,15 @@ async def _poll_loop() -> None:
             cycle += 1
             if processed == 0 and cycle % HEARTBEAT_CYCLES == 0:
                 logger.info("[GMAIL POLLER] Alive — inbox empty (cycle %d)", cycle)
+
+            # LinkedIn auto-search via Google CSE every 6 hours
+            if cycle % LINKEDIN_SEARCH_CYCLES == 0:
+                try:
+                    from app.services.google_linkedin_service import run_auto_google_search
+                    logger.info("[GMAIL POLLER] Running LinkedIn auto-search via Google (cycle %d)", cycle)
+                    await asyncio.to_thread(run_auto_google_search)
+                except Exception as e:
+                    logger.warning(f"[GMAIL POLLER] LinkedIn auto-search failed: {e}")
         except Exception as e:
             logger.error(f"[GMAIL POLLER] Cycle error: {e}", exc_info=True)
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -66,6 +77,22 @@ def _run_poll_cycle() -> int:
                         logger.info(f"[GMAIL POLLER] [{account.email_address}] Fetched {len(messages)} message(s)")
                     for raw_msg in messages:
                         try:
+                            # Check if this message belongs to an outreach thread first
+                            from app.services import gmail_service as _gs
+                            from app.services.outreach_sender import process_inbound_reply
+                            _parsed = _gs.parse_message(raw_msg)
+                            _is_outreach = process_inbound_reply(
+                                db,
+                                gmail_thread_id=_parsed.get("gmail_thread_id", ""),
+                                from_email=_gs.extract_email_address(_parsed.get("sender", "")),
+                                body=_parsed.get("body_text", ""),
+                                gmail_message_id=_parsed.get("gmail_message_id", ""),
+                                auto_reply=True,
+                            )
+                            if _is_outreach:
+                                total_processed += 1
+                                continue  # skip standard email classification
+
                             result = run_email_workflow(db, raw_msg, account_id=str(account.id),
                                                         account_email=account.email_address)
                             if result:
