@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     # --- AI API Keys ---
     GOOGLE_API_KEY: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    GOOGLE_CSE_ID: str = ""  # Custom Search Engine ID — programmablesearchengine.google.com
+    SERP_API_KEY: str = ""   # SerpAPI (optional fallback)
 
     # --- Google OAuth (multi-account Gmail) ---
     GOOGLE_CLIENT_ID: str = ""
@@ -133,6 +135,10 @@ class Settings(BaseSettings):
     # --- LinkedIn Scraper ---
     LINKEDIN_EMAIL: str | None = None
     LINKEDIN_PASSWORD: str | None = None
+
+    # --- LinkedIn OAuth ---
+    LINKEDIN_CLIENT_ID: str = ""
+    LINKEDIN_CLIENT_SECRET: str = ""
 
 
     # --- JWT Auth ---
