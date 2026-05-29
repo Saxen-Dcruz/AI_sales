@@ -52,3 +52,5 @@ backend/calendar_token.json
 *.key
 *.p12
 *.pfxwork/
+frontend/.env
+backend/product_name

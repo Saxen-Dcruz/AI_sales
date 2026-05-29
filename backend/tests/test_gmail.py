@@ -109,8 +109,16 @@ def test_sync_empty_inbox(client, auth_headers):
     assert resp.json() == {"fetched": 0, "processed": 0}
 
 
+def _fake_account():
+    acct = MagicMock()
+    acct.id = uuid.uuid4()
+    acct.email_address = "sync-test@example.com"
+    return acct
+
+
 def test_sync_processes_messages(client, auth_headers):
     with (
+        patch("app.routers.gmail._get_active_accounts", return_value=[_fake_account()]),
         patch("app.routers.gmail.gmail_service.get_gmail_service", return_value=MagicMock()),
         patch("app.routers.gmail.gmail_service.ensure_labels_exist"),
         patch("app.routers.gmail.gmail_service.fetch_unread_messages", return_value=[_raw_msg(), _raw_msg()]),
@@ -124,6 +132,7 @@ def test_sync_processes_messages(client, auth_headers):
 
 def test_sync_skips_already_processed(client, auth_headers):
     with (
+        patch("app.routers.gmail._get_active_accounts", return_value=[_fake_account()]),
         patch("app.routers.gmail.gmail_service.get_gmail_service", return_value=MagicMock()),
         patch("app.routers.gmail.gmail_service.ensure_labels_exist"),
         patch("app.routers.gmail.gmail_service.fetch_unread_messages", return_value=[_raw_msg()]),
@@ -460,6 +469,60 @@ def test_send_email_with_thread_id(client, auth_headers):
         )
     assert resp.status_code == 201
     assert resp.json()["gmail_thread_id"] == "th_reply"
+
+
+def test_send_email_threaded_reply_inherits_account_and_marks_original(client, auth_headers):
+    # Seed an inbound email to reply to
+    eid = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(Email(
+            id=eid,
+            gmail_message_id=f"msg_{uuid.uuid4().hex}",
+            gmail_thread_id="th_orig",
+            rfc_message_id="<orig@mail>",
+            direction="inbound",
+            sender="Customer <cust@example.com>",
+            recipients=["developer20@rdltech.in"],
+            subject="enquiry about RDL891",
+            body_text="tell me about it",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES,
+            status=EmailStatus.PENDING_HUMAN,
+            account_email="developer20@rdltech.in",
+            needs_human=True,
+        ))
+        db.commit()
+
+    with (
+        patch("app.routers.gmail.gmail_service.get_gmail_service", return_value=MagicMock()),
+        patch("app.routers.gmail.gmail_service.send_email", return_value={"id": f"msg_{uuid.uuid4().hex}", "threadId": "th_orig"}) as mock_send,
+    ):
+        resp = client.post(
+            f"{BASE}/send",
+            json={"to": "cust@example.com", "subject": "Re: enquiry about RDL891",
+                  "body": "Here are the details you asked for.",
+                  "reply_to_email_id": str(eid)},
+            headers=auth_headers,
+        )
+    assert resp.status_code == 201
+    body = resp.json()
+    # Reply inherits thread + receiving account
+    assert body["gmail_thread_id"] == "th_orig"
+    assert body["account_email"] == "developer20@rdltech.in"
+    # send_email was called with the original thread + in-reply-to header
+    assert mock_send.call_args.kwargs["thread_id"] == "th_orig"
+    assert mock_send.call_args.kwargs["reply_to_message_id"] == "<orig@mail>"
+
+    # Original inbound is now marked replied
+    with SessionLocal() as db:
+        orig = db.query(Email).filter(Email.id == eid).first()
+        assert orig.status == EmailStatus.REPLIED
+        assert orig.needs_human is False
+        db.delete(orig)
+        # clean up the outbound row too
+        db.query(Email).filter(Email.gmail_thread_id == "th_orig",
+                               Email.direction == "outbound").delete()
+        db.commit()
 
 
 def test_send_email_missing_subject(client, auth_headers):

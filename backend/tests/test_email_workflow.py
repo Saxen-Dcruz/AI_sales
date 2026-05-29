@@ -945,7 +945,14 @@ def test_node_send_clarification_with_no_similar_products(db):
 
 # ── Edge cases: resume_after_gaps_resolved ────────────────────────────────────
 
-def test_resume_sends_when_all_gaps_resolved(db):
+def test_resume_regenerates_draft_when_all_gaps_resolved(db):
+    """
+    When all gaps are resolved, resume_after_gaps_resolved should:
+    - Re-run RAG and generate a NEW complete draft
+    - Save the new draft (delete old, create new Gmail draft)
+    - Set status=DRAFT_READY (not REPLIED — user must approve)
+    - NOT auto-send
+    """
     from app.services.workflows.email_workflow import resume_after_gaps_resolved
     from app.database.core import SessionLocal
 
@@ -953,26 +960,39 @@ def test_resume_sends_when_all_gaps_resolved(db):
         row = Email(
             gmail_message_id=f"test_{uuid.uuid4().hex}",
             direction="inbound", sender="x@x.com", recipients=[],
-            subject="X", body_text="X",
+            subject="X", body_text="Customer asked about warranty",
             received_at=datetime.now(timezone.utc),
             label=EmailLabel.SALES, status=EmailStatus.DRAFT_READY,
             gmail_draft_id="draft_resume_123",
             needs_human=True,
-            followup_gaps=[{"question": "Warranty?", "resolved": True, "answer": "1 year"}],
+            followup_gaps=[{"question": "Warranty?", "resolved": True, "answer": "1 year warranty"}],
         )
         s.add(row); s.commit(); s.refresh(row)
         email_id = str(row.id)
 
-    with patch("app.services.gmail_service.get_gmail_service", return_value=MagicMock()), \
-         patch("app.services.gmail_service.send_draft"):
+    mock_svc = MagicMock()
+    mock_svc.users().drafts().delete().execute.return_value = {}
+    mock_svc.users().drafts().create().execute.return_value = {"id": "new_draft_456"}
+    mock_svc.users().messages().get().execute.return_value = {"id": "new_draft_456"}
+
+    with patch("app.services.gmail_service.get_gmail_service", return_value=mock_svc), \
+         patch("app.services.email_account_service.get_account", return_value=None), \
+         patch("app.services.workflows.email_nodes.fetch_rag_context", return_value="RAG context with warranty info"), \
+         patch("app.services.workflows.email_nodes.generate_sales_draft", return_value="Complete draft with warranty answer"), \
+         patch("app.services.gmail_service.create_draft", return_value={"id": "new_draft_456"}), \
+         patch("app.services.gmail_service.extract_email_address", return_value="x@x.com"), \
+         patch("app.services.sales_gap_service.extract_structured_gaps", return_value=[]):
         result = resume_after_gaps_resolved(db, email_id)
 
     assert result is True
 
     with SessionLocal() as s:
         row = s.query(Email).filter(Email.id == uuid.UUID(email_id)).first()
-        assert row.status == EmailStatus.REPLIED
-        assert row.needs_human is False
+        # New behavior: regenerates draft and holds for review — does NOT auto-send
+        assert row.status == EmailStatus.DRAFT_READY, f"Expected draft_ready, got {row.status}"
+        assert row.needs_human is False   # no more gaps
+        assert row.gmail_draft_id == "new_draft_456"
+        assert row.ai_draft == "Complete draft with warranty answer"
         s.delete(row); s.commit()
 
 
@@ -1142,15 +1162,43 @@ def test_node_try_schedule_meeting_skips_without_keywords(db):
     assert result == {}
 
 
-def test_node_try_schedule_meeting_skips_without_specific_time(db):
+def test_node_try_schedule_meeting_proposes_slots_without_specific_time(db):
     from app.services.workflows.email_nodes import node_try_schedule_meeting
-    result = node_try_schedule_meeting(
-        {"effective_body": "Can we schedule a meeting sometime?",
-         "subject": "Meeting", "sender_email": "x@x.com", "lead_id": None},
-        _make_config(db),
-    )
-    # No specific time given — should skip gracefully
+    free = [
+        datetime(2026, 6, 10, 4, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 11, 5, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 12, 6, 0, tzinfo=timezone.utc),
+    ]
+    with patch("app.services.calendar_service.find_free_slots", return_value=free), \
+         patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
+        result = node_try_schedule_meeting(
+            {"effective_body": "i want to schedule a meeting to know more about RDL891",
+             "subject": "Meeting", "sender_raw": "Gulf Ishaara <g@x.com>",
+             "sender_email": "g@x.com", "product_name": "Industrial Data Logger 4G LTE",
+             "gmail_thread_id": "t1", "rfc_message_id": None, "lead_id": None},
+            _make_config(db),
+        )
+    # No specific time → proposes free slots via a follow-up email
+    assert result == {"action": "meeting_slots_proposed"}
+    mock_send.assert_called_once()
+    sent_body = mock_send.call_args.kwargs["body"]
+    assert "available times" in sent_body.lower()
+    assert "IST" in sent_body  # slots rendered
+
+
+def test_node_try_schedule_meeting_no_slots_available(db):
+    from app.services.workflows.email_nodes import node_try_schedule_meeting
+    with patch("app.services.calendar_service.find_free_slots", return_value=[]), \
+         patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
+        result = node_try_schedule_meeting(
+            {"effective_body": "can we schedule a meeting?", "subject": "Meeting",
+             "sender_raw": "X <x@x.com>", "sender_email": "x@x.com",
+             "product_name": None, "gmail_thread_id": "t1", "rfc_message_id": None,
+             "lead_id": None},
+            _make_config(db),
+        )
     assert result == {}
+    mock_send.assert_not_called()
 
 
 def test_node_try_schedule_meeting_schedules_with_specific_time(db):
@@ -1162,10 +1210,11 @@ def test_node_try_schedule_meeting_schedules_with_specific_time(db):
          patch("app.services.calendar_service._is_slot_free", return_value=True):
         result = node_try_schedule_meeting(
             {"effective_body": "Can we schedule a meeting at 10am on June 10?",
-             "subject": "Meeting request", "sender_email": "x@x.com", "lead_id": None},
+             "subject": "Meeting request", "sender_email": "x@x.com",
+             "product_name": None, "lead_id": None},
             _make_config(db),
         )
-    assert result == {}  # node returns empty dict — side effect is the meeting creation
+    assert result == {"action": "meeting_scheduled"}
 
 
 # ── Edge cases: node_update_lead_score ───────────────────────────────────────
