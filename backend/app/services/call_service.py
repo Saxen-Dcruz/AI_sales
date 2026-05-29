@@ -306,7 +306,7 @@ def process_transcript(db: Session, call: Call, transcript: str) -> Call:
         call.urgency = "unknown"
         call.product_interest = product_name
 
-    gaps = extract_structured_gaps(transcript, summary, product_name, product_id)
+    gaps = extract_structured_gaps(transcript, summary, product_name, product_id, db=db)
     call.followup_gaps = gaps if gaps else None
 
     if call.status not in (CallStatus.COMPLETED, CallStatus.MISSED, CallStatus.FAILED):

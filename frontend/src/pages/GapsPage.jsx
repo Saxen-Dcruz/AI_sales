@@ -157,10 +157,25 @@ export default function GapsPage() {
                 {rows.length > 0 ? (
                   rows.map((gap, i) => (
                     <TableRow key={i} hover>
-                      <TableCell sx={{ maxWidth: 320 }}>
+                      <TableCell sx={{ maxWidth: 360, width: 360 }}>
                         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
                           <HelpOutline color="warning" sx={{ mt: 0.3, flexShrink: 0 }} fontSize="small" />
-                          <Typography variant="body2" fontWeight={500}>{gap.question}</Typography>
+                          <Tooltip title={gap.question} placement="top-start">
+                            <Typography
+                              variant="body2"
+                              fontWeight={500}
+                              sx={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 3,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                lineHeight: 1.4,
+                              }}
+                            >
+                              {gap.question}
+                            </Typography>
+                          </Tooltip>
                         </Box>
                       </TableCell>
                       <TableCell>
@@ -169,12 +184,40 @@ export default function GapsPage() {
                       <TableCell>
                         <Typography variant="caption" color="text.secondary">{gap.product_name || '—'}</Typography>
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">{gap.source}</Typography>
+                      <TableCell sx={{ maxWidth: 170, width: 170 }}>
+                        <Tooltip title={gap.source || ''} placement="top-start">
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                              display: 'block',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: '100%',
+                            }}
+                          >
+                            {gap.source}
+                          </Typography>
+                        </Tooltip>
                       </TableCell>
                       {tab === 0 && (
-                        <TableCell sx={{ maxWidth: 180 }}>
-                          <Typography variant="caption" color="text.secondary" noWrap>{gap.subject}</Typography>
+                        <TableCell sx={{ maxWidth: 160, width: 160 }}>
+                          <Tooltip title={gap.subject || ''} placement="top-start">
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{
+                                display: 'block',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '100%',
+                              }}
+                            >
+                              {gap.subject}
+                            </Typography>
+                          </Tooltip>
                         </TableCell>
                       )}
                       <TableCell align="right">

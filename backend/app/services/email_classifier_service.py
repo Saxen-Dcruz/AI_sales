@@ -154,4 +154,17 @@ Body:
             "transactional_type": None,
             "transactional_data": None,
             "competitor_mention": None,
+            "llm_unavailable": _is_llm_cap_error(e),
         }
+
+
+def _is_llm_cap_error(exc: Exception) -> bool:
+    """True if the failure is a transient quota/spend-cap/rate-limit error.
+
+    These should defer the email for retry rather than mark it Unclassified —
+    the content is fine, the model is just temporarily unavailable.
+    """
+    msg = str(exc).lower()
+    markers = ("spend cap", "spending cap", "resource_exhausted", "resourceexhausted",
+               "quota", "rate limit", "rate_limit", "429", "exceeded")
+    return any(m in msg for m in markers)

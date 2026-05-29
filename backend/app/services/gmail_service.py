@@ -153,10 +153,21 @@ def fetch_messages_since(service, since_dt, max_results: int = 500) -> list[dict
 
 
 def fetch_unread_messages(service, max_results: int = 20) -> list[dict]:
-    """Return list of full message dicts for unread inbox emails."""
+    """
+    Return list of full message dicts for recent inbox emails.
+
+    NOTE: This used to filter by labelIds=['INBOX', 'UNREAD'], which silently
+    misses any message that was auto-marked-read by Gmail (e.g. when the user
+    opens the thread in Gmail web UI, all messages in that thread become
+    'read' and the poller never sees subsequent replies).
+
+    Now we fetch recent INBOX messages regardless of read state. Caller is
+    expected to dedupe against gmail_message_id in the DB so already-processed
+    emails are skipped — the workflow's persist node already does this.
+    """
     resp = service.users().messages().list(
         userId="me",
-        labelIds=["INBOX", "UNREAD"],
+        q="in:inbox newer_than:7d",
         maxResults=max_results,
     ).execute()
     messages = resp.get("messages", [])

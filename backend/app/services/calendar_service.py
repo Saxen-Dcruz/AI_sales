@@ -277,21 +277,29 @@ def _range_overlaps_busy(
 
 
 def find_next_free_slot(duration_minutes: int = 30, hours_from_now: int = 24) -> datetime:
+    """Return the single next free slot (thin wrapper over find_free_slots)."""
+    slots = find_free_slots(count=1, duration_minutes=duration_minutes, hours_from_now=hours_from_now)
+    return slots[0] if slots else next_available_slot(hours_from_now)
+
+
+def find_free_slots(count: int = 3, duration_minutes: int = 30, hours_from_now: int = 24) -> list[datetime]:
     """
-    Find the next free meeting slot using the operator's configured availability.
+    Find up to `count` free meeting slots using the operator's configured availability.
 
     Algorithm:
     1. Load operator's per-day working hours from DB (OperatorAvailability).
-    2. Load scheduling config: buffer_minutes, max_meetings_per_day.
+    2. Load scheduling config: buffer_minutes, slot_duration_minutes.
     3. For each working day, generate candidate slots every `duration_minutes` within
        the operator's working window.
     4. Check (slot_start - buffer, slot_end + buffer) is free on Google Calendar so
        no back-to-back meetings are booked.
     5. Also skip any recurring blocks (lunch breaks, etc.) from BlockedTime table.
-    Falls back to next_available_slot() if calendar API fails.
+    Returns up to `count` slots (UTC). Falls back to next_available_slot() if the
+    calendar API is unavailable.
     """
     from zoneinfo import ZoneInfo
     ist = ZoneInfo("Asia/Kolkata")
+    found: list[datetime] = []
 
     # ── Load config from DB ───────────────────────────────────────────────────
     buffer_minutes = 15
@@ -330,7 +338,7 @@ def find_next_free_slot(duration_minutes: int = 30, hours_from_now: int = 24) ->
     try:
         cal_svc = get_calendar_service()
     except Exception:
-        return next_available_slot(hours_from_now)
+        return [next_available_slot(hours_from_now)]
 
     now_ist = datetime.now(timezone.utc).astimezone(ist)
     earliest = now_ist + timedelta(hours=hours_from_now)
@@ -382,12 +390,16 @@ def find_next_free_slot(duration_minutes: int = 30, hours_from_now: int = 24) ->
                     f"[CALENDAR] Free slot found: {slot_start.isoformat()} "
                     f"(buffer={buffer_minutes}min)"
                 )
-                return slot_start.astimezone(timezone.utc)
+                found.append(slot_start.astimezone(timezone.utc))
+                if len(found) >= count:
+                    return found
 
             slot_start = slot_start + timedelta(minutes=duration_minutes)
 
+    if found:
+        return found
     logger.warning("[CALENDAR] No free slot found in 28 days — using fallback")
-    return next_available_slot(hours_from_now)
+    return [next_available_slot(hours_from_now)]
 
 
 def next_available_slot(hours_from_now: int = 24) -> datetime:

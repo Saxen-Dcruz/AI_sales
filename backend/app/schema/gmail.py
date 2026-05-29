@@ -45,6 +45,7 @@ class EmailOut(BaseModel):
     account_email: Optional[str] = None
     updated_at: Optional[datetime] = None
     created_at: datetime
+    thread_count: int = 1
 
     model_config = {"from_attributes": True}
 
@@ -159,6 +160,9 @@ class SendEmailRequest(BaseModel):
     subject: str
     body: str
     thread_id: Optional[str] = None
+    # Optional: reply in-thread from the account that received the original email.
+    account_id: Optional[UUID] = None
+    reply_to_email_id: Optional[UUID] = None  # the inbound email being replied to
 
 
 class ResolveEmailRequest(BaseModel):

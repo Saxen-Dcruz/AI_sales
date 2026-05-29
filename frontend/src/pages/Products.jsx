@@ -251,7 +251,7 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   )
 }
 
-function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
+function ProductRow({ product, onToggle, onDelete, onView }) {
   const isActive = product.status === 'Active'
   const hasScore = product.coverage_score !== null && product.coverage_score !== undefined
   const pct = hasScore ? Math.round(product.coverage_score * 100) : null
@@ -260,21 +260,41 @@ function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   return (
     <motion.tr layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="table-row">
       <td className="py-3 px-4">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
-            <Package size={14} className="text-blue-500" />
-          </div>
-          <div>
-            <button onClick={() => onView(product)}
-              className="text-xs font-semibold text-gray-900 hover:text-blue-600 transition-colors text-left">
-              {product.name}
-            </button>
-            {product['Order Code'] && (
-              <p className="text-[10px] font-mono text-gray-400">{product['Order Code']}</p>
-            )}
-          </div>
+        <div className="flex items-center gap-1">
+
+          {/* View */}
+          <button
+            onClick={() => onView(product)}
+            className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all"
+            title="View"
+          >
+            <BookOpen size={13} />
+          </button>
+
+          {/* Toggle Active/Inactive */}
+          <button
+            onClick={() => onToggle(product)}
+            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive
+              ? 'hover:bg-orange-50 hover:text-orange-500'
+              : 'hover:bg-green-50 hover:text-green-500'
+              }`}
+            title={isActive ? 'Deactivate' : 'Activate'}
+          >
+            {isActive ? <PowerOff size={13} /> : <Power size={13} />}
+          </button>
+
+          {/* Delete */}
+          <button
+            onClick={() => onDelete(product)}
+            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all"
+            title="Delete"
+          >
+            <Trash2 size={13} />
+          </button>
+
         </div>
       </td>
+
       <td className="py-3 px-4 text-xs text-gray-500">{product.Brand || '—'}</td>
       <td className="py-3 px-4">
         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">
@@ -305,27 +325,37 @@ function ProductRow({ product, onEdit, onKb, onToggle, onDelete, onView }) {
       {/* Updated Actions Column */}
       <td className="py-3 px-4">
         <div className="flex items-center gap-1">
-          {/* View Button */}
-          <button onClick={() => onView(product)}
+
+          {/* View */}
+          <button
+            onClick={() => onView(product)}
             className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all"
-            title="View Details">
+            title="View"
+          >
             <BookOpen size={13} />
           </button>
-          
-          {/* Toggle Active/Inactive Button */}
-          <button onClick={() => onToggle(product)}
-            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive ? 'hover:bg-orange-50 hover:text-orange-500' : 'hover:bg-green-50 hover:text-green-500'
+
+          {/* Toggle */}
+          <button
+            onClick={() => onToggle(product)}
+            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive
+              ? 'hover:bg-orange-50 hover:text-orange-500'
+              : 'hover:bg-green-50 hover:text-green-500'
               }`}
-            title={isActive ? "Deactivate" : "Activate"}>
+            title={isActive ? 'Deactivate' : 'Activate'}
+          >
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
           </button>
-          
-          {/* Delete Button */}
-          <button onClick={() => onDelete(product)}
+
+          {/* Delete */}
+          <button
+            onClick={() => onDelete(product)}
             className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all"
-            title="Delete Product">
+            title="Delete"
+          >
             <Trash2 size={13} />
           </button>
+
         </div>
       </td>
     </motion.tr>
@@ -502,10 +532,24 @@ export default function Products() {
                 <ProductCard
                   product={product}
                   onEdit={(id) => navigate(`/edit-product/${id}`)}
-                  onKb={(id) => navigate(`/knowledge-base/${id}`)}
+
+                  onKb={(id) => {
+                    const product = paginated.find((p) => p.id === id)
+                    setDetailProduct(product)
+                    setDetailOpen(true)
+                  }}
+
                   onToggle={handleToggle}
-                  onDelete={(p) => { setSelectedProduct(p); setDeleteDialogOpen(true) }}
-                  onView={(p) => { setDetailProduct(p); setDetailOpen(true) }}
+
+                  onDelete={(p) => {
+                    setSelectedProduct(p)
+                    setDeleteDialogOpen(true)
+                  }}
+
+                  onView={(p) => {
+                    setDetailProduct(p)
+                    setDetailOpen(true)
+                  }}
                 />
               </motion.div>
             ))}

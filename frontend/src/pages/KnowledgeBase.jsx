@@ -17,7 +17,7 @@ import {
   UpdateProductKnowledgeService,
 } from '../services/ApiService'
 
-const CATEGORIES = ['general', 'warranty', 'pricing', 'compatibility', 'technical']
+const CATEGORIES = ['description', 'features', 'specification', 'product_knowledge', 'general']
 
 const CAT_COLOR = {
   general: 'bg-gray-100 text-gray-600',
@@ -74,17 +74,32 @@ function EntryDialog({ open, entry, productId, onClose, onSaved }) {
 
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">Category</label>
-            <div className="flex gap-2 flex-wrap">
-              {CATEGORIES.map(c => (
-                <button key={c} onClick={() => setCategory(c)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border
-                    ${category === c
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'}`}>
-                  {c}
-                </button>
-              ))}
+            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">Chunk Type / Category</label>
+            <div className="flex flex-col gap-3">
+              <input
+                type="text"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Just pressing enter keeps the value
+                  }
+                }}
+                placeholder="Type a custom chunk type (e.g. troubleshooting) or select below..."
+                className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 transition-all"
+              />
+              <div className="flex gap-2 flex-wrap">
+                {CATEGORIES.map(c => (
+                  <button key={c} onClick={(e) => { e.preventDefault(); setCategory(c); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border
+                      ${category === c
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                    {c}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

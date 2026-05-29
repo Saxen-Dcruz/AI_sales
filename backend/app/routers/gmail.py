@@ -37,22 +37,51 @@ router = APIRouter(prefix="/gmail", tags=["Gmail"])
 
 # ── Inbox sync ────────────────────────────────────────────────────────────────
 
+def _get_active_accounts(db: Session):
+    """Active email accounts to poll. Extracted for testability."""
+    from app.models.email_account import EmailAccount
+    return db.query(EmailAccount).filter(EmailAccount.is_active == True).all()
+
+
 @router.post("/sync", status_code=status.HTTP_200_OK)
 def sync_inbox(
     max_results: int = Query(default=20, ge=1, le=50),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Manually trigger inbox fetch and classification. Returns count processed."""
-    svc = gmail_service.get_gmail_service()
-    gmail_service.ensure_labels_exist(svc)
-    messages = gmail_service.fetch_unread_messages(svc, max_results=max_results)
+    """Manually trigger inbox fetch and classification across all active accounts."""
+    accounts = _get_active_accounts(db)
     processed = 0
-    for raw_msg in messages:
-        result = run_email_workflow(db, raw_msg)
-        if result:
-            processed += 1
-    return {"processed": processed, "fetched": len(messages)}
+    fetched = 0
+
+    if accounts:
+        for account in accounts:
+            try:
+                svc = gmail_service.get_gmail_service(account=account)
+                gmail_service.ensure_labels_exist(svc, account_key=account.email_address)
+                messages = gmail_service.fetch_unread_messages(svc, max_results=max_results)
+                fetched += len(messages)
+                for raw_msg in messages:
+                    result = run_email_workflow(
+                        db, raw_msg,
+                        account_id=str(account.id),
+                        account_email=account.email_address,
+                    )
+                    if result:
+                        processed += 1
+            except Exception as e:
+                logger.error(f"[SYNC] Account {account.email_address} failed: {e}", exc_info=True)
+    else:
+        svc = gmail_service.get_gmail_service()
+        gmail_service.ensure_labels_exist(svc)
+        messages = gmail_service.fetch_unread_messages(svc, max_results=max_results)
+        fetched = len(messages)
+        for raw_msg in messages:
+            result = run_email_workflow(db, raw_msg)
+            if result:
+                processed += 1
+
+    return {"processed": processed, "fetched": fetched}
 
 
 # ── Email list ────────────────────────────────────────────────────────────────
@@ -102,9 +131,74 @@ def list_emails(
         # Default: only emails from active accounts. Legacy (no account_id) and
         # orphaned (deleted account) emails are not shown in the "All" inbox.
         q = q.filter(Email.account_id.isnot(None))
-    total = q.count()
-    items = q.order_by(Email.received_at.desc()).offset((page - 1) * limit).limit(limit).all()
+
+    # ── Thread grouping (server-side) ──────────────────────────────────────────
+    # Collapse each Gmail thread to a single row (its latest message) so threads
+    # group correctly regardless of pagination. Emails with no thread_id are
+    # treated as their own single-message thread (keyed by id).
+    from sqlalchemy import func, Text, cast
+    thread_key = func.coalesce(Email.gmail_thread_id, cast(Email.id, Text))
+    rn = func.row_number().over(
+        partition_by=thread_key, order_by=Email.received_at.desc()
+    ).label("rn")
+    sub = q.add_columns(rn).subquery()
+
+    latest_only = db.query(sub).filter(sub.c.rn == 1)
+    total = latest_only.count()
+    rows = (
+        latest_only.order_by(sub.c.received_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    # Re-hydrate Email rows
+    ids = [r.id for r in rows]
+    if ids:
+        email_rows = db.query(Email).filter(Email.id.in_(ids)).all()
+        by_id = {e.id: e for e in email_rows}
+        ordered = [by_id[i] for i in ids if i in by_id]
+    else:
+        ordered = []
+
+    # thread_count = total messages in the FULL thread (unfiltered), so it matches
+    # the conversation view (which fetches the whole thread regardless of label/account).
+    thread_ids = [e.gmail_thread_id for e in ordered if e.gmail_thread_id]
+    full_counts: dict[str, int] = {}
+    if thread_ids:
+        for tid, c in (
+            db.query(Email.gmail_thread_id, func.count())
+            .filter(Email.gmail_thread_id.in_(thread_ids))
+            .group_by(Email.gmail_thread_id)
+            .all()
+        ):
+            full_counts[tid] = c
+
+    items = []
+    for e in ordered:
+        out = EmailOut.model_validate(e)
+        out.thread_count = full_counts.get(e.gmail_thread_id, 1) if e.gmail_thread_id else 1
+        items.append(out)
     return EmailListResponse(items=items, total=total, page=page, limit=limit)
+
+
+@router.get("/threads/{thread_id}", response_model=EmailListResponse)
+def get_thread_messages(
+    thread_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """
+    Return all email messages belonging to a single Gmail thread, ordered chronologically.
+    Used by the inbox UI to show the full conversation when a thread is selected.
+    """
+    items = (
+        db.query(Email)
+        .filter(Email.gmail_thread_id == thread_id)
+        .order_by(Email.received_at.asc())
+        .all()
+    )
+    return EmailListResponse(items=items, total=len(items), page=1, limit=len(items) or 1)
 
 
 @router.get("/gaps", response_model=GapNotificationListResponse)
@@ -897,15 +991,35 @@ def send_email(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Send a new outbound email and record it."""
-    svc = gmail_service.get_gmail_service()
+    """Send an outbound email and record it.
+
+    For a threaded manual reply, pass `account_id` (send from the receiving account)
+    and `reply_to_email_id` (the inbound email being answered) so the reply lands in
+    the same Gmail thread with correct In-Reply-To/References headers and is attributed
+    to the right account in the inbox.
+    """
+    from app.models.email_account import EmailAccount
+
+    # Resolve the inbound email being replied to (for threading + account inheritance)
+    original = None
+    if payload.reply_to_email_id:
+        original = db.query(Email).filter(Email.id == payload.reply_to_email_id).first()
+
+    # Pick the sending account: explicit account_id → original's account → legacy token
+    account = None
+    account_id = payload.account_id or (original.account_id if original else None)
+    if account_id:
+        account = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
+
+    svc = gmail_service.get_gmail_service(account=account) if account else gmail_service.get_gmail_service()
     try:
         sent = gmail_service.send_email(
             svc,
             to=payload.to,
             subject=payload.subject,
             body=payload.body,
-            thread_id=payload.thread_id,
+            thread_id=payload.thread_id or (original.gmail_thread_id if original else None),
+            reply_to_message_id=(original.rfc_message_id if original else None),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
@@ -914,15 +1028,24 @@ def send_email(
         gmail_message_id=sent["id"],
         gmail_thread_id=sent.get("threadId"),
         direction="outbound",
-        sender=current_user.email,
+        sender=account.email_address if account else current_user.email,
         recipients=[payload.to],
         subject=payload.subject,
         body_text=payload.body,
         received_at=datetime.now(timezone.utc),
-        label=EmailLabel.SALES,
+        label=(original.label if original else EmailLabel.SALES),
         status=EmailStatus.REPLIED,
+        account_id=account.id if account else (original.account_id if original else None),
+        account_email=account.email_address if account else (original.account_email if original else None),
+        lead_id=(original.lead_id if original else None),
     )
     db.add(email_row)
+
+    # Mark the original inbound as replied so it no longer shows as pending.
+    if original and original.status != EmailStatus.REPLIED:
+        original.status = EmailStatus.REPLIED
+        original.needs_human = False
+
     db.commit()
     db.refresh(email_row)
     return email_row
