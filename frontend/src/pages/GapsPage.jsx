@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react'
 import {
   Container, Typography, Box, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Button, Chip, CircularProgress,
-  IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  IconButton, Tooltip, Dialog, DialogTitle, DialogContent,
   Tabs, Tab
 } from '@mui/material'
 import { HelpOutline, CheckCircle, Refresh as RefreshIcon } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { GetEmailGapsService, ResolveEmailGapService, GetCallGapsService, ResolveCallGapService } from '../services/ApiService'
+import GapResolveForm from '../components/GapResolveForm'
 
 function flattenEmailGaps(emailItems) {
   const rows = []
@@ -62,7 +63,6 @@ export default function GapsPage() {
   const [loading, setLoading] = useState(true)
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false)
   const [selectedGap, setSelectedGap] = useState(null)
-  const [answer, setAnswer] = useState('')
   const [resolving, setResolving] = useState(false)
 
   const fetchGaps = () => {
@@ -81,11 +81,10 @@ export default function GapsPage() {
 
   const openResolve = (gap) => {
     setSelectedGap(gap)
-    setAnswer('')
     setResolveDialogOpen(true)
   }
 
-  const handleResolve = () => {
+  const handleResolve = (answer, category, productId) => {
     if (!selectedGap || !answer.trim()) return
     setResolving(true)
 
@@ -109,9 +108,9 @@ export default function GapsPage() {
     }
 
     if (selectedGap.type === 'email') {
-      ResolveEmailGapService(selectedGap.email_id, selectedGap.gap_index, answer, onSuccess, onError)
+      ResolveEmailGapService(selectedGap.email_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
     } else {
-      ResolveCallGapService(selectedGap.call_id, selectedGap.gap_index, answer, onSuccess, onError)
+      ResolveCallGapService(selectedGap.call_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
     }
   }
 
@@ -158,10 +157,25 @@ export default function GapsPage() {
                 {rows.length > 0 ? (
                   rows.map((gap, i) => (
                     <TableRow key={i} hover>
-                      <TableCell sx={{ maxWidth: 320 }}>
+                      <TableCell sx={{ maxWidth: 360, width: 360 }}>
                         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
                           <HelpOutline color="warning" sx={{ mt: 0.3, flexShrink: 0 }} fontSize="small" />
-                          <Typography variant="body2" fontWeight={500}>{gap.question}</Typography>
+                          <Tooltip title={gap.question} placement="top-start">
+                            <Typography
+                              variant="body2"
+                              fontWeight={500}
+                              sx={{
+                                display: '-webkit-box',
+                                WebkitLineClamp: 3,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                lineHeight: 1.4,
+                              }}
+                            >
+                              {gap.question}
+                            </Typography>
+                          </Tooltip>
                         </Box>
                       </TableCell>
                       <TableCell>
@@ -170,12 +184,40 @@ export default function GapsPage() {
                       <TableCell>
                         <Typography variant="caption" color="text.secondary">{gap.product_name || '—'}</Typography>
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" color="text.secondary">{gap.source}</Typography>
+                      <TableCell sx={{ maxWidth: 170, width: 170 }}>
+                        <Tooltip title={gap.source || ''} placement="top-start">
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                              display: 'block',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: '100%',
+                            }}
+                          >
+                            {gap.source}
+                          </Typography>
+                        </Tooltip>
                       </TableCell>
                       {tab === 0 && (
-                        <TableCell sx={{ maxWidth: 180 }}>
-                          <Typography variant="caption" color="text.secondary" noWrap>{gap.subject}</Typography>
+                        <TableCell sx={{ maxWidth: 160, width: 160 }}>
+                          <Tooltip title={gap.subject || ''} placement="top-start">
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{
+                                display: 'block',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '100%',
+                              }}
+                            >
+                              {gap.subject}
+                            </Typography>
+                          </Tooltip>
                         </TableCell>
                       )}
                       <TableCell align="right">
@@ -231,33 +273,19 @@ export default function GapsPage() {
           )}
         </TableContainer>
 
-        <Dialog open={resolveDialogOpen} onClose={() => setResolveDialogOpen(false)} fullWidth maxWidth="sm"
-          PaperProps={{ sx: { borderRadius: 3 } }}>
-          <DialogTitle sx={{ fontWeight: 700 }}>Resolve Gap</DialogTitle>
+        <Dialog open={resolveDialogOpen} onClose={() => !resolving && setResolveDialogOpen(false)}
+          fullWidth maxWidth="sm" PaperProps={{ sx: { borderRadius: 3 } }}>
+          <DialogTitle sx={{ fontWeight: 700, pb: 1 }}>Fill Knowledge Gap</DialogTitle>
           <DialogContent>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Answering: <strong>"{selectedGap?.question}"</strong>
-              {selectedGap?.product_name && (
-                <> — <em>{selectedGap.product_name}</em></>
-              )}
-            </Typography>
-            <TextField
-              fullWidth
-              label="Answer"
-              multiline
-              rows={4}
-              variant="outlined"
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Provide the answer to embed into the RAG knowledge base..."
-            />
+            {selectedGap && (
+              <GapResolveForm
+                gap={selectedGap}
+                loading={resolving}
+                onCancel={() => setResolveDialogOpen(false)}
+                onResolve={handleResolve}
+              />
+            )}
           </DialogContent>
-          <DialogActions sx={{ p: 2.5 }}>
-            <Button onClick={() => setResolveDialogOpen(false)} color="inherit">Cancel</Button>
-            <Button onClick={handleResolve} variant="contained" color="success" disabled={!answer.trim() || resolving}>
-              {resolving ? 'Saving...' : 'Save to Knowledge Base'}
-            </Button>
-          </DialogActions>
         </Dialog>
 
       </motion.div>

@@ -1,243 +1,162 @@
 import ApplicationStore from "../utils/ApplicationStore";
 
-const END_POINT = import.meta.env.VITE_API_URL || 'http://localhost:8003/api/v1/';
 const successCaseCode = [200, 201];
-// ─────────────────────────────────────────────
-// Refresh Token API
-// ─────────────────────────────────────────────
-const refreshAccessToken = async () => {
-    try {
-        console.log("⚠️ Access token expired! Using refresh token...");
+const END_POINT = import.meta.env.VITE_API_URL;
 
-        const storedData = ApplicationStore().getStorage("userDetails");
+// ── Silent token refresh ──────────────────────────────────────────────────────
+let _isRefreshing = false;
+let _refreshQueue = []; // [{resolve, reject}] — requests waiting for new token
 
-        console.log("📦 Stored Data:", storedData);
+function _processQueue(error, newToken = null) {
+    _refreshQueue.forEach(({ resolve, reject }) =>
+        error ? reject(error) : resolve(newToken)
+    );
+    _refreshQueue = [];
+}
 
-        if (!storedData) {
-            throw new Error("No user storage found");
-        }
+async function _doRefresh() {
+    const stored = ApplicationStore().getStorage("userDetails") || {};
+    const refreshToken = stored.refreshToken;
+    if (!refreshToken) throw new Error("No refresh token stored");
 
-        // Get refresh token safely
-        const refreshToken = storedData.refreshToken;
+    const res = await fetch(END_POINT + "auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+        mode: "cors",
+        credentials: "same-origin",
+    });
 
-        if (!refreshToken) {
-            throw new Error("No refresh token found");
-        }
-
-        console.log("⚠️ Calling refresh API...");
-
-        const response = await fetch(`${END_POINT}auth/refresh`, {
-            method: "POST",
-            credentials: "include",
-            headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-            },
-            body: JSON.stringify({
-                refresh_token: refreshToken,
-            }),
-        });
-
-        console.log("📡 Refresh Response Status:", response.status);
-
-        // Read response body
-        const responseData = await response.json();
-
-        console.log("📡 Refresh Response Data:", responseData);
-
-        if (!response.ok) {
-            throw new Error(
-                responseData.detail ||
-                responseData.message ||
-                "Refresh token expired"
-            );
-        }
-
-        // Update storage with new tokens
-        const updatedStorage = {
-            ...storedData,
-            accessToken: responseData.access_token,
-            refreshToken:
-                responseData.refresh_token || refreshToken,
-        };
-
-        console.log("✅ Updating Storage:", updatedStorage);
-
-        // Save updated tokens
-        ApplicationStore().setStorage(
-            "userDetails",
-            updatedStorage
-        );
-
-        console.log("✅ Token refreshed successfully");
-
-        return responseData.access_token;
-
-    } catch (error) {
-        console.error("❌ Refresh Token Error:", error);
-
+    if (!res.ok) {
         ApplicationStore().clearStorage();
-
-        window.location.href = "/login";
-
-        throw error;
-    }
-};
-// ─────────────────────────────────────────────
-// Queue Requests While Refreshing
-// ─────────────────────────────────────────────
-let isRefreshing = false;
-let refreshSubscribers = [];
-
-const subscribeTokenRefresh = (callback) => {
-    refreshSubscribers.push(callback);
-};
-
-const onRefreshed = (newToken) => {
-    refreshSubscribers.forEach((callback) => callback(newToken));
-    refreshSubscribers = [];
-};
-
-// ─────────────────────────────────────────────
-// Main Fetch Service
-// ─────────────────────────────────────────────
-const _fetchService = async (
-    PATH,
-    serviceMethod,
-    data,
-    successCallback,
-    errorCallBack
-) => {
-    const storage = ApplicationStore().getStorage("userDetails");
-
-    if (!storage || !storage.userDetails) {
-        errorCallBack?.(401, "Session expired");
-        return;
+        throw new Error("Refresh failed");
     }
 
-    const { accessToken, userDetails } = storage;
+    const data = await res.json();
+    ApplicationStore().setStorage("userDetails", {
+        ...stored,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+    });
+    return data.access_token;
+}
 
-    const {
-        id,
-        email,
-        userRole,
-        companyCode,
-        semesterId,
-        branch,
-        instituteid,
-    } = userDetails;
-
-    const isFormData = data instanceof FormData;
-
-    const makeRequest = async (token) => {
-        const authHeaders = {
-            authorization: `Bearer ${token}`,
-            companyCode: `${companyCode}`,
-            userId: `${id}`,
-            userEmail: `${email}`,
-            userRole: `${userRole}`,
-            semesterId: `${semesterId}`,
-            branch: `${branch}`,
-            instituteid: `${instituteid}`,
-        };
-
-        const headers = isFormData
-            ? authHeaders
-            : {
-                "Content-Type": "application/json",
-                ...authHeaders,
-            };
-
-        return fetch(END_POINT + PATH, {
-            method: serviceMethod,
-            headers,
-            body:
-                serviceMethod === "GET" || serviceMethod === "DELETE"
-                    ? undefined
-                    : isFormData
-                        ? data
-                        : JSON.stringify(data),
-            mode: "cors",
-            cache: "no-cache",
-            credentials: "include",
-            redirect: "follow",
-            referrerPolicy: "no-referrer",
-        });
+function _getAuthHeaders(accessToken) {
+    const { userDetails } = ApplicationStore().getStorage("userDetails") || {};
+    if (!userDetails) return {};
+    const { id, email, userRole, companyCode, semesterId, branch, instituteid } = userDetails;
+    return {
+        authorization: `Bearer ${accessToken}`,
+        companyCode: `${companyCode}`,
+        userId: `${id}`,
+        userEmail: `${email}`,
+        userRole: `${userRole}`,
+        semesterId: `${semesterId}`,
+        branch: `${branch}`,
+        instituteid: `${instituteid}`,
     };
+}
 
-    try {
-        console.log("🚀 Sending API Request:", PATH);
+function _buildRequestOptions(serviceMethod, data, accessToken) {
+    const isFormData = data instanceof FormData;
+    const authHeaders = _getAuthHeaders(accessToken);
+    const headers = isFormData
+        ? authHeaders
+        : { "Content-Type": "application/json", ...authHeaders };
+    return {
+        method: serviceMethod,
+        headers,
+        body:
+            serviceMethod === "GET" || serviceMethod === "DELETE"
+                ? undefined
+                : isFormData
+                    ? data
+                    : JSON.stringify(data),
+        mode: "cors",
+        cache: "no-cache",
+        credentials: "same-origin",
+        redirect: "follow",
+        referrerPolicy: "no-referrer",
+    };
+}
 
-        let response = await makeRequest(accessToken);
+const _fetchService = (PATH, serviceMethod, data, successCallback, errorCallBack) => {
+    const stored = ApplicationStore().getStorage("userDetails") || {};
+    const { accessToken, userDetails } = stored;
 
-        console.log("📡 Response Status:", response.status);
-        // ─────────────────────────────────────
-        // Access token expired
-        // ─────────────────────────────────────
-        if (response.status === 401) {
-            console.log("🔴 401 detected");
-            if (!isRefreshing) {
-                isRefreshing = true;
-
-                try {
-                    const newAccessToken = await refreshAccessToken();
-
-                    isRefreshing = false;
-                    onRefreshed(newAccessToken);
-
-                    // Retry original request
-                    response = await makeRequest(newAccessToken);
-                } catch (error) {
-                    isRefreshing = false;
-                    throw error;
-                }
-            } else {
-                // Wait until token refresh completes
-                const newToken = await new Promise((resolve) => {
-                    subscribeTokenRefresh((token) => {
-                        resolve(token);
-                    });
-                });
-
-                response = await makeRequest(newToken);
-            }
+    if (!userDetails) {
+        if (typeof errorCallBack === "function") {
+            errorCallBack(401, "Session expired — please log in again.");
         }
-
-        // ─────────────────────────────────────
-        // Success Response
-        // ─────────────────────────────────────
-        if (successCaseCode.includes(response.status)) {
-            const dataResponse = await response.json();
-            successCallback?.(dataResponse);
-            return dataResponse;
-        }
-
-        const errorResponse = await response.json();
-
-        errorCallBack?.(
-            response.status,
-            errorResponse.message || "Something went wrong"
-        );
-    } catch (error) {
-        errorCallBack?.(0, error.message || "Network error");
+        return Promise.reject("Unauthorized: No user details found.");
     }
+
+    const _execute = (token) =>
+        fetch(END_POINT + PATH, _buildRequestOptions(serviceMethod, data, token));
+
+    return _execute(accessToken)
+        .then(async (response) => {
+            // ── 401: attempt silent token refresh then retry once ─────────────
+            if (response.status === 401) {
+                if (_isRefreshing) {
+                    // Queue this request until the in-flight refresh finishes
+                    return new Promise((resolve, reject) => {
+                        _refreshQueue.push({ resolve, reject });
+                    }).then((newToken) =>
+                        _execute(newToken).then(async (retryRes) => {
+                            if (successCaseCode.includes(retryRes.status)) return retryRes.json();
+                            const err = await retryRes.json().catch(() => ({}));
+                            throw { errorStatus: retryRes.status, errorMessage: err.detail || err.message };
+                        })
+                    );
+                }
+
+                _isRefreshing = true;
+                try {
+                    const newToken = await _doRefresh();
+                    _processQueue(null, newToken);
+                    const retryRes = await _execute(newToken);
+                    if (successCaseCode.includes(retryRes.status)) return retryRes.json();
+                    const err = await retryRes.json().catch(() => ({}));
+                    throw { errorStatus: retryRes.status, errorMessage: err.detail || err.message };
+                } catch (refreshErr) {
+                    _processQueue(refreshErr, null);
+                    throw { errorStatus: 401, errorMessage: "Session expired — please log in again." };
+                } finally {
+                    _isRefreshing = false;
+                }
+            }
+
+            if (successCaseCode.includes(response.status)) return response.json();
+            const errBody = await response.json().catch(() => ({}));
+            throw { errorStatus: response.status, errorMessage: errBody.detail || errBody.message };
+        })
+        .then((dataResponse) => successCallback(dataResponse))
+        .catch((error) => {
+            if (error.errorStatus === 400 && error.errorMessage === "Token is required") {
+                ApplicationStore().clearStorage();
+            }
+            if (typeof errorCallBack === "function") {
+                errorCallBack(error.errorStatus ?? 0, error.errorMessage || error.message || "Network error");
+            }
+        });
 };
 
-// ─────────────────────────────────────────────
-// Login Service
-// ─────────────────────────────────────────────
+// ─── Auth ───────────────────────────────────────────────────────────────────
+
 export const LoginService = (data) => {
     const PATH = "auth/login";
-
+    const END_POINT = import.meta.env.VITE_API_URL;
+    const headers = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+    };
     return fetch(END_POINT + PATH, {
         method: "POST",
         mode: "cors",
         cache: "no-cache",
-        credentials: "include",
-        headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-        },
+        credentials: "same-origin",
+        headers,
         redirect: "follow",
         referrerPolicy: "no-referrer",
         body: JSON.stringify(data),
@@ -358,6 +277,9 @@ export const UpdateDealService = (id, data, sucess, error) =>
 export const DeleteDealService = (id, sucess, error) =>
     _fetchService(`deals/${id}`, "DELETE", null, sucess, error);
 
+export const GetDealAnalyticsService = (sucess, error) =>
+    _fetchService("deals/analytics", "GET", null, sucess, error);
+
 // ─── Calls ───────────────────────────────────────────────────────────────────
 
 export const GetAllCallsService = (params, sucess, error) => {
@@ -383,8 +305,12 @@ export const GetCallAnalyticsService = (sucess, error) =>
 export const GetCallGapsService = (sucess, error) =>
     _fetchService("calls/gaps", "GET", null, sucess, error);
 
-export const ResolveCallGapService = (callId, gapIndex, answer, sucess, error) =>
-    _fetchService(`calls/${callId}/gaps/resolve`, "POST", { gap_index: gapIndex, answer }, sucess, error);
+export const ResolveCallGapService = (callId, gapIndex, answer, category, productId, sucess, error) =>
+    _fetchService(`calls/${callId}/gaps/resolve`, "POST", {
+        gap_index: gapIndex, answer,
+        ...(category ? { category } : {}),
+        ...(productId ? { product_id: productId } : {}),
+    }, sucess, error);
 
 // ─── AI & RAG Analytics ──────────────────────────────────────────────────────
 
@@ -412,14 +338,25 @@ export const GetGmailMessagesService = (params, sucess, error) => {
     return _fetchService(`gmail/?${query}`, "GET", null, sucess, error);
 };
 
+// Fetch all messages of a Gmail thread (chronological)
+export const GetGmailThreadService = (threadId, sucess, error) =>
+    _fetchService(`gmail/threads/${threadId}`, "GET", null, sucess, error);
+
 export const SyncGmailService = (sucess, error) =>
     _fetchService("gmail/sync", "POST", null, sucess, error);
+
+export const BackfillProductsService = (sucess, error) =>
+    _fetchService("gmail/backfill-products", "POST", null, sucess, error);
 
 export const GetEmailGapsService = (sucess, error) =>
     _fetchService("gmail/gaps", "GET", null, sucess, error);
 
-export const ResolveEmailGapService = (emailId, gapIndex, answer, sucess, error) =>
-    _fetchService(`gmail/${emailId}/gaps/resolve`, "POST", { gap_index: gapIndex, answer }, sucess, error);
+export const ResolveEmailGapService = (emailId, gapIndex, answer, category, productId, sucess, error) =>
+    _fetchService(`gmail/${emailId}/gaps/resolve`, "POST", {
+        gap_index: gapIndex, answer,
+        ...(category ? { category } : {}),
+        ...(productId ? { product_id: productId } : {}),
+    }, sucess, error);
 
 export const ApproveDraftService = (emailId, data, sucess, error) =>
     _fetchService(`gmail/${emailId}/approve-draft`, "POST", data, sucess, error);
@@ -436,8 +373,27 @@ export const GenerateDraftService = (data, sucess, error) =>
 export const SendEmailService = (data, sucess, error) =>
     _fetchService("gmail/send", "POST", data, sucess, error);
 
-export const GetGmailAnalyticsService = (sucess, error) =>
-    _fetchService("gmail/analytics", "GET", null, sucess, error);
+export const GetGmailAnalyticsService = (since = "7d", accountId = null, sucess, error) => {
+    const q = new URLSearchParams({ since })
+    if (accountId) q.set("account_id", accountId)
+    return _fetchService(`gmail/analytics?${q}`, "GET", null, sucess, error)
+}
+
+// ── Settings — Email Accounts ─────────────────────────────────────────────────
+export const GetEmailAccountsService = (sucess, error) =>
+    _fetchService("settings/email-accounts", "GET", null, sucess, error)
+
+export const GetEmailAccountAuthUrlService = (sucess, error) =>
+    _fetchService("settings/email-accounts/auth-url", "GET", null, sucess, error)
+
+export const UpdateEmailAccountService = (id, data, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}`, "PATCH", data, sucess, error)
+
+export const SetPrimaryEmailAccountService = (id, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}/set-primary`, "POST", null, sucess, error)
+
+export const DeleteEmailAccountService = (id, sucess, error) =>
+    _fetchService(`settings/email-accounts/${id}`, "DELETE", null, sucess, error)
 
 export const GetEmailSequencesService = (params, sucess, error) => {
     const query = new URLSearchParams(params || {}).toString();
