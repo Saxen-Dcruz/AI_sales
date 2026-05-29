@@ -64,7 +64,7 @@ def _extract_structured_fields(transcript: str, client) -> dict:
     try:
         from google.genai import types
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=80),
         )
@@ -185,14 +185,14 @@ def _generate_call_summary(transcript: str) -> tuple[str, str, object]:
         client = genai.Client(vertexai=True, project=project_id, location="us-central1")
 
         summary_resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=summary_prompt,
             config=types.GenerateContentConfig(temperature=0.3),
         )
         summary = sanitize_ai_response(summary_resp.text.strip())
 
         sentiment_resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-2.5-flash",
             contents=sentiment_prompt,
             config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=10),
         )
@@ -306,7 +306,7 @@ def process_transcript(db: Session, call: Call, transcript: str) -> Call:
         call.urgency = "unknown"
         call.product_interest = product_name
 
-    gaps = extract_structured_gaps(transcript, summary, product_name, product_id)
+    gaps = extract_structured_gaps(transcript, summary, product_name, product_id, db=db)
     call.followup_gaps = gaps if gaps else None
 
     if call.status not in (CallStatus.COMPLETED, CallStatus.MISSED, CallStatus.FAILED):
@@ -392,6 +392,7 @@ def resolve_gap(
     answer: str,
     category: Optional[str],
     resolved_by: str,
+    product_id: Optional[str] = None,
 ) -> Call:
     gaps = list(call.followup_gaps or [])
     if gap_index < 0 or gap_index >= len(gaps):
@@ -400,19 +401,24 @@ def resolve_gap(
     if gap.get("resolved"):
         raise ValueError("Gap already resolved")
 
-    product_id_str = gap.get("product_id")
+    product_id_str = product_id or gap.get("product_id")
     eff_category = category or gap.get("topic", "general")
 
     if product_id_str:
         from app.services import product_knowledge_service
-        product_knowledge_service.add_entry(
-            db=db,
-            product_id=UUID(product_id_str),
-            category=eff_category,
-            content=f"Q: {gap['question']}\nA: {answer}",
-            added_by=resolved_by,
-        )
-        product_knowledge_service.update_coverage_score(db, product_id_str)
+        from app.database.core import SessionLocal
+        kb_db = SessionLocal()
+        try:
+            product_knowledge_service.add_entry(
+                db=kb_db,
+                product_id=UUID(product_id_str),
+                category=eff_category,
+                content=f"Q: {gap['question']}\nA: {answer}",
+                added_by=resolved_by,
+            )
+            product_knowledge_service.update_coverage_score(kb_db, product_id_str)
+        finally:
+            kb_db.close()
 
     gaps[gap_index] = {**gap, "resolved": True, "answer": answer, "resolved_by": resolved_by}
     call.followup_gaps = gaps

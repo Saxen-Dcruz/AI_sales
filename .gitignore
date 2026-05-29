@@ -10,6 +10,7 @@ assets/
 *.log
 data/
 backend/linkedin_profile_context/
+work/
 
 # --- Python / Environment ---
 .venv/
@@ -50,4 +51,6 @@ backend/calendar_token.json
 *.pem
 *.key
 *.p12
-*.pfx
+*.pfxwork/
+frontend/.env
+backend/product_name

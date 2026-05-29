@@ -1,13 +1,38 @@
 -- Migration 004: Create emails table for Gmail intelligence pipeline
--- Rollback: DROP TABLE IF EXISTS emails; DROP TYPE IF EXISTS emaillabel; DROP TYPE IF EXISTS emailstatus;
+-- Rollback:
+-- DROP TABLE IF EXISTS emails;
+-- DROP TYPE IF EXISTS emaillabel;
+-- DROP TYPE IF EXISTS emailstatus;
 
-CREATE TYPE emaillabel AS ENUM (
-    'Sales', 'Support', 'Grievance', 'Transactional', 'Promotional', 'Personal', 'Unclassified'
-);
+DO $$
+BEGIN
+    CREATE TYPE emaillabel AS ENUM (
+        'Sales',
+        'Support',
+        'Grievance',
+        'Transactional',
+        'Promotional',
+        'Personal',
+        'Unclassified'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TYPE emailstatus AS ENUM (
-    'new', 'classified', 'draft_ready', 'pending_human', 'replied', 'archived', 'ignored'
-);
+DO $$
+BEGIN
+    CREATE TYPE emailstatus AS ENUM (
+        'new',
+        'classified',
+        'draft_ready',
+        'pending_human',
+        'replied',
+        'archived',
+        'ignored'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS emails (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -43,9 +68,21 @@ CREATE TABLE IF NOT EXISTS emails (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_gmail_message_id ON emails(gmail_message_id);
-CREATE INDEX IF NOT EXISTS idx_emails_lead_id ON emails(lead_id);
-CREATE INDEX IF NOT EXISTS idx_emails_label ON emails(label);
-CREATE INDEX IF NOT EXISTS idx_emails_status ON emails(status);
-CREATE INDEX IF NOT EXISTS idx_emails_needs_human ON emails(needs_human) WHERE needs_human = TRUE;
-CREATE INDEX IF NOT EXISTS idx_emails_gmail_thread_id ON emails(gmail_thread_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_gmail_message_id
+ON emails(gmail_message_id);
+
+CREATE INDEX IF NOT EXISTS idx_emails_lead_id
+ON emails(lead_id);
+
+CREATE INDEX IF NOT EXISTS idx_emails_label
+ON emails(label);
+
+CREATE INDEX IF NOT EXISTS idx_emails_status
+ON emails(status);
+
+CREATE INDEX IF NOT EXISTS idx_emails_needs_human
+ON emails(needs_human)
+WHERE needs_human = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_emails_gmail_thread_id
+ON emails(gmail_thread_id);

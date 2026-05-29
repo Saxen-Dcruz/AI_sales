@@ -21,7 +21,7 @@ import {
   ResponsiveContainer,
   XAxis
 } from 'recharts'
-import { GetGmailAnalyticsService } from '../services/ApiService'
+import { GetGmailAnalyticsService, GetEmailAccountsService, BackfillProductsService } from '../services/ApiService'
 
 // ─── Config & Colors ────────────────────────────────────────────────────────
 
@@ -107,7 +107,14 @@ function OperationalCard({ icon: Icon, label, value, sub, color, onClick }) {
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+function EmptyState({ text = 'No data yet' }) {
+  return (
+    <div className="h-40 flex flex-col items-center justify-center gap-2 text-gray-300">
+      <BarChart2 size={28} />
+      <p className="text-xs font-medium text-gray-400">{text}</p>
+    </div>
+  )
+}
 
 export default function GmailAnalytics() {
   const [data, setData] = useState(null)
@@ -275,6 +282,56 @@ export default function GmailAnalytics() {
                 <p className="text-xs font-black text-slate-400 uppercase tracking-widest">AI Accuracy</p>
                 <p className="text-2xl font-black text-slate-800">99.2%</p>
               </div>
+            )
+          })()}
+        </SectionCard>
+      )}
+    </div>
+  )
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+export default function GmailAnalytics() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [since, setSince] = useState('7d')
+  const [accounts, setAccounts] = useState([])
+  const [activeAccount, setActiveAccount] = useState('')
+  const [activeTab, setActiveTab] = useState('overview')
+  const [backfilling, setBackfilling] = useState(false)
+  const [backfillResult, setBackfillResult] = useState(null)
+  const tabBarRef = useRef(null)
+
+  useEffect(() => {
+    GetEmailAccountsService(res => setAccounts(res?.items || []), () => {})
+  }, [])
+
+  const load = (s = since, acc = activeAccount) => {
+    setLoading(true)
+    GetGmailAnalyticsService(s, acc || null, res => { setData(res); setLoading(false) }, () => setLoading(false))
+  }
+
+  useEffect(() => { load(since, activeAccount) }, [since, activeAccount])
+
+  const handleBackfill = () => {
+    setBackfilling(true)
+    setBackfillResult(null)
+    BackfillProductsService(
+      res => { setBackfilling(false); setBackfillResult(res); load(since, activeAccount) },
+      () => { setBackfilling(false); setBackfillResult({ error: true }) }
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans">
+      {/* Page header */}
+      <div className="bg-white border-b border-gray-100 px-6 py-5">
+        <div className="max-w-[1400px] mx-auto">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-xl font-black text-gray-900 tracking-tight">Email Analytics</h1>
+              <p className="text-xs text-gray-400 mt-0.5">Pipeline performance, product intelligence & resolution tracking</p>
             </div>
           </div>
         </div>
@@ -407,7 +464,18 @@ export default function GmailAnalytics() {
             </div>
           </div>
         </div>
+      </div>
 
+      {/* Tab content */}
+      <div className="max-w-[1400px] mx-auto px-6 py-6">
+        <AnimatePresence mode="wait">
+          <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
+            {activeTab === 'overview'   && <TabOverview   data={data} loading={loading} />}
+            {activeTab === 'pipeline'   && <TabPipeline   data={data} loading={loading} />}
+            {activeTab === 'products'   && <TabProducts   data={data} loading={loading} />}
+            {activeTab === 'resolution' && <TabResolution data={data} loading={loading} />}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   )

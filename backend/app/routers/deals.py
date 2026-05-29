@@ -9,7 +9,7 @@ from app.api.dependencies import get_current_user
 from app.database.core import get_db
 from app.models.deal import Deal
 from app.models.user import User
-from app.schema.deal import DealCreate, DealListResponse, DealOut, DealUpdate
+from app.schema.deal import DealAnalyticsResponse, DealCreate, DealListResponse, DealOut, DealUpdate
 from app.services import deal_service
 
 router = APIRouter(prefix="/deals", tags=["Deals"])
@@ -53,6 +53,14 @@ def list_deals(
 
     items, total = deal_service.list_deals(db, page=page, limit=limit, stage=stage, company_id=company_id)
     return DealListResponse(items=items, total=total, page=page, limit=limit)
+
+
+@router.get("/analytics", response_model=DealAnalyticsResponse)
+def get_analytics(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return deal_service.get_analytics(db)
 
 
 @router.get("/{deal_id}", response_model=DealOut)

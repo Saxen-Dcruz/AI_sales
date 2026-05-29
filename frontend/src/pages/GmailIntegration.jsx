@@ -1,19 +1,23 @@
+import { Float, MeshDistortMaterial, Sphere } from '@react-three/drei'
+import { Canvas } from '@react-three/fiber'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
   Archive,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
   Inbox,
   Mail, MailOpen,
   RefreshCw, Reply, Search,
   Send,
+  ShieldAlert,
   Star, Tag,
   Users,
   X, Zap
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
@@ -26,7 +30,15 @@ const ACCOUNT_COLORS = [
   { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-500',  pill: 'bg-amber-100 text-amber-700 border-amber-200'  },
 ]
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config & Colors ─────────────────────────────────────────────────────────
+const COLORS = {
+  indigo: '#4f46e5',
+  violet: '#8b5cf6',
+  emerald: '#10b981',
+  amber: '#f59e0b',
+  rose: '#f43f5e',
+  slate: '#94a3b8',
+}
 
 const LABEL_CONFIG = {
   Sales:         { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-l-emerald-500', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700', avatar: 'bg-emerald-500' },
@@ -58,8 +70,27 @@ const TABS = [
   { key: 'other',        label: 'Other',       icon: Archive,     businessOnly: false },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── 3D Aura Component ──────────────────────────────────────────────────────
+function AuraSphere3D({ size = 400 }) {
+  return (
+    <div className="pointer-events-none opacity-60 z-0" style={{ width: size, height: size }}>
+      <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
+        <Suspense fallback={null}>
+          <ambientLight intensity={0.5} />
+          <pointLight position={[10, 10, 10]} intensity={1} />
+          <Float speed={2} rotationIntensity={1} floatIntensity={2}>
+            <Sphere args={[1.5, 64, 64]}>
+              <MeshDistortMaterial color={COLORS.indigo} speed={3} distort={0.4} roughness={0.2} metalness={0.8} transparent opacity={0.6} />
+            </Sphere>
+          </Float>
+        </Suspense>
+      </Canvas>
+      <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 blur-[100px] rounded-full" />
+    </div>
+  )
+}
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function relTime(iso) {
   if (!iso) return '—'
   const diff = Date.now() - new Date(iso)
@@ -130,6 +161,7 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
               {timeLabel} {displayTime}
             </span>
           </div>
+
           {/* Subject */}
           <p className={`text-xs truncate ${isUnread ? 'font-semibold text-gray-800' : 'text-gray-600'}`}>
             {email.subject || '(no subject)'}
@@ -181,7 +213,7 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
           </div>
         </div>
 
-        <ChevronRight size={12} className={`flex-shrink-0 transition-colors ${selected ? 'text-blue-400' : 'text-gray-300'}`} />
+        <ChevronRight size={14} className={`flex-shrink-0 transition-transform ${selected ? 'text-indigo-600 translate-x-1' : 'text-slate-300'}`} />
       </div>
     </button>
   )
@@ -284,36 +316,43 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
 
   if (done) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-8">
-        <CheckCircle size={32} className="text-emerald-500" />
-        <p className="text-sm font-semibold text-gray-700">Action completed</p>
-        <p className="text-xs text-gray-400">Refreshing inbox...</p>
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-12">
+        <div className="w-16 h-16 rounded-3xl bg-emerald-50 flex items-center justify-center text-emerald-500 shadow-xl shadow-emerald-100">
+          <CheckCircle size={32} />
+        </div>
+        <div className="space-y-1">
+          <p className="text-lg font-black text-slate-900">Intelligence Deployed</p>
+          <p className="text-sm font-bold text-slate-400">Refreshing your inbox flow...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white">
       {/* Header */}
-      <div className={`px-6 py-4 border-b border-gray-100 ${labelCfg.bg}`}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-bold text-gray-900 leading-snug">{email.subject || '(no subject)'}</h2>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${labelCfg.badge}`}>
+      <div className={`px-8 py-6 border-b border-slate-100 relative overflow-hidden`}>
+        <div className={`absolute top-0 left-0 w-1 h-full bg-gradient-to-b`} style={{ background: labelCfg.color }} />
+
+        <div className="flex items-start justify-between gap-6 relative z-10">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-3xl font-black text-slate-900 leading-tight mb-2">{email.subject || '(no subject)'}</h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className={`text-sm font-black px-3 py-1.5 rounded-xl uppercase tracking-wider ${labelCfg.badge}`}>
                 {email.label}
               </span>
               {email.needs_human && (
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+                <span className="text-sm font-black px-3 py-1.5 rounded-xl bg-rose-100 text-rose-600 uppercase tracking-wider">
                   Needs Review
                 </span>
               )}
               {email.classifier_confidence && (
-                <span className="text-[10px] text-gray-400">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 text-sm font-bold text-slate-500 uppercase tracking-wider">
+                  <Zap size={14} className="text-amber-500" />
                   {typeof email.classifier_confidence === 'number'
-                    ? `${Math.round(email.classifier_confidence * 100)}% confidence`
-                    : `${email.classifier_confidence} confidence`}
-                </span>
+                    ? `${Math.round(email.classifier_confidence * 100)}% accuracy`
+                    : `${email.classifier_confidence} accuracy`}
+                </div>
               )}
             </div>
           </div>
@@ -337,14 +376,18 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto px-8 py-6 space-y-8">
 
         {/* Classifier reasoning */}
         {email.classifier_reasoning && (
-          <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">AI Classification</p>
-            <p className="text-xs text-gray-600 leading-relaxed">{email.classifier_reasoning}</p>
-          </div>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+            className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100/50">
+            <div className="flex items-center gap-3 mb-4">
+              <Cpu size={18} className="text-indigo-600" />
+              <p className="text-sm font-black text-indigo-600 uppercase tracking-[0.2em]">Intelligence Insight</p>
+            </div>
+            <p className="text-base font-bold text-slate-700 leading-relaxed">{email.classifier_reasoning}</p>
+          </motion.div>
         )}
 
         {/* Conversation timeline — chat-style: customer → AI reply → customer → AI reply */}
@@ -450,7 +493,7 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
               <p className="text-[10px] text-gray-500 mt-1.5 italic">You've edited the draft — your changes will be sent on approve.</p>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Regenerating draft spinner */}
         {regenerating && (
@@ -573,11 +616,10 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Resolution Note</p>
             <textarea value={note} onChange={e => setNote(e.target.value)}
-              placeholder="Add a note for the customer resolution email..."
-              className="w-full text-xs text-gray-700 border border-gray-200 rounded-xl p-3 resize-none h-20 focus:outline-none focus:border-blue-400 transition-all" />
+              placeholder="Detail the resolution steps taken..."
+              className="w-full text-sm font-bold text-slate-700 border border-slate-200 rounded-2xl p-4 resize-none h-28 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all placeholder:text-slate-300" />
           </div>
         )}
-
       </div>
 
       {/* Action bar */}
@@ -604,13 +646,13 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
           {!isHumanDraft && email.status === 'draft_ready' && email.ai_draft && (
             <>
               <button onClick={handleApprove} disabled={acting === 'approve'}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-all disabled:opacity-60">
-                <Send size={12} />
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 transition-all disabled:opacity-60 shadow-lg shadow-emerald-200">
+                <Send size={16} />
                 {acting === 'approve' ? 'Sending...' : 'Approve & Send'}
               </button>
               <button onClick={handleDiscard} disabled={acting === 'discard'}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 text-gray-600 text-xs font-medium hover:bg-gray-200 transition-all disabled:opacity-60">
-                <X size={12} />
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-white border border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50 transition-all disabled:opacity-60 shadow-sm">
+                <X size={16} />
                 Discard
               </button>
             </>
@@ -626,14 +668,13 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
               </button>
             )}
           {email.status === 'replied' && (
-            <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
-              <CheckCircle size={13} />
-              Replied
+            <div className="flex items-center gap-2 text-sm text-emerald-600 font-bold bg-emerald-50 px-4 py-2 rounded-xl">
+              <CheckCircle size={18} /> Replied
             </div>
           )}
           {email.resolved_at && (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <CheckCircle size={13} className="text-emerald-500" />
+            <div className="flex items-center gap-2 text-sm text-slate-600 font-bold bg-slate-100 px-4 py-2 rounded-xl">
+              <CheckCircle size={18} className="text-emerald-500" />
               Resolved by {email.resolved_by} · {relTime(email.resolved_at)}
             </div>
           )}
@@ -695,7 +736,6 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
 }
 
 // ─── Compose Modal ────────────────────────────────────────────────────────────
-
 function ComposeModal({ onClose, onSent }) {
   const [to, setTo] = useState('')
   const [subject, setSubject] = useState('')
@@ -757,8 +797,8 @@ function ComposeModal({ onClose, onSent }) {
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 transition-all">
-            <X size={15} />
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-200 text-gray-400 transition-all">
+            <X size={20} />
           </button>
         </div>
 
@@ -854,7 +894,6 @@ function ComposeModal({ onClose, onSent }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-
 const PAGE_SIZE = 30
 
 export default function GmailIntegration() {
@@ -862,7 +901,6 @@ export default function GmailIntegration() {
   const [emails, setEmails] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  // const [syncing, setSyncing] = useState(false)
   const [activeTab, setActiveTab] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -886,12 +924,9 @@ export default function GmailIntegration() {
         (_s, err) => reject(new Error(err))
       )
     }),
-    onSuccess: () => {
-      fetchEmails()
-    }
+    onSuccess: () => { fetchEmails(); fetchAnalytics() }
   })
 
-  // When navigated from GapsPage with a specific email to show
   useEffect(() => {
     const emailId = location.state?.selectEmailId
     if (!emailId) return
@@ -958,11 +993,8 @@ export default function GmailIntegration() {
   useEffect(() => { setPage(1); setSelected(null) }, [activeTab])
   useEffect(() => { setPage(1); setSelected(null) }, [activeAccount])
 
-  const handleSync = () => {
-    syncMutation.mutate()
-  }
+  const handleSync = () => syncMutation.mutate()
 
-  // 3. Smart Background Sync Polling (Every 60s & on Window Focus)
   useQuery({
     queryKey: ['backgroundSync'],
     queryFn: () => new Promise((resolve, reject) => {
@@ -977,8 +1009,6 @@ export default function GmailIntegration() {
     refetchInterval: 60000,
     refetchOnWindowFocus: true,
   })
-
-  useEffect(() => { setPage(1); setSelected(null) }, [search])
 
   const syncing = syncMutation.isPending
 
@@ -1004,7 +1034,7 @@ export default function GmailIntegration() {
   const draftReady = globalDraftReady
 
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen bg-[#fcf8ff] text-slate-900 px-6 py-4 md:px-10 md:py-6 relative overflow-hidden font-sans">
 
       {/* Header + stats */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1097,6 +1127,10 @@ export default function GmailIntegration() {
                 )
               })}
             </div>
+            <h1 className="text-4xl font-black tracking-tight text-slate-900">
+              Intelligence <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-500">Inbox</span>
+            </h1>
+            <p className="text-slate-500 font-bold text-base">Managing AI-driven interactions across all connected identities.</p>
           </div>
 
           {/* Search */}
@@ -1109,14 +1143,27 @@ export default function GmailIntegration() {
             </div>
           </div>
 
-          {/* Email list */}
-          <div className="flex-1 overflow-y-auto">
-            {loading ? (
-              <div className="flex justify-center py-12 text-gray-400 text-xs">Loading...</div>
-            ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2">
-                <Mail size={24} className="text-gray-200" />
-                <p className="text-xs text-gray-400">No emails found</p>
+                {acctDropdownOpen && (
+                  <div className="absolute top-full right-0 mt-2 w-64 bg-white/90 backdrop-blur-xl border border-slate-100 rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <button onClick={() => { setActiveAccount(''); setPage(1); setSelected(null); setAcctDropdownOpen(false) }}
+                      className={`w-full flex items-center gap-2 px-5 py-3 text-sm font-black uppercase tracking-wider transition-all hover:bg-slate-50
+                        ${!activeAccount ? 'text-indigo-600 bg-indigo-50/50' : 'text-slate-500'}`}>
+                      <Inbox size={14} /> All Accounts
+                    </button>
+                    {accounts.map((a, i) => {
+                      const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
+                      const isActive = activeAccount === a.id
+                      return (
+                        <button key={a.id} onClick={() => { setActiveAccount(a.id); setPage(1); setSelected(null); setAcctDropdownOpen(false) }}
+                          className={`w-full flex items-center gap-2 px-5 py-3 text-sm font-black transition-all hover:bg-slate-50 border-t border-slate-50
+                            ${isActive ? 'text-indigo-600 bg-indigo-50/50' : 'text-slate-500'}`}>
+                          <span className={`w-2.5 h-2.5 rounded-full ${color.dot}`}></span>
+                          <span className="truncate">{a.email_address}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
               <AnimatePresence>
@@ -1134,7 +1181,6 @@ export default function GmailIntegration() {
                 ))}
               </AnimatePresence>
             )}
-          </div>
 
           {/* Pagination — always visible */}
           <div className="flex items-center justify-between px-3 py-2.5 border-t border-gray-100 bg-gray-50/50 flex-shrink-0">
@@ -1187,23 +1233,79 @@ export default function GmailIntegration() {
                     )
                   })}
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              ) : filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-4 text-center px-6">
+                  <div className="w-16 h-16 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300 shadow-inner">
+                    <MailOpen size={32} />
+                  </div>
+                  <div>
+                    <p className="text-lg font-black text-slate-900 uppercase tracking-wider">No Signals</p>
+                    <p className="text-sm font-bold text-slate-400 mt-2">Try adjusting your filters or active account</p>
+                  </div>
+                </div>
+              ) : (
+                <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.05 } } }} className="divide-y divide-slate-100">
+                  {threadedList.map(({ latest, emails: tEmails }) => (
+                    <motion.div key={latest.id} variants={{ hidden: { opacity: 0, x: -10 }, visible: { opacity: 1, x: 0 } }}>
+                      <EmailRow email={latest} count={tEmails.length} selected={selected === latest.id} onClick={() => setSelected(selected === latest.id ? null : latest.id)} accountColorMap={accountColorMap} />
+                    </motion.div>
+                  ))}
+                </motion.div>
+              )}
+            </div>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-white/60 backdrop-blur-sm">
+              <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                <ChevronRight size={18} className="rotate-180" /> Prev
+              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-black text-slate-900">{page}</span>
+                <span className="text-sm font-bold text-slate-300">/</span>
+                <span className="text-sm font-black text-slate-400">{Math.ceil(total / PAGE_SIZE) || 1}</span>
+              </div>
+              <button disabled={page >= Math.ceil(total / PAGE_SIZE) || Math.ceil(total / PAGE_SIZE) === 0} onClick={() => setPage(p => p + 1)} className="flex items-center gap-2 text-sm font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                Next <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Right Panel: Detail View */}
+          <div className="flex-1 min-w-0 bg-white/90 backdrop-blur-xl">
+            <AnimatePresence mode="wait">
+              {selectedEmail ? (
+                <motion.div key={selectedEmail.id} className="h-full" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
+                  <EmailDetail email={selectedEmail} threadEmails={selectedThread?.emails} onRefresh={() => { fetchEmails(); setSelected(null) }} accountColorMap={accountColorMap} />
+                </motion.div>
+              ) : (
+                <motion.div key="empty" className="flex flex-col items-center justify-center h-full gap-5 text-center p-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                  <div className="w-24 h-24 rounded-full bg-slate-50 flex items-center justify-center border-4 border-white shadow-xl shadow-slate-100">
+                    <MailOpen size={40} className="text-indigo-200" />
+                  </div>
+                  <p className="text-lg font-black text-slate-500 uppercase tracking-widest">Awaiting Selection</p>
+                  <div className="mt-6 grid grid-cols-2 gap-4 w-full max-w-md">
+                    {Object.entries(LABEL_CONFIG).filter(([k]) => k !== 'Unclassified').map(([label, cfg]) => {
+                      const count = emails.filter(e => e.label === label).length
+                      if (!count) return null
+                      return (
+                        <button key={label} onClick={() => setActiveTab(label)} className={`flex items-center justify-between px-5 py-4 rounded-2xl border ${cfg.badge} border-transparent hover:shadow-lg hover:scale-[1.02] transition-all`}>
+                          <span className="text-sm font-black uppercase tracking-wider">{label}</span>
+                          <span className="text-sm font-black">{count}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
+        {/* Compose Modal */}
+        <AnimatePresence>
+          {composeOpen && <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => { fetchEmails(); setActiveTab('draft_ready') }} />}
+        </AnimatePresence>
       </div>
-
-      {/* Compose modal */}
-      <AnimatePresence>
-        {composeOpen && (
-          <ComposeModal
-            onClose={() => setComposeOpen(false)}
-            onSent={() => { fetchEmails(); setActiveTab('draft_ready') }}
-          />
-        )}
-      </AnimatePresence>
-
     </motion.div>
   )
 }

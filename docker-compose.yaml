@@ -74,7 +74,6 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - LIVEKIT_API_URL=http://livekit:7880
       - LIVEKIT_WS_URL=ws://livekit:7880
     extra_hosts:

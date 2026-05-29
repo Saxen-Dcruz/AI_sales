@@ -36,10 +36,16 @@ class EmailOut(BaseModel):
     gmail_draft_id: Optional[str]
     followup_gaps: Optional[list[Union[GapItem, str]]]
     competitor_mention: Optional[str]
+    detected_product_id: Optional[str] = None
+    detected_product_name: Optional[str] = None
     needs_human: bool
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
+    account_id: Optional[UUID] = None
+    account_email: Optional[str] = None
+    updated_at: Optional[datetime] = None
     created_at: datetime
+    thread_count: int = 1
 
     model_config = {"from_attributes": True}
 
@@ -52,6 +58,17 @@ class EmailOut(BaseModel):
         for item in v:
             if isinstance(item, str):
                 result.append(GapItem(question=item, topic="general", product_name=None, product_id=None))
+            elif isinstance(item, dict):
+                # Backfill missing fields from older gap rows that predate the structured schema
+                result.append(GapItem(
+                    question=item.get("question", ""),
+                    topic=item.get("topic", "general"),
+                    product_name=item.get("product_name"),
+                    product_id=item.get("product_id"),
+                    resolved=item.get("resolved", False),
+                    answer=item.get("answer"),
+                    resolved_by=item.get("resolved_by"),
+                ))
             else:
                 result.append(item)
         return result
@@ -83,13 +100,17 @@ class GapNotificationListResponse(BaseModel):
 class GapResolveRequest(BaseModel):
     gap_index: int
     answer: str
-    category: Optional[str] = None   # overrides inferred topic if provided
+    category: Optional[str] = None     # overrides inferred topic if provided
+    product_id: Optional[str] = None   # overrides gap's product_id if provided
 
 
 class EmailSLAAnalytics(BaseModel):
     total_emails: int
     total_inbound: int
     total_outbound: int
+    # Breakdown to make "All" vs per-account transparent
+    total_attributed: int = 0   # emails linked to an active account
+    total_legacy: int = 0       # emails with no account info (pre-multi-account)
     total_sales_emails: int
     auto_sent: int
     drafted_for_review: int
@@ -97,10 +118,31 @@ class EmailSLAAnalytics(BaseModel):
     auto_sent_rate_pct: float
     avg_reply_minutes: float
     sla_breached: int
+    sla_met: int = 0
     competitor_mentions: int
+    grievance_total: int = 0
+    grievance_resolved: int = 0
+    grievance_pending: int = 0
+    support_total: int = 0
+    support_resolved: int = 0
+    support_pending: int = 0
+    daily_stats: list = []
     by_label: dict
     by_status: dict
     by_direction: dict
+    by_account: dict = {}  # email_address → count, for "All" view
+    # Product & revenue analytics
+    by_product: dict = {}           # product_name → inquiry count
+    top_products_purchased: list = []  # [{name, inquiries, converted, conversion_pct}]
+    revenue_total: float = 0.0      # sum of amounts from transactional order/invoice emails
+    order_count: int = 0            # confirmed orders / order_confirmation emails
+    po_count: int = 0               # PO-related transactional emails
+    conversion_rate_pct: float = 0.0  # Sales replied / total Sales * 100
+    lead_pipeline: dict = {}        # interest_level → count (from leads linked to emails)
+    by_company_source: dict = {}    # source name → email count (IndiaMart, TradeIndia, direct, etc.)
+    total_volume_breakdown: dict = {}  # inbound/outbound/sales/support/grievance counts
+    product_source_rows: list = []  # [{product, source, count, converted}] — product × source matrix
+    product_company_rows: list = []  # [{company, source, email, products:[{name,count}]}] — company details
 
 
 class GenerateDraftRequest(BaseModel):
@@ -118,6 +160,9 @@ class SendEmailRequest(BaseModel):
     subject: str
     body: str
     thread_id: Optional[str] = None
+    # Optional: reply in-thread from the account that received the original email.
+    account_id: Optional[UUID] = None
+    reply_to_email_id: Optional[UUID] = None  # the inbound email being replied to
 
 
 class ResolveEmailRequest(BaseModel):

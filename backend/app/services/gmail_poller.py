@@ -1,16 +1,18 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
 
 from sqlalchemy.orm import Session
 
 from app.database.core import SessionLocal
-from app.services.email_router_service import process_inbound_email
 
 logger = logging.getLogger("rdl_app_logger")
 
-POLL_INTERVAL_SECONDS = 120  # check inbox every 2 minutes
-HEARTBEAT_CYCLES = 5        # log "alive" every N cycles (~10 min)
+from app.services.workflows.email_workflow import run_email_workflow
+
+POLL_INTERVAL_SECONDS = 120
+HEARTBEAT_CYCLES = 5
+# 180 cycles × 120 s = 6 hours between LinkedIn auto-searches
+LINKEDIN_SEARCH_CYCLES = 180
 _poller_task: asyncio.Task | None = None
 
 
@@ -23,23 +25,32 @@ async def _poll_loop() -> None:
             cycle += 1
             if processed == 0 and cycle % HEARTBEAT_CYCLES == 0:
                 logger.info("[GMAIL POLLER] Alive — inbox empty (cycle %d)", cycle)
+
+            # LinkedIn auto-search via Google CSE every 6 hours
+            if cycle % LINKEDIN_SEARCH_CYCLES == 0:
+                try:
+                    from app.services.google_linkedin_service import run_auto_google_search
+                    logger.info("[GMAIL POLLER] Running LinkedIn auto-search via Google (cycle %d)", cycle)
+                    await asyncio.to_thread(run_auto_google_search)
+                except Exception as e:
+                    logger.warning(f"[GMAIL POLLER] LinkedIn auto-search failed: {e}")
         except Exception as e:
             logger.error(f"[GMAIL POLLER] Cycle error: {e}", exc_info=True)
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
 def _run_poll_cycle() -> int:
-    """Run one poll cycle. Returns number of messages processed."""
+    """Poll ALL active email accounts. Returns total messages processed."""
     db: Session = SessionLocal()
     try:
-        # Auto-log completed Google Meet events as calls
+        # Auto-log completed Google Meet events
         try:
             from app.services.calendar_service import auto_log_completed_meetings
             auto_log_completed_meetings(db)
         except Exception as e:
             logger.warning(f"[GMAIL POLLER] Meeting auto-log failed: {e}")
 
-        # Process due email drip sequence steps
+        # Process drip sequence steps
         try:
             from app.services.email_sequence_service import process_due_steps
             sent = process_due_steps(db)
@@ -48,22 +59,71 @@ def _run_poll_cycle() -> int:
         except Exception as e:
             logger.warning(f"[GMAIL POLLER] Drip sequence processing failed: {e}")
 
-        from app.services.gmail_service import fetch_unread_messages, get_gmail_service, ensure_labels_exist
-        svc = get_gmail_service()
-        ensure_labels_exist(svc)
-        messages = fetch_unread_messages(svc, max_results=20)
-        if messages:
-            logger.info(f"[GMAIL POLLER] Fetched {len(messages)} unread message(s)")
-        processed = 0
-        for raw_msg in messages:
+        from app.services.gmail_service import fetch_unread_messages, ensure_labels_exist
+        from app.services.email_account_service import get_active_accounts, get_gmail_service_for_account
+        from app.services.gmail_service import get_gmail_service as get_legacy_service
+
+        total_processed = 0
+
+        # ── Poll all DB-configured accounts ──────────────────────────────────
+        active_accounts = get_active_accounts(db)
+        if active_accounts:
+            for account in active_accounts:
+                try:
+                    svc = get_gmail_service_for_account(db, account)
+                    ensure_labels_exist(svc, account_key=account.email_address)
+                    messages = fetch_unread_messages(svc, max_results=20)
+                    if messages:
+                        logger.info(f"[GMAIL POLLER] [{account.email_address}] Fetched {len(messages)} message(s)")
+                    for raw_msg in messages:
+                        try:
+                            # Check if this message belongs to an outreach thread first
+                            from app.services import gmail_service as _gs
+                            from app.services.outreach_sender import process_inbound_reply
+                            _parsed = _gs.parse_message(raw_msg)
+                            _is_outreach = process_inbound_reply(
+                                db,
+                                gmail_thread_id=_parsed.get("gmail_thread_id", ""),
+                                from_email=_gs.extract_email_address(_parsed.get("sender", "")),
+                                body=_parsed.get("body_text", ""),
+                                gmail_message_id=_parsed.get("gmail_message_id", ""),
+                                auto_reply=True,
+                            )
+                            if _is_outreach:
+                                total_processed += 1
+                                continue  # skip standard email classification
+
+                            result = run_email_workflow(db, raw_msg, account_id=str(account.id),
+                                                        account_email=account.email_address)
+                            if result:
+                                logger.info(f"[GMAIL POLLER] [{account.email_address}] "
+                                            f"Processed: {result.subject!r} → {result.label.value}")
+                                total_processed += 1
+                        except Exception as e:
+                            logger.error(f"[GMAIL POLLER] [{account.email_address}] "
+                                         f"Failed msg {raw_msg.get('id')}: {e}", exc_info=True)
+                except Exception as e:
+                    logger.error(f"[GMAIL POLLER] Account {account.email_address} failed: {e}", exc_info=True)
+        else:
+            # ── Legacy fallback: single gmail_token.json ──────────────────────
             try:
-                result = process_inbound_email(db, raw_msg)
-                if result:
-                    logger.info(f"[GMAIL POLLER] Processed: {result.subject!r} → {result.label.value}")
-                    processed += 1
+                svc = get_legacy_service()
+                ensure_labels_exist(svc)
+                messages = fetch_unread_messages(svc, max_results=20)
+                if messages:
+                    logger.info(f"[GMAIL POLLER] Fetched {len(messages)} unread message(s)")
+                for raw_msg in messages:
+                    try:
+                        result = run_email_workflow(db, raw_msg)
+                        if result:
+                            logger.info(f"[GMAIL POLLER] Processed: {result.subject!r} → {result.label.value}")
+                            total_processed += 1
+                    except Exception as e:
+                        logger.error(f"[GMAIL POLLER] Failed msg {raw_msg.get('id')}: {e}", exc_info=True)
             except Exception as e:
-                logger.error(f"[GMAIL POLLER] Failed to process message {raw_msg.get('id')}: {e}", exc_info=True)
-        return processed
+                logger.error(f"[GMAIL POLLER] Legacy poll failed: {e}", exc_info=True)
+
+        return total_processed
     finally:
         db.close()
 

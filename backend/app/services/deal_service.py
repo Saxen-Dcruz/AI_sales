@@ -1,7 +1,10 @@
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
+
+from app.schema.deal import DealAnalyticsResponse, RevenueBreakdown, StageBreakdown
 
 from app.models.company import Company
 from app.models.deal import Deal
@@ -49,6 +52,11 @@ def update_deal(db: Session, deal_id: UUID, payload: DealUpdate) -> Optional[Dea
     prev_stage = deal.stage
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(deal, field, value)
+
+    # Stamp closed_at when deal moves into a terminal stage
+    if payload.stage in ("Closed Won", "Closed Lost") and prev_stage not in ("Closed Won", "Closed Lost"):
+        deal.closed_at = datetime.utcnow()
+
     db.commit()
     db.refresh(deal)
 
@@ -101,3 +109,79 @@ def delete_deal(db: Session, deal_id: UUID) -> bool:
     db.delete(deal)
     db.commit()
     return True
+
+
+def get_analytics(db: Session) -> DealAnalyticsResponse:
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_month_start = (month_start.replace(month=month_start.month - 1) if month_start.month > 1
+                        else month_start.replace(year=month_start.year - 1, month=12))
+    quarter_month = ((now.month - 1) // 3) * 3 + 1
+    quarter_start = now.replace(month=quarter_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    all_deals = db.query(Deal).all()
+    total_deals = len(all_deals)
+
+    terminal = {"Closed Won", "Closed Lost"}
+    open_deals = [d for d in all_deals if d.stage not in terminal]
+    won_deals = [d for d in all_deals if d.stage == "Closed Won"]
+    lost_deals = [d for d in all_deals if d.stage == "Closed Lost"]
+
+    total_open_value = float(sum(d.deal_value or 0 for d in open_deals))
+    total_won_value = float(sum(d.deal_value or 0 for d in won_deals))
+    avg_deal_size = total_open_value / len(open_deals) if open_deals else 0.0
+
+    closed_count = len(won_deals) + len(lost_deals)
+    win_rate = (len(won_deals) / closed_count * 100) if closed_count else 0.0
+
+    # Avg sales cycle: days from created_at to closed_at for won deals
+    cycles = [
+        (d.closed_at - d.created_at).days
+        for d in won_deals
+        if d.closed_at and d.created_at
+    ]
+    avg_sales_cycle_days = sum(cycles) / len(cycles) if cycles else 0.0
+
+    # Pipeline velocity = (open_deals × win_rate × avg_deal_size) / avg_cycle_days
+    pipeline_velocity = (
+        (len(open_deals) * (win_rate / 100) * avg_deal_size / avg_sales_cycle_days)
+        if avg_sales_cycle_days > 0 else 0.0
+    )
+
+    # By-stage breakdown
+    stage_map: dict[str, StageBreakdown] = {}
+    for d in all_deals:
+        key = d.stage or "Unknown"
+        if key not in stage_map:
+            stage_map[key] = StageBreakdown(count=0, total_value=0.0)
+        stage_map[key].count += 1
+        stage_map[key].total_value += float(d.deal_value or 0)
+
+    def _won_in(start, end):
+        return float(sum(
+            d.deal_value or 0 for d in won_deals
+            if d.closed_at and start <= d.closed_at.replace(tzinfo=timezone.utc) < end
+        ))
+
+    revenue = RevenueBreakdown(
+        this_month=_won_in(month_start, now),
+        last_month=_won_in(last_month_start, month_start),
+        this_quarter=_won_in(quarter_start, now),
+        ytd=_won_in(year_start, now),
+    )
+
+    return DealAnalyticsResponse(
+        total_deals=total_deals,
+        open_deals=len(open_deals),
+        total_open_value=total_open_value,
+        avg_deal_size=avg_deal_size,
+        total_won=len(won_deals),
+        total_lost=len(lost_deals),
+        total_won_value=total_won_value,
+        win_rate=round(win_rate, 2),
+        avg_sales_cycle_days=round(avg_sales_cycle_days, 1),
+        pipeline_velocity=round(pipeline_velocity, 2),
+        by_stage=stage_map,
+        revenue=revenue,
+    )

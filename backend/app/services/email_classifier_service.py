@@ -55,12 +55,13 @@ IMPORTANT: The reasoning field must be a plain sentence you write yourself. Neve
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
-    return ChatGoogleGenerativeAI(
-        model="models/gemini-2.5-flash",
-        google_api_key=settings.GOOGLE_API_KEY,
-        temperature=0.1,
-        max_output_tokens=512,
-    )
+    from google.api_core.exceptions import PermissionDenied, ResourceExhausted
+    base_kwargs = dict(temperature=0.1, max_output_tokens=512, max_retries=0)
+    primary_kwargs = {**base_kwargs, **({"google_api_key": settings.GOOGLE_API_KEY} if settings.GOOGLE_API_KEY else {})}
+    primary = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", **primary_kwargs)
+    # Fallback uses ADC (no api_key) — handles both quota exhaustion and blocked/invalid keys
+    fallback = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", **base_kwargs)
+    return primary.with_fallbacks([fallback], exceptions_to_handle=(ResourceExhausted, PermissionDenied))
 
 
 @traceable(run_type="chain", name="classify_email")
@@ -153,4 +154,17 @@ Body:
             "transactional_type": None,
             "transactional_data": None,
             "competitor_mention": None,
+            "llm_unavailable": _is_llm_cap_error(e),
         }
+
+
+def _is_llm_cap_error(exc: Exception) -> bool:
+    """True if the failure is a transient quota/spend-cap/rate-limit error.
+
+    These should defer the email for retry rather than mark it Unclassified —
+    the content is fine, the model is just temporarily unavailable.
+    """
+    msg = str(exc).lower()
+    markers = ("spend cap", "spending cap", "resource_exhausted", "resourceexhausted",
+               "quota", "rate limit", "rate_limit", "429", "exceeded")
+    return any(m in msg for m in markers)

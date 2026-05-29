@@ -114,7 +114,18 @@ class Settings(BaseSettings):
     LIVEKIT_WS_URL: str 
 
     # --- AI API Keys ---
-    GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
+    GOOGLE_CSE_ID: str = ""  # Custom Search Engine ID — programmablesearchengine.google.com
+    SERP_API_KEY: str = ""   # SerpAPI (optional fallback)
+
+    # --- Google OAuth (multi-account Gmail) ---
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    # Override the redirect URI base for OAuth callbacks.
+    # Must match an authorized redirect URI in Google Cloud Console.
+    # Defaults to http://localhost:8001 (required — Google blocks private LAN IPs).
+    OAUTH_REDIRECT_BASE: str = ""
     
 
     # --- REDIS ---
@@ -124,6 +135,10 @@ class Settings(BaseSettings):
     # --- LinkedIn Scraper ---
     LINKEDIN_EMAIL: str | None = None
     LINKEDIN_PASSWORD: str | None = None
+
+    # --- LinkedIn OAuth ---
+    LINKEDIN_CLIENT_ID: str = ""
+    LINKEDIN_CLIENT_SECRET: str = ""
 
 
     # --- JWT Auth ---

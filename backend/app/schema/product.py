@@ -5,7 +5,7 @@ from uuid import UUID
 
 class ProductBase(BaseModel):
     name: str = Field(..., alias="Product_id")
-    order_code: str = Field(..., alias="Order Code")
+    order_code: Optional[str] = Field(None, alias="Order Code")
     category: str = Field(..., alias="Category")
     sub_category: Optional[str] = Field(None, alias="Sub-category")
     brand: Optional[str] = Field(None, alias="Brand")

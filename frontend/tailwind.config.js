@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 /* ============================================================
- * NexusAI — daisyUI abyss-light migration
+ * RDL Sales  — daisyUI abyss-light migration
  * Drop-in replacement for AI_SALES/frontend/tailwind.config.js
  *
  * What changed vs the original:

@@ -257,6 +257,8 @@ function ProductRow({ product, onToggle, onDelete, onView }) {
           {isActive ? 'Active' : 'Inactive'}
         </span>
       </td>
+      
+      {/* Updated Actions Column */}
       <td className="py-3 px-4">
         <div className="flex items-center gap-1">
 

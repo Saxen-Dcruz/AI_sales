@@ -49,3 +49,30 @@ class DealListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class StageBreakdown(BaseModel):
+    count: int
+    total_value: float
+
+
+class RevenueBreakdown(BaseModel):
+    this_month: float
+    last_month: float
+    this_quarter: float
+    ytd: float
+
+
+class DealAnalyticsResponse(BaseModel):
+    total_deals: int
+    open_deals: int
+    total_open_value: float
+    avg_deal_size: float
+    total_won: int
+    total_lost: int
+    total_won_value: float
+    win_rate: float
+    avg_sales_cycle_days: float
+    pipeline_velocity: float
+    by_stage: dict[str, StageBreakdown]
+    revenue: RevenueBreakdown
