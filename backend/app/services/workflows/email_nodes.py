@@ -114,12 +114,15 @@ Best regards,
 RDL Technologies Support Team"""
 
 _MEETING_KEYWORDS = [
-    "schedule a meeting", "schedule a call", "book a meeting", "book a call",
-    "arrange a meeting", "arrange a call", "set up a meeting", "set up a call",
+    "schedule a meeting", "schedule a call", "schedule a demo",
+    "book a meeting", "book a call", "book a demo",
+    "arrange a meeting", "arrange a call", "arrange a demo",
+    "set up a meeting", "set up a call", "set up a demo",
     "google meet", "gmeet", "video call",
-    "can we meet", "let's meet", "meeting at", "call at",
+    "can we meet", "let's meet", "meeting at", "call at", "demo at",
     "confirm the meeting", "confirm our call", "confirm the call",
-    "i'd like a meeting", "i want to schedule",
+    "i'd like a meeting", "i'd like a demo", "i want to schedule",
+    "i need a product demo", "i need a demo", "product demo",
 ]
 
 _MONTH_MAP = {
@@ -163,10 +166,41 @@ def _get_fbt(product_id: Optional[str]) -> str:
         return ""
 
 
+_WEEKDAY_MAP = {
+    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1,
+    "wednesday": 2, "wed": 2, "thursday": 3, "thu": 3, "thurs": 3,
+    "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+}
+
+
+def _parse_time_of_day(text: str) -> Optional[tuple[int, int]]:
+    """Extract HH:MM from text like 'at 4 pm', '4:30 PM', '16:00'. Returns (hour, minute) in 24h."""
+    m = re.search(r'(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)', text)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ampm = m.group(3)
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        return (hour, minute)
+    # 24-hour like "16:00" or "at 14:30"
+    m = re.search(r'(?:at\s+)?(\d{1,2}):(\d{2})\b', text)
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+    return None
+
+
 def _parse_requested_time(body: str) -> Optional[datetime]:
+    """Parse a meeting time from email body. Handles absolute dates, 'tomorrow', 'today', 'tonight', weekday names.
+    Common typos like 'tommorow', 'tommorrow', 'tmrw' are also accepted."""
     from zoneinfo import ZoneInfo
     ist = ZoneInfo("Asia/Kolkata")
     b = body.lower()
+    now_ist = datetime.now(ist)
+
+    # 1) Absolute date: "at 4 pm on 26 May 2026"
     m = re.search(
         r'at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm).*?(\d{1,2})(?:st|nd|rd|th)?\s+'
         r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s*(\d{4})?', b
@@ -175,13 +209,41 @@ def _parse_requested_time(body: str) -> Optional[datetime]:
         hour, minute = int(m.group(1)), int(m.group(2) or 0)
         ampm, day = m.group(3), int(m.group(4))
         month = _MONTH_MAP.get(m.group(5)[:3], 1)
-        year = int(m.group(6)) if m.group(6) else datetime.now().year
-        if ampm == "pm" and hour != 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
+        year = int(m.group(6)) if m.group(6) else now_ist.year
+        if ampm == "pm" and hour != 12: hour += 12
+        elif ampm == "am" and hour == 12: hour = 0
         try:
             return datetime(year, month, day, hour, minute, tzinfo=ist).astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+    # 2) Relative date keywords — "tomorrow", "today", "tonight", typos
+    target_date = None
+    if re.search(r'\b(tomorrow|tomorow|tommorow|tommorrow|tmrw|tmr)\b', b):
+        target_date = (now_ist + timedelta(days=1)).date()
+    elif re.search(r'\btoday\b', b):
+        target_date = now_ist.date()
+    elif re.search(r'\b(tonight|this evening)\b', b):
+        target_date = now_ist.date()
+    else:
+        # 3) Weekday name — "monday", "next thursday", etc.
+        wm = re.search(r'(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thurs|fri|sat|sun)\b', b)
+        if wm:
+            target_weekday = _WEEKDAY_MAP[wm.group(1)]
+            days_ahead = (target_weekday - now_ist.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7  # "monday" said on monday = next monday
+            target_date = (now_ist + timedelta(days=days_ahead)).date()
+
+    if target_date:
+        tod = _parse_time_of_day(b)
+        if not tod:
+            # No time given — default to 10:00 AM IST
+            tod = (10, 0)
+        hour, minute = tod
+        try:
+            return datetime(target_date.year, target_date.month, target_date.day,
+                            hour, minute, tzinfo=ist).astimezone(timezone.utc)
         except ValueError:
             pass
     return None
@@ -245,6 +307,11 @@ def node_classify(state: dict, config: RunnableConfig) -> dict:
         sender=state["sender_raw"],
         thread_context=state.get("thread_context"),
     )
+    if result.get("llm_unavailable"):
+        logger.warning(
+            f"[EMAIL WORKFLOW] LLM unavailable (quota/cap) — deferring email "
+            f"{state.get('gmail_message_id')!r} for retry next poll cycle"
+        )
     return {
         "label": result["label"].value,
         "classifier_confidence": result["confidence"],
@@ -252,6 +319,7 @@ def node_classify(state: dict, config: RunnableConfig) -> dict:
         "transactional_type": result.get("transactional_type"),
         "transactional_data": result.get("transactional_data"),
         "competitor_mention": result.get("competitor_mention"),
+        "llm_unavailable": bool(result.get("llm_unavailable")),
     }
 
 
@@ -319,11 +387,17 @@ def node_upsert_lead(state: dict, config: RunnableConfig) -> dict:
 
 
 def node_detect_product(state: dict, config: RunnableConfig) -> dict:
-    """3-phase product detection from email subject + body."""
+    """3-phase product detection from email subject + body.
+
+    Only persists detected_product_* to the DB when confidence is HIGH.
+    Low/none-confidence matches trigger a clarification email instead — the
+    product is not yet confirmed by the customer, so it must not show up in
+    Product Intelligence analytics as a confirmed inquiry.
+    """
     db = _get_db(config)
     text = f"{state['subject']} {state['effective_body']}"
     product_id, product_name, confidence = detect_product(db, text)
-    if state.get("email_id") and product_name:
+    if state.get("email_id") and product_name and confidence == "high":
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {"detected_product_id": product_id, "detected_product_name": product_name},
             synchronize_session=False,
@@ -399,6 +473,7 @@ def node_extract_gaps(state: dict, config: RunnableConfig) -> dict:
         state.get("draft", ""),
         state.get("product_name"),
         state.get("product_id"),
+        db=db,
     )
     if gaps:
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
@@ -599,6 +674,22 @@ def node_flag_human(state: dict, config: RunnableConfig) -> dict:
     return {"action": "flagged_human"}
 
 
+def node_defer_human(state: dict, config: RunnableConfig) -> dict:
+    """Product detection LLM was unavailable (quota/cap). Flag for human review
+    without sending a clarification — the customer may have already named the
+    product, we just couldn't confirm it. No auto-draft is created."""
+    db = _get_db(config)
+    db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
+        {"needs_human": True, "status": EmailStatus.PENDING_HUMAN},
+        synchronize_session=False,
+    )
+    db.flush()
+    logger.warning(
+        f"[EMAIL WORKFLOW] Product detect LLM unavailable — flagged for human: {state['subject']}"
+    )
+    return {"action": "deferred_human_llm_cap"}
+
+
 def node_archive(state: dict, config: RunnableConfig) -> dict:
     """Archive Transactional/Promotional/Personal emails."""
     db = _get_db(config)
@@ -691,36 +782,100 @@ def node_start_drip(state: dict, config: RunnableConfig) -> dict:
     return {}
 
 
+def _format_slot(dt: datetime) -> str:
+    """Render a UTC datetime as a friendly IST string for emails."""
+    from zoneinfo import ZoneInfo
+    ist = dt.astimezone(ZoneInfo("Asia/Kolkata"))
+    return ist.strftime("%A, %d %b %Y at %I:%M %p IST")
+
+
+def _build_slot_proposal_email(name: str, product: Optional[str], slots: list[datetime]) -> str:
+    """Follow-up email offering the customer a choice of free meeting slots."""
+    first = name.split()[0].title() if name else "there"
+    subject_line = f" about the {product}" if product else ""
+    options = "\n".join(f"  {i+1}. {_format_slot(s)}" for i, s in enumerate(slots))
+    return (
+        f"Hi {first},\n\n"
+        f"Thanks for your interest in scheduling a meeting{subject_line}. "
+        f"Here are a few available times:\n\n"
+        f"{options}\n\n"
+        f"Just reply with the option that works best for you (or suggest another time), "
+        f"and we'll send a Google Meet calendar invite to confirm.\n\n"
+        f"Best regards,\nRDL Technologies Sales Team"
+    )
+
+
 def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
-    """Schedule a meeting only if customer explicitly requested one with a specific time."""
-    if not any(kw in state["effective_body"].lower() for kw in _MEETING_KEYWORDS):
+    """
+    Handle meeting/demo intent on a Sales email:
+
+    - Specific time given (parsed from body) → book it on Google Calendar with a
+      GMeet link + invite email. If the slot is taken, use the next free slot after it.
+    - Meeting intent but NO specific time → send a threaded follow-up email proposing
+      the next few free slots so the customer can pick one. (Previously this case did
+      nothing, leaving the "we'll follow up" promise unfulfilled.)
+    """
+    body_lower = state["effective_body"].lower()
+    if not any(kw in body_lower for kw in _MEETING_KEYWORDS):
         return {}
-    requested_time = _parse_requested_time(state["effective_body"])
-    if not requested_time:
-        logger.info(f"[EMAIL WORKFLOW] Meeting intent but no specific time — skipping: {state['subject']}")
-        return {}
+
     db = _get_db(config)
     lead_id = UUID(state["lead_id"]) if state.get("lead_id") else None
+    requested_time = _parse_requested_time(state["effective_body"])
+
+    # ── Case A: explicit time → book it ────────────────────────────────────────
+    if requested_time:
+        try:
+            from app.services.calendar_service import create_meeting, get_calendar_service, find_next_free_slot, _is_slot_free
+            from app.models.calendar_event import EventTrigger
+            cal_svc = get_calendar_service()
+            slot_end = requested_time + timedelta(minutes=30)
+            if not _is_slot_free(cal_svc, requested_time, slot_end):
+                hours_offset = max(1, int((requested_time - datetime.now(timezone.utc)).total_seconds() / 3600))
+                new_time = find_next_free_slot(hours_from_now=hours_offset)
+                logger.info(f"[EMAIL WORKFLOW] Requested slot {requested_time} taken — using {new_time}")
+                requested_time = new_time
+            event = create_meeting(
+                db=db,
+                attendee_email=state["sender_email"],
+                title=f"Sales Discussion — {state.get('product_name') or state['subject'] or 'Product Inquiry'}",
+                description=f"Meeting requested via email.\nSubject: {state['subject']}",
+                start_time=requested_time,
+                duration_minutes=30,
+                trigger=EventTrigger.MANUAL,
+                lead_id=lead_id,
+            )
+            logger.info(f"[EMAIL WORKFLOW] Meeting scheduled: {event.meet_link} @ {requested_time}")
+            return {"action": "meeting_scheduled"}
+        except Exception as e:
+            logger.warning(f"[EMAIL WORKFLOW] Meeting scheduling failed: {e}", exc_info=True)
+            return {}
+
+    # ── Case B: meeting intent, no time → propose free slots via follow-up ──────
     try:
-        from app.services.calendar_service import create_meeting, get_calendar_service, find_next_free_slot, _is_slot_free
-        from app.models.calendar_event import EventTrigger
-        cal_svc = get_calendar_service()
-        slot_end = requested_time + timedelta(minutes=30)
-        if not _is_slot_free(cal_svc, requested_time, slot_end):
-            requested_time = find_next_free_slot(hours_from_now=2)
-        event = create_meeting(
-            db=db,
-            attendee_email=state["sender_email"],
-            title=f"Sales Discussion — {state['subject'] or 'Product Inquiry'}",
-            description=f"Meeting requested via email.\nSubject: {state['subject']}",
-            start_time=requested_time,
-            duration_minutes=30,
-            trigger=EventTrigger.MANUAL,
-            lead_id=lead_id,
+        from app.services.calendar_service import find_free_slots
+        slots = find_free_slots(count=3)
+        if not slots:
+            logger.info(f"[EMAIL WORKFLOW] Meeting intent but no free slots found: {state['subject']!r}")
+            return {}
+        body = _build_slot_proposal_email(
+            state.get("sender_raw", ""), state.get("product_name"), slots
         )
-        logger.info(f"[EMAIL WORKFLOW] Meeting scheduled: {event.meet_link} @ {requested_time}")
+        subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
+        gmail_svc = _get_gmail_svc(config)
+        gmail_service.send_email(
+            gmail_svc,
+            to=state["sender_email"],
+            subject=subject,
+            body=body,
+            thread_id=state.get("gmail_thread_id"),
+            reply_to_message_id=state.get("rfc_message_id") or None,
+            references=state.get("rfc_references") or None,
+        )
+        logger.info(f"[EMAIL WORKFLOW] Proposed {len(slots)} meeting slots to {state['sender_email']}")
+        return {"action": "meeting_slots_proposed"}
     except Exception as e:
-        logger.warning(f"[EMAIL WORKFLOW] Meeting scheduling failed: {e}")
+        logger.warning(f"[EMAIL WORKFLOW] Slot proposal failed: {e}", exc_info=True)
     return {}
 
 
@@ -753,8 +908,13 @@ def route_after_classify(state: dict) -> str:
 
 
 def route_after_confidence(state: dict) -> str:
-    if state.get("product_confidence", "none") == "high":
+    confidence = state.get("product_confidence", "none")
+    if confidence == "high":
         return "rag_branch"
+    if confidence == "unavailable":
+        # LLM quota/cap hit during product detection — hold for human review
+        # instead of sending a clarification the customer already answered.
+        return "defer_human"
     return "clarification_branch"
 
 

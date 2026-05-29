@@ -60,10 +60,13 @@ class EmailWorkflowState(TypedDict, total=False):
     lead_id: Optional[str]
     is_new_lead: bool
 
+    # Classification availability — True when the LLM was quota/cap-limited
+    llm_unavailable: bool
+
     # Product detection
     product_id: Optional[str]
     product_name: Optional[str]
-    product_confidence: str        # "high" | "low" | "none"
+    product_confidence: str        # "high" | "low" | "none" | "unavailable"
 
     # RAG + draft
     rag_context: Optional[str]
@@ -114,7 +117,7 @@ def build_email_graph():
         node_persist, node_upsert_lead, node_detect_product,
         node_fetch_rag, node_generate_draft, node_extract_gaps,
         node_auto_send, node_hold_draft, node_send_clarification,
-        node_flag_human, node_archive, node_apply_gmail_label,
+        node_flag_human, node_defer_human, node_archive, node_apply_gmail_label,
         node_update_lead_score, node_start_drip,
         node_try_schedule_meeting, node_commit,
         route_after_parse, route_after_classify,
@@ -144,6 +147,7 @@ def build_email_graph():
 
     # Support/Grievance branch
     g.add_node("flag_human", node_flag_human)
+    g.add_node("defer_human", node_defer_human)
 
     # Archive branch
     g.add_node("archive", node_archive)
@@ -160,7 +164,11 @@ def build_email_graph():
         {"end_duplicate": END, "fetch_thread_context": "fetch_thread_context"},
     )
     g.add_edge("fetch_thread_context", "classify")
-    g.add_edge("classify", "persist")
+    g.add_conditional_edges(
+        "classify",
+        lambda s: "defer" if s.get("llm_unavailable") else "persist",
+        {"defer": END, "persist": "persist"},
+    )
     g.add_conditional_edges(
         "persist",
         lambda s: "end_duplicate" if s.get("duplicate") else route_after_classify(s),
@@ -177,7 +185,11 @@ def build_email_graph():
     g.add_conditional_edges(
         "detect_product",
         route_after_confidence,
-        {"rag_branch": "fetch_rag", "clarification_branch": "send_clarification"},
+        {
+            "rag_branch": "fetch_rag",
+            "clarification_branch": "send_clarification",
+            "defer_human": "defer_human",
+        },
     )
 
     # RAG → draft → gaps → decide
@@ -199,6 +211,7 @@ def build_email_graph():
 
     # ── Support/Grievance branch ──
     g.add_edge("flag_human", "apply_gmail_label")
+    g.add_edge("defer_human", "commit")
 
     # ── Archive branch ──
     g.add_edge("archive", "apply_gmail_label")
@@ -282,11 +295,26 @@ def run_email_workflow(
 
 def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
     """
-    Resume the workflow for an email after all its gaps have been filled.
-    Called by the gap-resolve endpoint once all gaps are resolved.
-    Re-evaluates the draft and auto-sends if no more gaps remain.
-    Returns True if the email was successfully sent.
+    Called when the last knowledge gap is resolved.
+
+    Flow:
+    1. Re-run RAG with the original email body (KB now contains the gap answers)
+    2. Generate a brand-new complete draft with no "will confirm" placeholders
+    3. Delete the old stale Gmail draft; save the new one
+    4. Extract gaps from the new draft (should be zero now)
+    5. If no new gaps → set status=draft_ready (human reviews then approves)
+       Auto-send is NOT triggered here — user must explicitly approve the regenerated draft.
+
+    Returns True when the new draft is saved successfully.
     """
+    from app.models.communication import EmailStatus
+    from app.services import gmail_service as gs
+    from app.services.email_account_service import get_account
+    from app.services.workflows.email_nodes import (
+        fetch_rag_context, generate_sales_draft,
+    )
+    from app.services.sales_gap_service import extract_structured_gaps
+
     email = db.query(Email).filter(Email.id == UUID(email_id)).first()
     if not email:
         logger.warning(f"[EMAIL WORKFLOW] Resume: email {email_id} not found")
@@ -294,31 +322,90 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
 
     gaps = email.followup_gaps or []
     if any(not g.get("resolved") for g in gaps):
-        # Still unresolved gaps — do nothing
+        return False  # still unresolved gaps
+
+    # Nothing to regenerate if there was never a draft to begin with
+    if not email.gmail_draft_id:
+        logger.warning(f"[EMAIL WORKFLOW] Resume: no draft_id on email {email_id} — skipping")
         return False
 
-    if not email.gmail_draft_id:
-        logger.warning(f"[EMAIL WORKFLOW] Resume: no draft_id on email {email_id}")
-        return False
+    # ── Get the Gmail service for this account ────────────────────────────────
+    if email.account_id:
+        acct = get_account(db, email.account_id)
+        gmail_svc = gs.get_gmail_service(account=acct) if acct else gs.get_gmail_service()
+    else:
+        gmail_svc = gs.get_gmail_service()
 
     try:
-        from app.services import gmail_service as gs
-        from app.services.email_account_service import get_account
-        # Reply from the same account that received the email
-        if email.account_id:
-            acct = get_account(db, email.account_id)
-            gmail_svc = gs.get_gmail_service(account=acct) if acct else gs.get_gmail_service()
-        else:
-            gmail_svc = gs.get_gmail_service()
-        gs.send_draft(gmail_svc, email.gmail_draft_id)
-        email.gmail_draft_id = None
-        email.needs_human = False
-        from app.models.communication import EmailStatus
-        email.status = EmailStatus.REPLIED
+        # ── Delete the old stale draft ────────────────────────────────────────
+        if email.gmail_draft_id:
+            try:
+                gmail_svc.users().drafts().delete(
+                    userId="me", id=email.gmail_draft_id
+                ).execute()
+            except Exception:
+                pass  # already deleted or not found — continue
+
+        # ── Re-run RAG with the original email body ───────────────────────────
+        rag_context = fetch_rag_context(email.body_text or "") or ""
+        logger.info(
+            f"[EMAIL WORKFLOW] Resume: re-ran RAG for email {email_id} — "
+            f"{len(rag_context)} chars of context"
+        )
+
+        # ── Generate new complete draft ───────────────────────────────────────
+        new_draft_text = generate_sales_draft(
+            sender=email.sender or "",
+            subject=email.subject or "",
+            body=email.body_text or "",
+            rag_context=rag_context,
+        )
+
+        # ── Save as a new Gmail draft ─────────────────────────────────────────
+        reply_subject = (
+            email.subject if (email.subject or "").startswith("Re:")
+            else f"Re: {email.subject}"
+        )
+        sender_addr = gs.extract_email_address(email.sender or "")
+        new_gmail_draft = gs.create_draft(
+            gmail_svc,
+            to=sender_addr,
+            subject=reply_subject,
+            body=new_draft_text,
+            thread_id=email.gmail_thread_id,
+        )
+
+        # ── Check if any new gaps remain in the regenerated draft ─────────────
+        # Pass db so each gap is tied to the specific product mentioned in its
+        # own sentence — important when the draft covers multiple products.
+        new_gaps = extract_structured_gaps(
+            customer_text=email.body_text or "",
+            ai_response=new_draft_text,
+            product_name=None,
+            product_id=None,
+            db=db,
+        )
+
+        email.ai_draft = new_draft_text
+        email.gmail_draft_id = new_gmail_draft["id"]
+        email.followup_gaps = new_gaps or []
+        email.needs_human = bool(new_gaps)          # flag if still has gaps
+        email.status = EmailStatus.DRAFT_READY      # always hold for human review
         db.commit()
-        logger.info(f"[EMAIL WORKFLOW] All gaps resolved — auto-sent draft for email {email_id}")
+
+        if new_gaps:
+            logger.info(
+                f"[EMAIL WORKFLOW] Resume: regenerated draft still has {len(new_gaps)} gaps "
+                f"for email {email_id} — held for review"
+            )
+        else:
+            logger.info(
+                f"[EMAIL WORKFLOW] Resume: complete draft regenerated for email {email_id} "
+                f"— held for human approval before sending"
+            )
         return True
+
     except Exception as e:
-        logger.error(f"[EMAIL WORKFLOW] Resume send failed for {email_id}: {e}")
+        logger.error(f"[EMAIL WORKFLOW] Resume regeneration failed for {email_id}: {e}", exc_info=True)
         db.rollback()
         return False

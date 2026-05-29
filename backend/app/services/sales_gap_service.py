@@ -36,6 +36,22 @@ _FOLLOWUP_MARKERS = [
     "will be in touch", "reach out with", "will verify", "will check",
 ]
 
+# A reply that arranges a meeting/call/demo is NOT a knowledge gap, even though it
+# contains follow-up phrasing like "we will send you a follow-up". These markers
+# identify scheduling intent so such replies are excluded from gap extraction.
+_SCHEDULING_MARKERS = [
+    "schedule", "scheduling", "meeting", "demo", "calendar", "invite",
+    "google meet", "gmeet", "zoom", "book a call", "set up a call",
+    "set up a meeting", "arrange a call", "arrange a meeting", "call you",
+]
+
+
+def _is_scheduling_followup(text: str) -> bool:
+    """True if the follow-up text is about arranging a meeting/call/demo rather
+    than promising missing product information."""
+    t = text.lower()
+    return any(m in t for m in _SCHEDULING_MARKERS)
+
 _TOPIC_KEYWORDS: dict[str, list[str]] = {
     "warranty":      ["warranty", "guarantee", "after-sales", "support period", "repair"],
     "pricing":       ["price", "pricing", "cost", "bulk", "discount", "oem", "quote", "rate"],
@@ -76,16 +92,46 @@ def _extract_numbered_items(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[?])\s+", text) if "?" in s and len(s.strip()) > 15]
 
 
+def _find_product_in_text(text: str, product_catalog: list) -> tuple[Optional[str], Optional[str]]:
+    """
+    Scan `text` for any product name from `product_catalog` and return (id, name)
+    of the longest/most-specific match. Returns (None, None) if no product matched.
+
+    product_catalog is a list of (id, name) tuples — typically from the DB.
+    Matches are case-insensitive, prefer longer names (more specific).
+    """
+    if not text or not product_catalog:
+        return (None, None)
+    text_lower = text.lower()
+    matches = []
+    for pid, pname in product_catalog:
+        if not pname:
+            continue
+        if pname.lower() in text_lower:
+            matches.append((len(pname), pid, pname))
+    if not matches:
+        return (None, None)
+    # Longest match wins (most specific product name)
+    matches.sort(reverse=True)
+    return (str(matches[0][1]), matches[0][2])
+
+
 def extract_structured_gaps(
     customer_text: str,
     ai_response: str,
     product_name: Optional[str],
     product_id: Optional[str],
+    db: Optional[Session] = None,
 ) -> list[dict]:
     """
     Map each follow-up sentence in the AI response back to the customer's original
     question using positional matching, infer the knowledge category, and return
     structured gap dicts ready for the dashboard fill-in form.
+
+    When `db` is provided, each gap's product is detected from the gap's own text
+    (the sentence in the draft that triggered the gap). This way, a multi-product
+    reply with separate follow-ups for different products produces gaps tied to
+    the correct product each — instead of all gaps inheriting one product tag.
 
     Works for any channel — pass email body or call transcript as customer_text,
     and email draft or call script as ai_response.
@@ -94,14 +140,39 @@ def extract_structured_gaps(
     response_items = _extract_numbered_items(ai_response)
     gaps: list[dict] = []
 
+    # Pre-load product catalog once if db provided (used for per-gap product detection)
+    product_catalog: list = []
+    if db is not None:
+        try:
+            from app.models.product import Product
+            product_catalog = [
+                (p.id, p.name)
+                for p in db.query(Product).filter(Product.is_active == True).all()
+            ]
+        except Exception:
+            product_catalog = []
+
+    def _gap_product(gap_text: str) -> tuple[Optional[str], Optional[str]]:
+        """Per-gap product detection — falls back to caller-supplied defaults."""
+        if product_catalog:
+            pid, pname = _find_product_in_text(gap_text, product_catalog)
+            if pid:
+                return (pid, pname)
+        return (product_id, product_name)
+
     if customer_items and response_items:
         for q, a in zip(customer_items, response_items):
             if any(marker in a.lower() for marker in _FOLLOWUP_MARKERS):
+                # A meeting/call/demo arrangement is not a knowledge gap.
+                if _is_scheduling_followup(a):
+                    continue
+                # Detect product mentioned in the follow-up sentence itself
+                pid, pname = _gap_product(a)
                 gaps.append({
                     "question": q.strip(),
                     "topic": infer_topic(q),
-                    "product_name": product_name,
-                    "product_id": product_id,
+                    "product_name": pname,
+                    "product_id": pid,
                     "resolved": False,
                     "answer": None,
                     "resolved_by": None,
@@ -109,17 +180,21 @@ def extract_structured_gaps(
     else:
         # Fallback: check if any follow-up exists in the AI response.
         # The question is the customer's original text (subject or body), NOT the draft sentence.
-        has_followup = any(
-            marker in ai_response.lower() for marker in _FOLLOWUP_MARKERS
+        # Scheduling acknowledgments ("we'll send a meeting invite") are excluded —
+        # they are not missing-knowledge follow-ups.
+        has_followup = (
+            any(marker in ai_response.lower() for marker in _FOLLOWUP_MARKERS)
+            and not _is_scheduling_followup(ai_response)
         )
         if has_followup and customer_text.strip():
-            # Use the customer's actual text (subject or body) as the question
             question = customer_text.strip()[:600]
+            # For the fallback, scan the WHOLE response for a product mention
+            pid, pname = _gap_product(ai_response)
             gaps.append({
                 "question": question,
                 "topic": infer_topic(question),
-                "product_name": product_name,
-                "product_id": product_id,
+                "product_name": pname,
+                "product_id": pid,
                 "resolved": False,
                 "answer": None,
                 "resolved_by": None,
@@ -198,6 +273,10 @@ def _llm_identify_product(
                 logger.info(f"[PRODUCT DETECT] LLM identified: {p.name!r}")
                 return str(p.id), p.name
     except Exception as e:
+        from app.services.email_classifier_service import _is_llm_cap_error
+        if _is_llm_cap_error(e):
+            logger.warning(f"[PRODUCT DETECT] LLM unavailable (quota/cap): {e}")
+            raise
         logger.warning(f"[PRODUCT DETECT] LLM identification failed: {e}")
     return None, None
 
@@ -223,6 +302,8 @@ def detect_product(
     text_lower = text.lower()
     # Strip markdown/punctuation for cleaner Phase 1 matching
     text_clean = re.sub(r"[^a-z0-9 ]", " ", text_lower)
+    # Alphanumeric-only version for order-code matching (handles "RDL 891" → "rdl891")
+    text_alphanum = re.sub(r"[^a-z0-9]", "", text_lower)
 
     # ── Phase 1: exact phrase / order-code match (HIGH confidence) ───────────
     # Check multiple matches — if >1 distinct product names match, return the
@@ -235,7 +316,7 @@ def detect_product(
         # Order code must have ≥3 alphanumeric chars to be valid for matching
         # (guards against placeholder values like "-" matching bullet points)
         code_alphanum = re.sub(r"[^a-z0-9]", "", (p.order_code or "").lower())
-        code_match = len(code_alphanum) >= 3 and code_alphanum in text_clean
+        code_match = len(code_alphanum) >= 3 and code_alphanum in text_alphanum
         if name_clean in text_clean or p.name.lower() in text_lower or code_match:
             phase1_matches.append(p)
 
@@ -278,7 +359,11 @@ def detect_product(
 
     # ── Phase 3: LLM fallback (LOW confidence) ───────────────────────────────
     logger.info("[PRODUCT DETECT] No phrase/keyword match — trying LLM identification")
-    pid, pname = _llm_identify_product(text, products)
+    try:
+        pid, pname = _llm_identify_product(text, products)
+    except Exception:
+        # LLM quota/cap hit — defer rather than send a clarification email
+        return None, None, "unavailable"
     if pid:
         return pid, pname, "low"
 
