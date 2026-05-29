@@ -26,6 +26,70 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { DeleteProductService, ShowAllProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
+// ── Animated loading overlay ──────────────────────────────────────────────────
+function ProductsLoadingOverlay() {
+  return (
+    <motion.div
+      key="products-loading"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-white/70 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        className="bg-white rounded-2xl shadow-2xl border border-blue-100 px-8 py-7 flex flex-col items-center gap-5 w-72"
+      >
+        {/* Pulsing icon */}
+        <div className="relative">
+          <motion.div
+            animate={{ scale: [1, 1.12, 1] }}
+            transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+            className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center"
+          >
+            <Package size={26} className="text-blue-500" />
+          </motion.div>
+          <motion.span
+            animate={{ opacity: [1, 0.3, 1] }}
+            transition={{ duration: 1, repeat: Infinity }}
+            className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-400 rounded-full border-2 border-white"
+          />
+   </div>
+
+        {/* Text */}
+        <div className="text-center">
+          <p className="text-sm font-bold text-gray-800">Fetching Products</p>
+          <p className="text-xs text-gray-400 mt-0.5">Loading your product catalogue…</p>
+        </div>
+
+        {/* Animated equalizer bars */}
+        <div className="flex items-end gap-1 h-7">
+          {[0.45, 0.75, 1, 0.6, 0.85, 0.5, 0.9].map((h, i) => (
+            <motion.div
+              key={i}
+              className="w-1.5 rounded-full bg-blue-400"
+              style={{ originY: 1 }}
+              animate={{ scaleY: [h, 1, h] }}
+              transition={{ duration: 0.7, delay: i * 0.1, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          ))}
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full h-1 bg-blue-50 rounded-full overflow-hidden">
+          <motion.div
+            className="h-full rounded-full bg-blue-500"
+            animate={{ x: ['-100%', '100%'] }}
+            transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+          />
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 function CoverageBar({ score }) {
   if (score === null || score === undefined) {
     return (
@@ -411,10 +475,13 @@ export default function Products() {
         </p>
       </div>
 
+      {/* Animated loading overlay */}
+      <AnimatePresence>
+        {loading && <ProductsLoadingOverlay />}
+      </AnimatePresence>
+
       {/* Content */}
-      {loading ? (
-        <div className="glass-card p-12 flex justify-center text-gray-400 text-sm">Loading products...</div>
-      ) : filtered.length === 0 ? (
+      {!loading && (filtered.length === 0 ? (
         <div className="glass-card p-12 flex flex-col items-center gap-3 text-center">
           <Package size={32} className="text-gray-300" />
           <p className="text-sm text-gray-500">No products found.</p>
@@ -468,7 +535,7 @@ export default function Products() {
             </table>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Pagination */}
       {totalPages > 1 && (

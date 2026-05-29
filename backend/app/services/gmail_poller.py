@@ -66,6 +66,8 @@ def _run_poll_cycle() -> int:
         total_processed = 0
 
         # ── Poll all DB-configured accounts ──────────────────────────────────
+        from app.services.gmail_service import mark_as_read as _mark_as_read
+
         active_accounts = get_active_accounts(db)
         if active_accounts:
             for account in active_accounts:
@@ -76,22 +78,31 @@ def _run_poll_cycle() -> int:
                     if messages:
                         logger.info(f"[GMAIL POLLER] [{account.email_address}] Fetched {len(messages)} message(s)")
                     for raw_msg in messages:
+                        msg_id = raw_msg.get("id", "")
                         try:
-                            # Check if this message belongs to an outreach thread first
                             from app.services import gmail_service as _gs
-                            from app.services.outreach_sender import process_inbound_reply
                             _parsed = _gs.parse_message(raw_msg)
+                            sender = _gs.extract_email_address(_parsed.get("sender", ""))
+
+                            # Skip emails sent by this account to avoid reply loops
+                            if sender.lower() == account.email_address.lower():
+                                _mark_as_read(svc, msg_id)
+                                continue
+
+                            # Check if this message belongs to an outreach thread first
+                            from app.services.outreach_sender import process_inbound_reply
                             _is_outreach = process_inbound_reply(
                                 db,
                                 gmail_thread_id=_parsed.get("gmail_thread_id", ""),
-                                from_email=_gs.extract_email_address(_parsed.get("sender", "")),
+                                from_email=sender,
                                 body=_parsed.get("body_text", ""),
                                 gmail_message_id=_parsed.get("gmail_message_id", ""),
                                 auto_reply=True,
                             )
                             if _is_outreach:
+                                _mark_as_read(svc, msg_id)
                                 total_processed += 1
-                                continue  # skip standard email classification
+                                continue
 
                             result = run_email_workflow(db, raw_msg, account_id=str(account.id),
                                                         account_email=account.email_address)
@@ -101,7 +112,13 @@ def _run_poll_cycle() -> int:
                                 total_processed += 1
                         except Exception as e:
                             logger.error(f"[GMAIL POLLER] [{account.email_address}] "
-                                         f"Failed msg {raw_msg.get('id')}: {e}", exc_info=True)
+                                         f"Failed msg {msg_id}: {e}", exc_info=True)
+                        finally:
+                            # Always mark as read so the same message is never re-fetched
+                            try:
+                                _mark_as_read(svc, msg_id)
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.error(f"[GMAIL POLLER] Account {account.email_address} failed: {e}", exc_info=True)
         else:
@@ -113,13 +130,19 @@ def _run_poll_cycle() -> int:
                 if messages:
                     logger.info(f"[GMAIL POLLER] Fetched {len(messages)} unread message(s)")
                 for raw_msg in messages:
+                    msg_id = raw_msg.get("id", "")
                     try:
                         result = run_email_workflow(db, raw_msg)
                         if result:
                             logger.info(f"[GMAIL POLLER] Processed: {result.subject!r} → {result.label.value}")
                             total_processed += 1
                     except Exception as e:
-                        logger.error(f"[GMAIL POLLER] Failed msg {raw_msg.get('id')}: {e}", exc_info=True)
+                        logger.error(f"[GMAIL POLLER] Failed msg {msg_id}: {e}", exc_info=True)
+                    finally:
+                        try:
+                            _mark_as_read(svc, msg_id)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.error(f"[GMAIL POLLER] Legacy poll failed: {e}", exc_info=True)
 

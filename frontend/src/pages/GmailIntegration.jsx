@@ -232,6 +232,48 @@ function EmailRow({ email, selected, onClick, accountColorMap = {}, count = 1 })
   )
 }
 
+// ─── Thread email card (collapsible, Gmail-style) ────────────────────────────
+function ThreadEmailCard({ isOutbound, isLast, senderLabel, initial, bodyText, timeStr, badge, editable, editValue, onEditChange }) {
+  const [collapsed, setCollapsed] = useState(!isLast)
+  return (
+    <div className={`border rounded-xl overflow-hidden transition-all ${isLast ? (isOutbound ? 'border-emerald-200 shadow-sm' : 'border-indigo-200 shadow-sm') : 'border-slate-200'}`}>
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${collapsed ? 'hover:bg-slate-50' : isOutbound ? 'bg-emerald-50' : 'bg-slate-50'}`}
+      >
+        <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-[11px] font-black text-white ${isOutbound ? 'bg-emerald-600' : 'bg-indigo-500'}`}>
+          {initial}
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span className={`text-xs font-black ${isOutbound ? 'text-emerald-800' : 'text-slate-700'}`}>{senderLabel}</span>
+          {badge && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-black uppercase tracking-wide">{badge}</span>}
+          {collapsed && (
+            <p className="text-[11px] text-slate-400 truncate flex-1">
+              {(bodyText || editValue || '').slice(0, 80)}{(bodyText || editValue || '').length > 80 ? '…' : ''}
+            </p>
+          )}
+        </div>
+        <span className="text-[10px] text-slate-400 flex-shrink-0">{timeStr}</span>
+        <ChevronDown size={14} className={`text-slate-400 flex-shrink-0 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+      </button>
+      {!collapsed && (
+        <div className={`px-5 py-4 border-t ${isOutbound ? 'border-emerald-100 bg-white' : 'border-slate-100 bg-white'}`}>
+          {editable ? (
+            <textarea
+              value={editValue}
+              onChange={e => onEditChange(e.target.value)}
+              rows={8}
+              className="w-full text-sm font-semibold text-slate-700 leading-relaxed border border-rose-200 rounded-xl p-3 resize-none focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition-all bg-white"
+            />
+          ) : (
+            <p className="text-sm font-semibold text-slate-700 leading-relaxed whitespace-pre-wrap">{bodyText}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Email detail ─────────────────────────────────────────────────────────────
 function EmailDetail({ email, threadEmails, onRefresh, accountColorMap = {} }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
@@ -353,75 +395,67 @@ function EmailDetail({ email, threadEmails, onRefresh, accountColorMap = {} }) {
           </motion.div>
         )}
 
-        {/* Conversation thread or single email body */}
-        {threadEmails && threadEmails.length > 1 ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <Mail size={18} className="text-slate-400" />
-              <p className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Conversation</p>
+        {/* Unified Q&A conversation thread */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3 mb-3">
+            <Mail size={18} className="text-slate-400" />
+            <p className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Conversation</p>
+            {threadEmails && threadEmails.length > 1 && (
               <span className="text-xs font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{threadEmails.length} messages</span>
-            </div>
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-              {threadEmails.map((msg, i) => {
-                const isOutbound = msg.direction === 'outbound' || msg.status === 'replied'
-                return (
-                  <div key={msg.id} className={`rounded-2xl p-4 border ${isOutbound ? 'bg-emerald-50/60 border-emerald-100 ml-6' : 'bg-slate-50/60 border-slate-100 mr-6'}`}>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className={`text-xs font-black uppercase tracking-wider ${isOutbound ? 'text-emerald-600' : 'text-slate-500'}`}>
-                        {isOutbound ? 'RDL Technologies' : msg.sender?.split('<')[0].trim() || msg.sender}
-                      </span>
-                      <span className="text-xs font-bold text-slate-400">{new Date(msg.received_at).toLocaleString()}</span>
-                    </div>
-                    <p className="text-sm font-semibold text-slate-700 leading-relaxed whitespace-pre-wrap">
-                      {isOutbound ? (msg.ai_draft || msg.body_text) : msg.body_text}
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
+            )}
           </div>
-        ) : email.body_text ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <Mail size={18} className="text-slate-400" />
-              <p className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Customer Inquiry</p>
-            </div>
-            <div className="text-base font-semibold text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50/50 border border-slate-100 rounded-2xl p-6 max-h-[500px] overflow-y-auto">
-              {email.body_text}
-            </div>
-          </div>
-        ) : null}
 
-        {/* AI Draft - Editable vs ReadOnly */}
-        {email.ai_draft && (
-          isHumanDraft ? (
-            <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
-              className="rounded-[2rem] border-2 p-6 bg-gradient-to-br from-rose-50 to-rose-100/30 border-rose-200 shadow-lg shadow-rose-50">
-              <div className="flex items-center justify-between mb-5">
-                <div className="flex items-center gap-3">
-                  <Zap size={18} className="text-rose-600" />
-                  <p className="text-sm font-black text-rose-600 uppercase tracking-[0.2em]">Draft Reply — Edit before sending</p>
-                </div>
-                <span className="text-xs bg-rose-200 text-rose-700 px-3 py-1 rounded-full font-black uppercase tracking-wider">Not Sent Yet</span>
-              </div>
-              <textarea
-                value={editDraftBody}
-                onChange={e => setEditDraftBody(e.target.value)}
-                className="w-full text-base font-bold text-slate-700 leading-relaxed border border-rose-200 rounded-2xl p-4 resize-none focus:outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100 transition-all bg-white/70"
-                rows={8}
-              />
-            </motion.div>
+          {threadEmails && threadEmails.length > 1 ? (
+            /* Multi-email thread: show all messages as collapsible cards */
+            threadEmails.map((msg, i) => {
+              const isOutbound = msg.direction === 'outbound' || msg.status === 'replied'
+              const isLast = i === threadEmails.length - 1
+              const senderLabel = isOutbound ? 'RDL Technologies' : (msg.sender?.split('<')[0].trim() || msg.sender || 'Customer')
+              const initial = isOutbound ? 'R' : (senderLabel[0]?.toUpperCase() || 'C')
+              const bodyText = isOutbound ? (msg.ai_draft || msg.body_text) : msg.body_text
+              const timeStr = msg.received_at ? new Date(msg.received_at).toLocaleString() : ''
+              return (
+                <ThreadEmailCard
+                  key={msg.id || i}
+                  isOutbound={isOutbound}
+                  isLast={isLast}
+                  senderLabel={senderLabel}
+                  initial={initial}
+                  bodyText={bodyText}
+                  timeStr={timeStr}
+                />
+              )
+            })
           ) : (
-            <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
-              className={`rounded-[2rem] border-2 p-6 bg-gradient-to-br from-emerald-50 to-emerald-100/30 border-emerald-200 shadow-lg shadow-emerald-50`}>
-              <div className="flex items-center gap-3 mb-5">
-                <Zap size={18} className="text-emerald-600" />
-                <p className="text-sm font-black text-emerald-600 uppercase tracking-[0.2em]">Proposed AI Response</p>
-              </div>
-              <p className="text-base font-bold text-slate-700 leading-relaxed whitespace-pre-wrap">{email.ai_draft}</p>
-            </motion.div>
-          )
-        )}
+            /* Single email: show customer question + draft answer as Q&A pair */
+            <>
+              {email.body_text && (
+                <ThreadEmailCard
+                  isOutbound={false}
+                  isLast={!email.ai_draft}
+                  senderLabel={email.sender?.split('<')[0].trim() || 'Customer'}
+                  initial={(email.sender?.split('<')[0].trim() || 'Customer')[0]?.toUpperCase() || 'C'}
+                  bodyText={email.body_text}
+                  timeStr={email.received_at ? new Date(email.received_at).toLocaleString() : ''}
+                />
+              )}
+              {email.ai_draft && (
+                <ThreadEmailCard
+                  isOutbound={true}
+                  isLast={true}
+                  senderLabel="RDL Technologies"
+                  initial="R"
+                  bodyText={isHumanDraft ? undefined : email.ai_draft}
+                  timeStr=""
+                  badge={isHumanDraft ? 'Edit before send' : 'AI Draft'}
+                  editable={isHumanDraft}
+                  editValue={editDraftBody}
+                  onEditChange={setEditDraftBody}
+                />
+              )}
+            </>
+          )}
+        </div>
 
         {/* Knowledge Gaps */}
         {email.followup_gaps?.length > 0 && (
@@ -921,7 +955,7 @@ export default function GmailIntegration() {
                 {TABS.map(tab => {
                   const Icon = tab.icon
                   let count = 0
-                  if (tab.key === "") count = (analytics?.total_inbound || 0) - (analytics?.by_label?.["Unclassified"] || 0)
+                  if (tab.key === "") count = total
                   else if (tab.key === "needs_human") count = analytics?.pending_human || 0
                   else if (tab.key === "draft_ready") count = analytics?.drafted_for_review || 0
                   else if (tab.key === "other") {
@@ -937,7 +971,7 @@ export default function GmailIntegration() {
                       ${activeTab === tab.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                       <Icon size={16} />
                       {tab.label}
-                      {analytics && (
+                      {(tab.key === "" ? !loading : !!analytics) && (
                         <span className={`ml-1 px-1.5 py-0.5 rounded-md text-[10px] leading-none ${activeTab === tab.key ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
                           {count}
                         </span>

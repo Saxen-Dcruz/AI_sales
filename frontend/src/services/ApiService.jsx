@@ -438,3 +438,99 @@ export const AddBlockedTimeService = (data, sucess, error) =>
 
 export const DeleteBlockedTimeService = (id, sucess, error) =>
     _fetchService(`calendar/blocked-times/${id}`, "DELETE", null, sucess, error);
+
+// ─── Lead Generation ─────────────────────────────────────────────────────────
+
+// Discovery
+export const RunDiscoverySearchService = (data, success, error) =>
+    _fetchService("lead-gen/discovery/search", "POST", data, success, error);
+export const RunLinkedInScrapeService = (params, success, error) => {
+    const q = new URLSearchParams(params).toString()
+    return _fetchService(`lead-gen/discovery/linkedin-scrape?${q}`, "POST", null, success, error)
+}
+export const GetProspectCompaniesService = (params, success, error) => {
+    const q = new URLSearchParams(params).toString()
+    return _fetchService(`lead-gen/discovery/companies?${q}`, "GET", null, success, error)
+}
+export const GetProspectContactsService = (params, success, error) => {
+    const q = new URLSearchParams(params).toString()
+    return _fetchService(`lead-gen/discovery/contacts?${q}`, "GET", null, success, error)
+}
+export const ScoreCompaniesService = (ids, success, error) =>
+    _fetchService("lead-gen/discovery/score", "POST", ids || null, success, error);
+
+// Campaigns
+export const GetCampaignsService = (success, error) =>
+    _fetchService("lead-gen/campaigns", "GET", null, success, error);
+export const CreateCampaignService = (data, success, error) =>
+    _fetchService("lead-gen/campaigns", "POST", data, success, error);
+export const UpdateCampaignService = (id, data, success, error) =>
+    _fetchService(`lead-gen/campaigns/${id}`, "PATCH", data, success, error);
+export const DeleteCampaignService = (id, success, error) =>
+    _fetchService(`lead-gen/campaigns/${id}`, "DELETE", null, success, error);
+export const AddContactsToCampaignService = (id, contactIds, success, error) =>
+    _fetchService(`lead-gen/campaigns/${id}/add-contacts`, "POST", { contact_ids: contactIds }, success, error);
+export const GenerateDraftsService = (id, success, error) =>
+    _fetchService(`lead-gen/campaigns/${id}/generate-drafts`, "POST", null, success, error);
+
+// Outreach
+export const GetOutreachQueueService = (params, success, error) => {
+    const q = new URLSearchParams(params).toString()
+    return _fetchService(`lead-gen/outreach/queue?${q}`, "GET", null, success, error)
+}
+export const ApproveOutreachService = (id, data, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/approve`, "POST", data, success, error);
+export const SendOutreachService = (id, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/send`, "POST", null, success, error);
+export const RejectOutreachService = (id, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/reject`, "POST", null, success, error);
+export const SetInterestService = (id, status, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/interest`, "PATCH", { status }, success, error);
+export const GetOutreachThreadService = (id, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/thread`, "GET", null, success, error);
+export const SendManualReplyService = (id, body, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/reply`, "POST", { edit_body: body }, success, error);
+export const GenerateAIReplyService = (id, success, error) =>
+    _fetchService(`lead-gen/outreach/${id}/generate-reply`, "POST", null, success, error);
+
+// Analytics
+export const GetLeadGenAnalyticsService = (success, error) =>
+    _fetchService("lead-gen/analytics/dashboard", "GET", null, success, error);
+
+// LinkedIn
+export const GetLinkedInStatsService = (success, error) =>
+    _fetchService("linkedin/stats", "GET", null, success, error);
+export const GetLinkedInBudgetService = (success, error) =>
+    _fetchService("linkedin/budget", "GET", null, success, error);
+export const GetLinkedInOutreachService = (params, success, error) => {
+    const q = new URLSearchParams(params).toString()
+    return _fetchService(`linkedin?${q}`, "GET", null, success, error)
+}
+export const TriggerLinkedInDiscoveryService = (data, success, error) =>
+    _fetchService("linkedin/discover-companies", "POST", data, success, error);
+export const QueueConnectionService = (id, success, error) =>
+    _fetchService(`linkedin/${id}/queue-connection`, "POST", null, success, error);
+export const QueueMessageService = (id, success, error) =>
+    _fetchService(`linkedin/${id}/queue-message`, "POST", null, success, error);
+export const MarkConnectedService = (id, success, error) =>
+    _fetchService(`linkedin/${id}/connected`, "PATCH", null, success, error);
+export const MarkMessageSentService = (id, success, error) =>
+    _fetchService(`linkedin/${id}/message-sent`, "PATCH", null, success, error);
+export const MarkReplyReceivedService = (id, reply, success, error) =>
+    _fetchService(`linkedin/${id}/reply`, "PATCH", { reply_preview: reply }, success, error);
+
+// LinkedIn OAuth accounts
+export const GetLinkedInAccountsService = (success, error) =>
+    _fetchService("linkedin-accounts", "GET", null, success, error);
+export const GetLinkedInAuthUrlService = (success, error) =>
+    _fetchService("linkedin-accounts/auth-url", "GET", null, success, error);
+export const DisconnectLinkedInAccountService = (id, success, error) =>
+    _fetchService(`linkedin-accounts/${id}`, "DELETE", null, success, error);
+
+// LinkedIn scraper session (li_at cookie)
+export const GetScraperSessionStatusService = (success, error) =>
+    _fetchService("linkedin-accounts/scraper-session", "GET", null, success, error);
+export const SaveScraperSessionService = (li_at, success, error) =>
+    _fetchService("linkedin-accounts/scraper-session", "POST", { li_at }, success, error);
+export const ClearScraperSessionService = (success, error) =>
+    _fetchService("linkedin-accounts/scraper-session", "DELETE", null, success, error);
