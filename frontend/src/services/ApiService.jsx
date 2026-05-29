@@ -338,6 +338,10 @@ export const GetGmailMessagesService = (params, sucess, error) => {
     return _fetchService(`gmail/?${query}`, "GET", null, sucess, error);
 };
 
+// Fetch all messages of a Gmail thread (chronological)
+export const GetGmailThreadService = (threadId, sucess, error) =>
+    _fetchService(`gmail/threads/${threadId}`, "GET", null, sucess, error);
+
 export const SyncGmailService = (sucess, error) =>
     _fetchService("gmail/sync", "POST", null, sucess, error);
 

@@ -30,7 +30,7 @@ export default function LoginForm() {
     try {
       const response = await LoginService({ email, password })
       const data = await response.json()
-      
+
       if (!response.ok) {
         setError(data.detail || 'Invalid email or password')
         setIsLoading(false)
@@ -39,7 +39,6 @@ export default function LoginForm() {
 
       ApplicationStore().setStorage("userDetails", {
         accessToken: data.access_token,
-        refreshToken: data.refresh_token,
         userDetails: { id: "", email: email, userRole: "", companyCode: "", semesterId: "", branch: "", instituteid: "" }
       })
 

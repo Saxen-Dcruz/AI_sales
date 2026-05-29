@@ -111,9 +111,11 @@ function EmailAccountsSection() {
   }
 
   const handleToggleActive = (acct) => {
+    // Confirm before deactivating — deactivated accounts stop being polled for new emails
+    if (acct.is_active && !window.confirm(`Deactivate ${acct.email_address}?\n\nThis stops the poller from checking this inbox for new emails.`)) return
     setActing(acct.id + '_toggle')
     UpdateEmailAccountService(acct.id, { is_active: !acct.is_active },
-      () => { fetchAccounts(); setActing(null); showToast(`${acct.email_address} ${acct.is_active ? 'deactivated' : 'activated'}`) },
+      () => { fetchAccounts(); setActing(null); showToast(`${acct.email_address} ${acct.is_active ? 'deactivated — polling stopped' : 'activated — polling resumed'}`) },
       () => { setActing(null); showToast('Update failed', 'error') }
     )
   }
