@@ -1,152 +1,242 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend
+  Linkedin, Users, UserCheck, Send, MessageSquare, RefreshCw,
+  TrendingUp, Activity, Zap, Clock,
+} from 'lucide-react'
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
+  CartesianGrid, FunnelChart, Funnel, LabelList, Cell,
 } from 'recharts'
+import { GetLinkedInStatsService, GetLinkedInBudgetService } from '../services/ApiService'
 
-const dailyLeads = [
-  { day: 'Mon', scraped: 320, posts: 45 },
-  { day: 'Tue', scraped: 410, posts: 62 },
-  { day: 'Wed', scraped: 385, posts: 55 },
-  { day: 'Thu', scraped: 490, posts: 78 },
-  { day: 'Fri', scraped: 445, posts: 69 },
-  { day: 'Sat', scraped: 210, posts: 30 },
-  { day: 'Sun', scraped: 175, posts: 22 },
-]
-
-const profileSuccess = [
-  { day: 'Mon', success: 78 }, { day: 'Tue', success: 82 }, { day: 'Wed', success: 75 },
-  { day: 'Thu', success: 88 }, { day: 'Fri', success: 85 }, { day: 'Sat', success: 79 }, { day: 'Sun', success: 72 },
-]
-
-const industryData = [
-  { name: 'Technology', value: 38, color: '#6172f3' },
-  { name: 'Finance', value: 22, color: '#8b5cf6' },
-  { name: 'Healthcare', value: 16, color: '#06b6d4' },
-  { name: 'Retail', value: 12, color: '#10b981' },
-  { name: 'Other', value: 12, color: '#f59e0b' },
-]
-
-const sourceData = [
-  { name: 'LinkedIn', value: 52, color: '#0077b5' },
-  { name: 'Inbound', value: 24, color: '#6172f3' },
-  { name: 'Sheets', value: 14, color: '#10b981' },
-  { name: 'Referral', value: 10, color: '#f59e0b' },
-]
+const LINKEDIN_BLUE = '#0077b5'
 
 const tt = {
-  contentStyle: { background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '12px', color: '#111827', fontSize: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' },
-  cursor: { fill: 'rgba(0,0,0,0.04)' },
+  contentStyle: {
+    background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12,
+    fontSize: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+  },
+  cursor: { fill: 'rgba(0,0,0,0.03)' },
 }
 
-const pageVar = { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } }
+function KpiCard({ icon: Icon, label, value, sub, color, loading }) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      className="relative overflow-hidden bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow">
+      <div className="absolute top-0 right-0 w-24 h-24 rounded-full -translate-y-8 translate-x-8 opacity-[0.06]"
+        style={{ background: color }} />
+      <div className="p-2 rounded-xl w-fit mb-3" style={{ background: `${color}18` }}>
+        <Icon size={18} style={{ color }} />
+      </div>
+      {loading ? (
+        <div className="h-8 w-20 bg-gray-100 rounded-lg animate-pulse mb-1" />
+      ) : (
+        <p className="text-2xl font-black text-gray-900">{value ?? '—'}</p>
+      )}
+      <p className="text-xs font-semibold text-gray-500 mt-0.5">{label}</p>
+      {sub && <p className="text-[11px] text-gray-400 mt-1">{sub}</p>}
+    </motion.div>
+  )
+}
+
+function BudgetBar({ label, used, limit, color }) {
+  const pct = limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : 0
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1.5">
+        <span className="font-semibold text-gray-700">{label}</span>
+        <span className="text-gray-400">{used} / {limit}</span>
+      </div>
+      <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
+          className="h-full rounded-full"
+          style={{ background: pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : color }}
+        />
+      </div>
+      <p className="text-[11px] text-gray-400 mt-1">{limit - used} remaining today</p>
+    </div>
+  )
+}
+
+const FUNNEL_COLORS = ['#0077b5', '#3b9ed4', '#6172f3', '#10b981', '#f59e0b']
 
 export default function LinkedInAnalytics() {
+  const [stats, setStats] = useState(null)
+  const [budget, setBudget] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  const load = () => {
+    setLoading(true)
+    GetLinkedInStatsService(
+      d => { setStats(d); setLoading(false) },
+      () => setLoading(false)
+    )
+    GetLinkedInBudgetService(d => setBudget(d), () => {})
+  }
+
+  useEffect(() => { load() }, [])
+
+  const funnelData = stats ? [
+    { name: 'Discovered', value: stats.total_discovered, fill: FUNNEL_COLORS[0] },
+    { name: 'Connection Sent', value: stats.total_discovered - stats.connection_not_sent, fill: FUNNEL_COLORS[1] },
+    { name: 'Connected', value: stats.connection_accepted, fill: FUNNEL_COLORS[2] },
+    { name: 'Messaged', value: stats.messages_sent, fill: FUNNEL_COLORS[3] },
+    { name: 'Replied', value: stats.messages_replied, fill: FUNNEL_COLORS[4] },
+  ] : []
+
+  const barData = funnelData.map(d => ({ name: d.name, count: d.value }))
+
+  const b = budget || {}
+
   return (
-    <motion.div variants={pageVar} initial="initial" animate="animate" className="space-y-6">
-      {/* Stat row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Leads Scraped Today', value: '490', change: '+12%', color: 'text-primary-400' },
-          { label: 'Posts Generated', value: '78', change: '+8%', color: 'text-accent-cyan' },
-          { label: 'Profile Success Rate', value: '88%', change: '+3%', color: 'text-accent-green' },
-          { label: 'Connection Requests', value: '1,240', change: '+18%', color: 'text-accent-purple' },
-        ].map((s, i) => (
-          <motion.div key={i} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
-            className="glass-card p-5">
-            <p className="text-xs text-gray-500 mb-2">{s.label}</p>
-            <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-accent-green mt-1">{s.change} this week</p>
-          </motion.div>
-        ))}
-      </div>
+    <div className="min-h-screen bg-gray-50 font-sans">
+      <div className="max-w-[1400px] mx-auto px-6 py-6 space-y-6">
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Leads + posts bar */}
-        <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Daily Lead Scraping</h3>
-          <p className="text-xs text-gray-500 mb-4">Scraped leads and posts per day</p>
-          <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <BarChart data={dailyLeads} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barCategoryGap="30%">
-              <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip {...tt} />
-              <Bar dataKey="scraped" fill="#6172f3" radius={[6, 6, 0, 0]} name="Scraped" />
-              <Bar dataKey="posts" fill="#06b6d4" radius={[6, 6, 0, 0]} name="Posts" />
-            </BarChart>
-          </ResponsiveContainer>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+              style={{ background: `${LINKEDIN_BLUE}18` }}>
+              <Linkedin size={20} style={{ color: LINKEDIN_BLUE }} />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-gray-900">LinkedIn Analytics</h1>
+              <p className="text-xs text-gray-400 mt-0.5">Real-time outreach funnel & daily budget</p>
+            </div>
+          </div>
+          <button onClick={load}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100 transition-all">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
         </div>
 
-        {/* Profile success line */}
-        <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Profile Scraping Success Rate</h3>
-          <p className="text-xs text-gray-500 mb-4">% of successful profile scrapes</p>
-          <ResponsiveContainer width="100%" height={220} minWidth={0}>
-            <LineChart data={profileSuccess} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="rgba(0,0,0,0.06)" strokeDasharray="4 4" />
-              <XAxis dataKey="day" tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[60, 100]} tick={{ fill: '#5e5f6e', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" />
-              <Tooltip {...tt} formatter={v => [`${v}%`, 'Success Rate']} />
-              <Line type="monotone" dataKey="success" stroke="#10b981" strokeWidth={2.5}
-                dot={{ fill: '#10b981', r: 4, strokeWidth: 0 }}
-                activeDot={{ r: 6, fill: '#10b981', stroke: '#fff', strokeWidth: 2 }} />
-            </LineChart>
-          </ResponsiveContainer>
+        {/* KPI cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <KpiCard icon={Users} label="Profiles Discovered" value={stats?.total_discovered?.toLocaleString()}
+            color={LINKEDIN_BLUE} loading={loading} />
+          <KpiCard icon={Clock} label="Connection Pending"
+            value={stats?.connection_pending?.toLocaleString()} color="#f59e0b" loading={loading} />
+          <KpiCard icon={UserCheck} label="Connected"
+            value={stats?.connection_accepted?.toLocaleString()}
+            sub={`${stats?.connection_rate_pct ?? 0}% accept rate`}
+            color="#10b981" loading={loading} />
+          <KpiCard icon={Send} label="Messages Sent"
+            value={stats?.messages_sent?.toLocaleString()} color="#6172f3" loading={loading} />
+          <KpiCard icon={MessageSquare} label="Replied"
+            value={stats?.messages_replied?.toLocaleString()}
+            sub={`${stats?.reply_rate_pct ?? 0}% reply rate`}
+            color="#8b5cf6" loading={loading} />
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Industry donut */}
-        <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Industry Distribution</h3>
-          <div className="flex items-center gap-6">
-            <ResponsiveContainer width={180} height={180} minWidth={0}>
-              <PieChart>
-                <Pie data={industryData} cx="50%" cy="50%" innerRadius={55} outerRadius={80}
-                  paddingAngle={3} dataKey="value">
-                  {industryData.map((e, i) => <Cell key={i} fill={e.color} stroke="none" />)}
-                </Pie>
-                <Tooltip {...tt} formatter={v => [`${v}%`, '']} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="space-y-2">
-              {industryData.map((d, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                  <span className="text-xs text-gray-500">{d.name}</span>
-                  <span className="text-xs font-semibold text-gray-900 ml-auto pl-4">{d.value}%</span>
-                </div>
-              ))}
+        {/* Rates row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm flex items-center gap-5">
+            <div className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ background: '#10b98118' }}>
+              <TrendingUp size={24} style={{ color: '#10b981' }} />
+            </div>
+            <div>
+              <p className="text-3xl font-black text-gray-900">{stats?.connection_rate_pct ?? '—'}%</p>
+              <p className="text-sm font-semibold text-gray-500">Connection Accept Rate</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {stats?.connection_accepted ?? 0} accepted out of {(stats?.total_discovered ?? 0) - (stats?.connection_not_sent ?? 0)} sent
+              </p>
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm flex items-center gap-5">
+            <div className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ background: '#8b5cf618' }}>
+              <Activity size={24} style={{ color: '#8b5cf6' }} />
+            </div>
+            <div>
+              <p className="text-3xl font-black text-gray-900">{stats?.reply_rate_pct ?? '—'}%</p>
+              <p className="text-sm font-semibold text-gray-500">Message Reply Rate</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {stats?.messages_replied ?? 0} replied out of {stats?.messages_sent ?? 0} sent
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Lead source donut */}
-        <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">Lead Source Breakdown</h3>
-          <div className="flex items-center gap-6">
-            <ResponsiveContainer width={180} height={180} minWidth={0}>
-              <PieChart>
-                <Pie data={sourceData} cx="50%" cy="50%" innerRadius={55} outerRadius={80}
-                  paddingAngle={3} dataKey="value">
-                  {sourceData.map((e, i) => <Cell key={i} fill={e.color} stroke="none" />)}
-                </Pie>
-                <Tooltip {...tt} formatter={v => [`${v}%`, '']} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="space-y-2">
-              {sourceData.map((d, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                  <span className="text-xs text-gray-500">{d.name}</span>
-                  <span className="text-xs font-semibold text-gray-900 ml-auto pl-4">{d.value}%</span>
-                </div>
-              ))}
+        {/* Funnel chart + Daily budget */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+          {/* Outreach Funnel */}
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <h3 className="text-sm font-black text-gray-900 mb-4">Outreach Funnel</h3>
+            {loading ? (
+              <div className="h-52 bg-gray-50 rounded-xl animate-pulse" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={barData} barSize={36}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                  <Tooltip {...tt} formatter={v => [v.toLocaleString(), 'Count']} />
+                  <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                    {barData.map((entry, i) => (
+                      <Cell key={i} fill={FUNNEL_COLORS[i] || LINKEDIN_BLUE} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Daily Budget */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-5">
+              <Zap size={16} style={{ color: LINKEDIN_BLUE }} />
+              <h3 className="text-sm font-black text-gray-900">Daily Budget</h3>
             </div>
+            {budget ? (
+              <div className="space-y-5">
+                <BudgetBar
+                  label="Connection Requests"
+                  used={b.connections_used ?? 0}
+                  limit={b.connections_limit ?? 15}
+                  color={LINKEDIN_BLUE}
+                />
+                <BudgetBar
+                  label="Messages (Today)"
+                  used={b.messages_used_today ?? 0}
+                  limit={40}
+                  color="#6172f3"
+                />
+                <BudgetBar
+                  label="Messages (This Week)"
+                  used={b.messages_used_week ?? 0}
+                  limit={90}
+                  color="#8b5cf6"
+                />
+                <div className="pt-3 border-t border-gray-100 space-y-1.5">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Connections left</span>
+                    <span className="font-black text-emerald-600">{b.connections_remaining ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Messages left today</span>
+                    <span className="font-black text-emerald-600">{b.messages_remaining_today ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Messages left this week</span>
+                    <span className="font-black text-emerald-600">{b.messages_remaining_week ?? 0}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {[1, 2, 3].map(i => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}
+              </div>
+            )}
           </div>
         </div>
+
       </div>
-    </motion.div>
+    </div>
   )
 }
