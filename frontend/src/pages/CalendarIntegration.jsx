@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, ChevronRight, RefreshCw, ExternalLink,
-  Video, Calendar, Clock, User, Zap, Brain, MousePointer, X,
-  CheckCircle, AlertCircle, CalendarDays, Briefcase, Tag, Link as LinkIcon
+  Video, Calendar, Clock, User, Zap, Brain, MousePointer, Shield, X,
+  CheckCircle, AlertCircle, CalendarDays, Briefcase, Tag, Link as LinkIcon,
+  Plus, Copy
 } from 'lucide-react'
 import {
   GetCalendarEventsService,
@@ -12,6 +13,7 @@ import {
   GetSchedulingConfigService,
   GetEmailAccountsService,
   UpdateSchedulingConfigService,
+  ScheduleMeetingService,
 } from '../services/ApiService'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -95,7 +97,10 @@ function EventChip({ event, onClick }) {
         ${cfg.bg} ${cfg.text} ${isCancelled ? 'opacity-40 line-through' : ''}`}
     >
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-      <span className="truncate">{fmtTime(event.start_time)} • {event.attendee_email?.split('@')[0]}</span>
+      <span className="truncate">
+        {fmtTime(event.start_time)} • {event.attendee_email?.split('@')[0]}
+        {event.owner_email && <span className="opacity-60 ml-1">({event.owner_email.split('@')[0]})</span>}
+      </span>
     </motion.button>
   )
 }
@@ -162,6 +167,15 @@ function EventDetail({ event, onClose }) {
               <p className="text-sm font-medium text-gray-800">{event.attendee_email || '—'}</p>
             </div>
           </div>
+          {event.owner_email && (
+            <div className="flex items-start gap-3">
+              <Shield size={14} className="text-violet-400 mt-0.5" />
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Scheduled by</p>
+                <p className="text-sm font-medium text-violet-700">{event.owner_email}</p>
+              </div>
+            </div>
+          )}
           <div className="flex items-start gap-3">
             <Clock size={14} className="text-gray-400 mt-0.5" />
             <div>

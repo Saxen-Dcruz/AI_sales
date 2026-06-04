@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, CheckCircle2, ChevronDown, LogOut, Menu, Settings as SettingsIcon, User } from 'lucide-react'
+import { Bell, CheckCircle2, ChevronDown, LogOut, Menu, Settings as SettingsIcon, Shield, User, Users } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
@@ -19,7 +19,8 @@ const pageTitles = {
   '/calendar':       { title: 'Calendar',            sub: 'Meetings & follow-up schedule' },
   '/products':       { title: 'Products',            sub: 'Product catalogue management' },
   '/add-product':    { title: 'Add Product',         sub: 'Create a new product listing' },
-  '/settings':       { title: 'Settings',            sub: 'Account & system configuration' },
+  '/settings':         { title: 'Settings',            sub: 'Account & system configuration' },
+  '/user-management':  { title: 'User Management',     sub: 'Manage team accounts & permissions' },
 }
 
 const dummyNotifications = [
@@ -35,6 +36,7 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
   const email = userDetails.email || "admin@RDL Sales .io";
   const name = email.split('@')[0];
   const initials = name.substring(0, 2).toUpperCase();
+  const isSuperAdmin = userDetails.userRole === "Admin";
   const navigate = useNavigate()
   const page = pageTitles[location.pathname] || { title: location.pathname.replace('/', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Dashboard', sub: '' }
 
@@ -188,9 +190,16 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
             onClick={() => setShowProfile(!showProfile)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${showProfile ? 'bg-gray-100' : 'hover:bg-gray-100'}`}
           >
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #2563eb, #3b82f6)' }}>
-              {initials}
+            <div className="relative">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm"
+                style={{ background: isSuperAdmin ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : 'linear-gradient(135deg, #2563eb, #3b82f6)' }}>
+                {initials}
+              </div>
+              {isSuperAdmin && (
+                <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-violet-600 rounded-full flex items-center justify-center ring-2 ring-white">
+                  <Shield size={7} className="text-white" />
+                </span>
+              )}
             </div>
             <ChevronDown size={12} className={`text-gray-500 hidden sm:block transition-transform duration-200 ${showProfile ? 'rotate-180' : ''}`} />
           </button>
@@ -205,7 +214,14 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                 className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden origin-top-right"
               >
                 <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
-                  <p className="text-sm font-semibold text-gray-900">{name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-gray-900">{name}</p>
+                    {isSuperAdmin && (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                        <Shield size={8} />SUPER ADMIN
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-500 mt-0.5">{email}</p>
                 </div>
                 <div className="p-2 space-y-0.5">
@@ -225,6 +241,16 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
                     <SettingsIcon size={14} className="text-gray-400" />
                     Settings
                   </Link>
+                  {isSuperAdmin && (
+                    <Link
+                      to="/user-management"
+                      onClick={() => setShowProfile(false)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-violet-700 hover:bg-violet-50 rounded-xl transition-colors"
+                    >
+                      <Users size={14} className="text-violet-500" />
+                      Manage Users
+                    </Link>
+                  )}
                 </div>
                 <div className="p-2 border-t border-gray-100">
                   <button

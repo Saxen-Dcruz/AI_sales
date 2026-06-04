@@ -31,7 +31,7 @@ class DealUpdate(BaseModel):
 class DealOut(BaseModel):
     id: UUID
     deal_name: str
-    company_id: UUID
+    company_id: Optional[UUID] = None
     lead_id: Optional[UUID] = None
     deal_value: Decimal
     stage: str

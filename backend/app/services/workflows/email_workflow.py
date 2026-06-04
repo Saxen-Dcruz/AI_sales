@@ -336,17 +336,12 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
     else:
         gmail_svc = gs.get_gmail_service()
 
-    try:
-        # ── Delete the old stale draft ────────────────────────────────────────
-        if email.gmail_draft_id:
-            try:
-                gmail_svc.users().drafts().delete(
-                    userId="me", id=email.gmail_draft_id
-                ).execute()
-            except Exception:
-                pass  # already deleted or not found — continue
+    old_draft_id = email.gmail_draft_id  # keep a reference so we can fall back on failure
 
+    try:
         # ── Re-run RAG with the original email body ───────────────────────────
+        # Do this BEFORE touching Gmail so a spend-cap / LLM failure leaves the
+        # original draft intact and the user can still approve manually.
         rag_context = fetch_rag_context(email.body_text or "") or ""
         logger.info(
             f"[EMAIL WORKFLOW] Resume: re-ran RAG for email {email_id} — "
@@ -361,7 +356,12 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
             rag_context=rag_context,
         )
 
-        # ── Save as a new Gmail draft ─────────────────────────────────────────
+        if not new_draft_text or not new_draft_text.strip():
+            logger.warning(f"[EMAIL WORKFLOW] Resume: empty draft for {email_id} — keeping original draft")
+            return False
+
+        # ── Save the NEW Gmail draft first, THEN delete the old one ──────────
+        # Reversing the order prevents losing the draft if save fails mid-way.
         reply_subject = (
             email.subject if (email.subject or "").startswith("Re:")
             else f"Re: {email.subject}"
@@ -375,9 +375,16 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
             thread_id=email.gmail_thread_id,
         )
 
+        # New draft saved → now safe to remove the old one
+        if old_draft_id:
+            try:
+                gmail_svc.users().drafts().delete(
+                    userId="me", id=old_draft_id
+                ).execute()
+            except Exception:
+                pass  # already deleted or not found — not fatal
+
         # ── Check if any new gaps remain in the regenerated draft ─────────────
-        # Pass db so each gap is tied to the specific product mentioned in its
-        # own sentence — important when the draft covers multiple products.
         new_gaps = extract_structured_gaps(
             customer_text=email.body_text or "",
             ai_response=new_draft_text,
@@ -389,8 +396,8 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
         email.ai_draft = new_draft_text
         email.gmail_draft_id = new_gmail_draft["id"]
         email.followup_gaps = new_gaps or []
-        email.needs_human = bool(new_gaps)          # flag if still has gaps
-        email.status = EmailStatus.DRAFT_READY      # always hold for human review
+        email.needs_human = bool(new_gaps)
+        email.status = EmailStatus.DRAFT_READY
         db.commit()
 
         if new_gaps:
@@ -400,12 +407,15 @@ def resume_after_gaps_resolved(db: Session, email_id: str) -> bool:
             )
         else:
             logger.info(
-                f"[EMAIL WORKFLOW] Resume: complete draft regenerated for email {email_id} "
-                f"— held for human approval before sending"
+                f"[EMAIL WORKFLOW] Resume: complete draft ready for {email_id} "
+                f"— held for human approval"
             )
         return True
 
     except Exception as e:
         logger.error(f"[EMAIL WORKFLOW] Resume regeneration failed for {email_id}: {e}", exc_info=True)
-        db.rollback()
+        # DO NOT rollback — the gap.resolved flag was committed by the router
+        # before calling us, and we must not lose that. The original draft_id
+        # is still valid (we only delete after a successful new save), so the
+        # user can still approve the old draft manually.
         return False

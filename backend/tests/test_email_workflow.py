@@ -1203,16 +1203,33 @@ def test_node_try_schedule_meeting_no_slots_available(db):
 
 def test_node_try_schedule_meeting_schedules_with_specific_time(db):
     from app.services.workflows.email_nodes import node_try_schedule_meeting
+    from app.models.email_account import EmailAccount as _EAModel
+    from app.models.user import User as _User
+    # Use an existing user as owner so FK constraint is satisfied
+    acc_id = uuid.uuid4()
+    from app.database.core import SessionLocal
+    with SessionLocal() as s:
+        owner = s.query(_User).first()
+        assert owner, "Need at least one user in DB for this test"
+        fake_owner = owner.id
+        s.add(_EAModel(
+            id=acc_id,
+            email_address=f"sched_{acc_id.hex[:6]}@rdltest.com",
+            token_data="x",
+            owner_id=fake_owner,
+        ))
+        s.commit()
     with patch("app.services.workflows.email_nodes._parse_requested_time",
                return_value=datetime(2026, 6, 10, 10, 0, tzinfo=timezone.utc)), \
          patch("app.services.calendar_service.create_meeting", return_value=MagicMock(meet_link="https://meet.google.com/abc")), \
          patch("app.services.calendar_service.get_calendar_service", return_value=MagicMock()), \
          patch("app.services.calendar_service._is_slot_free", return_value=True):
+        cfg = _make_config(db, account_id=str(acc_id))
         result = node_try_schedule_meeting(
             {"effective_body": "Can we schedule a meeting at 10am on June 10?",
              "subject": "Meeting request", "sender_email": "x@x.com",
              "product_name": None, "lead_id": None},
-            _make_config(db),
+            cfg,
         )
     assert result == {"action": "meeting_scheduled"}
 

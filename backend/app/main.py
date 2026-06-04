@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard, lead_gen
+from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard, lead_gen, users
 from app.routers import settings as settings_router
 from app.routers import linkedin_accounts as linkedin_accounts_router
 
@@ -169,6 +169,7 @@ app.add_middleware(
 # ROUTERS (To be enabled later)
 # ─────────────────────────────────────────────────────────────
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
 app.include_router(product.router, prefix="/api/v1")
 app.include_router(leads.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")

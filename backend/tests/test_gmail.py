@@ -1864,9 +1864,14 @@ def _make_workflow_patches(label, gmail_id=None, extra_patches=None):
         "transactional_data": None, "competitor_mention": None,
     }
 
+    # Fake account that always reports auto_send_enabled=True so the workflow's
+    # routing decisions are deterministic regardless of real DB state (a user
+    # may have toggled real accounts into Draft mode for manual testing).
+    fake_account = MagicMock(auto_send_enabled=True)
     patches = [
         patch("app.services.gmail_service.get_gmail_service", return_value=MagicMock()),
         patch("app.services.workflows.email_nodes.gmail_service.get_gmail_service", return_value=MagicMock()),
+        patch("app.services.email_account_service.get_account", return_value=fake_account),
         patch("app.services.gmail_service.ensure_labels_exist"),
         patch("app.services.gmail_service.fetch_unread_messages", return_value=[raw_msg]),
         patch("app.services.workflows.email_nodes.gmail_service.apply_label_to_message"),

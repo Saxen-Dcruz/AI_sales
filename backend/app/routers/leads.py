@@ -6,6 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.api.dependencies import get_current_user
+from app.api.scoping import assert_can_access
 from app.database.core import get_db
 from app.models.user import User
 from app.schema.leads import (
@@ -35,22 +36,34 @@ class SentimentTimeline(BaseModel):
     current_sentiment: str
 
 
+def _effective_owner(current_user: User, requested: Optional[UUID]) -> Optional[UUID]:
+    """Compute the owner_id filter to apply for list-style queries.
+    Regular user → always their own id. Super-admin → None (all) by default, or
+    `requested` if they passed `?owner_id=<uuid>` to scope to one user."""
+    if not current_user.is_superuser:
+        return current_user.id
+    return requested  # may be None = no filter
+
+
 @router.post("/", response_model=LeadOut, status_code=status.HTTP_201_CREATED)
 def create_lead(
     payload: LeadCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    return leads_service.create_lead(db, payload)
+    return leads_service.create_lead(db, payload, owner_id=current_user.id)
 
 
 @router.get("/classification-summary", response_model=LeadClassificationSummary)
 def classification_summary(
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Count and average score per tier (HIGH / MEDIUM / LOW / UNCLASSIFIED)."""
-    return leads_service.get_classification_summary(db)
+    return leads_service.get_classification_summary(
+        db, owner_id_filter=_effective_owner(current_user, owner_id)
+    )
 
 
 @router.get("/", response_model=LeadListResponse)
@@ -61,12 +74,14 @@ def list_leads(
     search: Optional[str] = Query(None),
     at_risk: Optional[bool] = Query(default=None, description="Leads with score <40 and no activity in 7+ days"),
     classification: Optional[str] = Query(default=None, description="Filter by tier: HIGH, MEDIUM, LOW, UNCLASSIFIED"),
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     items, total = leads_service.list_leads(
         db, page=page, limit=limit, status=status, search=search,
         at_risk=at_risk, classification=classification,
+        owner_id_filter=_effective_owner(current_user, owner_id),
     )
     # Populate company_name from the relationship
     out = []
@@ -81,7 +96,7 @@ def list_leads(
 def score_breakdown(
     lead_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Full scoring signal breakdown for a lead.
@@ -89,6 +104,10 @@ def score_breakdown(
     intent, urgency, inbound/outbound contact split, deal stage, meetings,
     sentiment trajectory, gap count, recency, interaction volume.
     """
+    lead = leads_service.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    assert_can_access(lead, current_user)
     from app.services.lead_scoring_service import get_score_breakdown
     data = get_score_breakdown(db, lead_id)
     if not data:
@@ -108,7 +127,7 @@ def score_breakdown(
 def reclassify_lead(
     lead_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Manually trigger a full score + classification refresh for a lead.
@@ -117,6 +136,7 @@ def reclassify_lead(
     lead = leads_service.get_lead(db, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    assert_can_access(lead, current_user)
     from app.services.lead_scoring_service import update_lead_score
     update_lead_score(db, lead_id)
     return leads_service.get_lead(db, lead_id)
@@ -126,7 +146,7 @@ def reclassify_lead(
 def get_sentiment_timeline(
     lead_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Cross-channel sentiment timeline: merges email + call sentiments for a lead."""
     from app.models.communication import Email
@@ -135,6 +155,7 @@ def get_sentiment_timeline(
     lead = leads_service.get_lead(db, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    assert_can_access(lead, current_user)
 
     points = []
 
@@ -187,11 +208,12 @@ def get_sentiment_timeline(
 def get_lead(
     lead_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     lead = leads_service.get_lead(db, lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    assert_can_access(lead, current_user)
     lo = LeadOut.model_validate(lead)
     lo.company_name = lead.company.name if lead.company else None
     return lo
@@ -202,11 +224,13 @@ def update_lead(
     lead_id: UUID,
     payload: LeadUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    lead = leads_service.update_lead(db, lead_id, payload)
-    if not lead:
+    existing = leads_service.get_lead(db, lead_id)
+    if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    assert_can_access(existing, current_user)
+    lead = leads_service.update_lead(db, lead_id, payload)
     return lead
 
 
@@ -214,7 +238,10 @@ def update_lead(
 def delete_lead(
     lead_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    if not leads_service.delete_lead(db, lead_id):
+    existing = leads_service.get_lead(db, lead_id)
+    if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    assert_can_access(existing, current_user)
+    leads_service.delete_lead(db, lead_id)

@@ -90,6 +90,7 @@ def create_meeting(
     title: str,
     description: str,
     start_time: datetime,
+    owner_id: UUID,
     duration_minutes: int = 30,
     trigger: EventTrigger = EventTrigger.MANUAL,
     lead_id: Optional[UUID] = None,
@@ -136,6 +137,7 @@ def create_meeting(
 
     event_row = CalendarEvent(
         google_event_id=created["id"],
+        owner_id=owner_id,
         lead_id=lead_id,
         deal_id=deal_id,
         title=title,

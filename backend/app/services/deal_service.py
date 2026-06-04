@@ -13,10 +13,10 @@ from app.schema.deal import DealCreate, DealUpdate
 logger = logging.getLogger("rdl_app_logger")
 
 
-def create_deal(db: Session, payload: DealCreate) -> Deal:
+def create_deal(db: Session, payload: DealCreate, owner_id: UUID) -> Deal:
     if not db.query(Company).filter(Company.id == payload.company_id).first():
         raise ValueError("Company not found")
-    deal = Deal(**payload.model_dump(exclude_none=True))
+    deal = Deal(owner_id=owner_id, **payload.model_dump(exclude_none=True))
     db.add(deal)
     db.commit()
     db.refresh(deal)
@@ -33,8 +33,11 @@ def list_deals(
     limit: int = 20,
     stage: Optional[str] = None,
     company_id: Optional[UUID] = None,
+    owner_id_filter: Optional[UUID] = None,
 ) -> Tuple[List[Deal], int]:
     q = db.query(Deal)
+    if owner_id_filter is not None:
+        q = q.filter(Deal.owner_id == owner_id_filter)
     if stage:
         q = q.filter(Deal.stage == stage)
     if company_id:
@@ -90,6 +93,7 @@ def update_deal(db: Session, deal_id: UUID, payload: DealUpdate) -> Optional[Dea
                         f"Deal value: ₹{deal.deal_value}"
                     ),
                     start_time=slot,
+                    owner_id=deal.owner_id,  # event inherits the deal's owner
                     duration_minutes=30,
                     trigger=EventTrigger.DEAL_SIGNAL,
                     lead_id=deal.lead_id,
@@ -111,7 +115,7 @@ def delete_deal(db: Session, deal_id: UUID) -> bool:
     return True
 
 
-def get_analytics(db: Session) -> DealAnalyticsResponse:
+def get_analytics(db: Session, owner_id_filter: Optional[UUID] = None) -> DealAnalyticsResponse:
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     last_month_start = (month_start.replace(month=month_start.month - 1) if month_start.month > 1
@@ -120,7 +124,10 @@ def get_analytics(db: Session) -> DealAnalyticsResponse:
     quarter_start = now.replace(month=quarter_month, day=1, hour=0, minute=0, second=0, microsecond=0)
     year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    all_deals = db.query(Deal).all()
+    q = db.query(Deal)
+    if owner_id_filter is not None:
+        q = q.filter(Deal.owner_id == owner_id_filter)
+    all_deals = q.all()
     total_deals = len(all_deals)
 
     terminal = {"Closed Won", "Closed Lost"}

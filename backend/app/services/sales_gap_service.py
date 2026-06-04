@@ -211,6 +211,20 @@ _STOP_WORDS = {
     "will", "can", "does", "do", "be", "has", "have", "get", "i", "we",
     # common 2-char words that are not product identifiers
     "it", "on", "up", "so", "as", "us", "me", "my", "no", "if", "ok",
+    # inquiry context terms — customers commonly include these around the actual
+    # product name. They should NOT be treated as product-identifying tokens
+    # (e.g. "lead time" must not pull in a "Real Time Clock" product).
+    "looking", "help", "send", "share", "provide", "details", "info",
+    "information", "interested", "regarding", "regards", "thanks", "thank",
+    "you", "your", "our", "please", "kindly",
+    "price", "pricing", "cost", "quote", "quotation", "rate", "discount",
+    "model", "number", "code",
+    "lead", "time", "delivery", "stock", "availability", "ship", "shipping",
+    "specs", "specification", "specifications", "datasheet", "manual",
+    # signature noise common in B2B emails
+    "ceo", "cto", "cfo", "coo", "founder", "director", "manager", "head",
+    "limited", "ltd", "pvt", "inc", "co", "company", "rdl", "www",
+    "mobile", "phone", "email", "regard", "sincerely", "best",
 }
 
 
@@ -388,8 +402,12 @@ def find_similar_products(db: Session, text: str, limit: int = 4) -> list[dict]:
         if not prod_kw_set:
             continue
         matched = len(prod_kw_set & text_kw_set)
-        if matched > 0:
-            scored.append((matched / len(prod_kw_set), p))
+        if matched == 0:
+            continue
+        # Coverage normalized against max(prod_kw_count, 3) so a short product
+        # name with 1 match doesn't outrank a longer one with the same match.
+        coverage = matched / max(len(prod_kw_set), 3)
+        scored.append((coverage, p))
 
     scored.sort(key=lambda x: -x[0])
     return [
