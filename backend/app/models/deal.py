@@ -10,6 +10,8 @@ class Deal(Base):
     __tablename__ = "deals"
 
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    # RBAC owner — the user who owns this deal. NOT NULL enforced (migration 022).
+    owner_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     company_id = Column(PGUUID(as_uuid=True), ForeignKey("companies.id"))
     lead_id = Column(PGUUID(as_uuid=True), ForeignKey("leads.id"), nullable=True)
 

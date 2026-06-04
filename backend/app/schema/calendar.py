@@ -38,6 +38,7 @@ class CalendarEventOut(BaseModel):
     status: EventStatus
     invite_email_sent: bool
     created_at: datetime
+    owner_email: Optional[str] = None  # super-admin: which user scheduled this event
 
     model_config = {"from_attributes": True}
 

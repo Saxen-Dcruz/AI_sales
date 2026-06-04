@@ -34,6 +34,8 @@ class Call(Base):
     __tablename__ = "calls"
 
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    # RBAC owner — the user who owns/handled this call. NOT NULL enforced (migration 022).
+    owner_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     lead_id = Column(PGUUID(as_uuid=True), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)
 
     direction = Column(Enum(CallDirection), nullable=False)

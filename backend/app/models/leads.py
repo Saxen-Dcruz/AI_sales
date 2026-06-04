@@ -10,6 +10,8 @@ class Lead(Base):
     __tablename__ = "leads"
 
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    # RBAC owner — the user who owns this lead. NOT NULL enforced (migration 022).
+    owner_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     company_id = Column(PGUUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
 
     name = Column(String, index=True)

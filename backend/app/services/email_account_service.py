@@ -43,8 +43,11 @@ def _decode_token(token_data: str):
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
-def list_accounts(db: Session) -> list[EmailAccount]:
-    return db.query(EmailAccount).order_by(EmailAccount.is_primary.desc(), EmailAccount.created_at).all()
+def list_accounts(db: Session, owner_id: Optional[UUID] = None) -> list[EmailAccount]:
+    q = db.query(EmailAccount)
+    if owner_id is not None:
+        q = q.filter(EmailAccount.owner_id == owner_id)
+    return q.order_by(EmailAccount.is_primary.desc(), EmailAccount.created_at).all()
 
 
 def get_account(db: Session, account_id: UUID) -> Optional[EmailAccount]:
@@ -130,7 +133,7 @@ def _redis_client():
     return redis.Redis(host=cfg.REDIS_HOST, port=cfg.REDIS_PORT, db=2, decode_responses=True)
 
 
-def get_auth_url(redirect_uri: str) -> str:
+def get_auth_url(redirect_uri: str, owner_id: Optional[UUID] = None) -> str:
     # autogenerate_code_verifier=True is the default in google-auth-oauthlib >= 1.0,
     # so flow.code_verifier is always set after authorization_url() is called.
     # Store it in Redis keyed by state so the callback can retrieve it.
@@ -142,42 +145,71 @@ def get_auth_url(redirect_uri: str) -> str:
     )
     if flow.code_verifier:
         _redis_client().setex(f"oauth_pkce:{state}", 600, flow.code_verifier)
+    if owner_id is not None:
+        _redis_client().setex(f"oauth_owner:{state}", 600, str(owner_id))
     return auth_url
 
 
-def exchange_code_and_save(db: Session, code: str, redirect_uri: str, state: str = None, added_by: str = "admin") -> EmailAccount:
-    """Exchange OAuth authorization code for credentials, fetch email, store in DB."""
+def exchange_code_and_save(
+    db: Session,
+    code: str,
+    redirect_uri: str,
+    state: str = None,
+    added_by: str = "admin",
+    owner_id: Optional[UUID] = None,
+) -> EmailAccount:
+    """Exchange OAuth authorization code for credentials, fetch email, store in DB.
+
+    `owner_id` must be the UUID of the app user who connected this Gmail account.
+    Required when owner_id is enforced NOT NULL.  Each user may connect at most one
+    Gmail account; a second attempt raises ValueError.
+    """
     flow = _get_flow(redirect_uri)
-    # Retrieve the PKCE code_verifier stored during get_auth_url()
+    # Retrieve PKCE code_verifier from Redis
     code_verifier = None
     if state:
         code_verifier = _redis_client().get(f"oauth_pkce:{state}")
         if code_verifier:
             _redis_client().delete(f"oauth_pkce:{state}")
             flow.code_verifier = code_verifier
+        # Also recover owner_id stored in Redis alongside the PKCE verifier
+        if owner_id is None:
+            stored = _redis_client().get(f"oauth_owner:{state}")
+            if stored:
+                _redis_client().delete(f"oauth_owner:{state}")
+                owner_id = UUID(stored)
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    # Fetch the authenticated email address
     from googleapiclient.discovery import build
     oauth2_service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
     user_info = oauth2_service.userinfo().get().execute()
     email_address = user_info["email"]
     display_name = user_info.get("name", email_address)
 
-    # Check if account already exists → update token
+    # Account already exists → refresh token (ownership stays as-is)
     existing = get_account_by_email(db, email_address)
     if existing:
         existing.token_data = _encode_token(creds)
         existing.scopes = list(creds.scopes or [])
         existing.is_active = True
+        if owner_id and not existing.owner_id:
+            existing.owner_id = owner_id
         db.commit()
         db.refresh(existing)
         _relink_orphaned_emails(db, existing)
         logger.info(f"[EMAIL ACCOUNTS] Token refreshed for {email_address}")
         return existing
 
-    # First account → set as primary
+    # 1-account-per-user cap: regular users may not connect more than one account
+    if owner_id is not None:
+        owns = db.query(EmailAccount).filter(EmailAccount.owner_id == owner_id).count()
+        if owns >= 1:
+            raise ValueError(
+                f"Each user may connect at most one Gmail account. "
+                f"Remove your existing account first."
+            )
+
     is_first = db.query(EmailAccount).count() == 0
     account = EmailAccount(
         email_address=email_address,
@@ -187,12 +219,13 @@ def exchange_code_and_save(db: Session, code: str, redirect_uri: str, state: str
         is_primary=is_first,
         scopes=list(creds.scopes or []),
         added_by=added_by,
+        owner_id=owner_id,
     )
     db.add(account)
     db.commit()
     db.refresh(account)
     _relink_orphaned_emails(db, account)
-    logger.info(f"[EMAIL ACCOUNTS] Added new account: {email_address} (primary={is_first})")
+    logger.info(f"[EMAIL ACCOUNTS] Added new account: {email_address} (owner={owner_id})")
     return account
 
 

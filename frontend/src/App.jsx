@@ -22,6 +22,7 @@ import LinkedInIntegration from './pages/LinkedInIntegration'
 import LeadDiscovery from './pages/LeadDiscovery'
 import Campaigns from './pages/Campaigns'
 import OutreachQueue from './pages/OutreachQueue'
+import UserManagement from './pages/UserManagement'
 
 export default function App() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="campaigns" element={<Campaigns />} />
           <Route path="outreach-queue" element={<OutreachQueue />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="user-management" element={<UserManagement />} />
         </Route>
       </Routes>
     </Router>

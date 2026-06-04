@@ -61,6 +61,10 @@ services:
         condition: service_healthy
 
   linkedin-scraper:
+    # Optional service — builds from a sibling repo (../LinkdenScrapper) that
+    # isn't required for the main stack. Skipped by default so `docker compose up`
+    # works without the repo present. Enable with: `docker compose --profile linkedin up`.
+    profiles: ["linkedin"]
     build:
       context: ../LinkdenScrapper/LinkdenScrapper/backend
       dockerfile: Dockerfile
@@ -115,6 +119,7 @@ services:
         condition: service_healthy
       linkedin-scraper:
         condition: service_healthy
+        required: false   # optional service (gated by `linkedin` profile)
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s

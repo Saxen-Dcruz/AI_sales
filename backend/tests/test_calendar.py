@@ -68,6 +68,7 @@ def test_schedule_meeting_success(client: TestClient, auth_headers: dict):
     mock_event.status = "scheduled"
     mock_event.invite_email_sent = True
     mock_event.created_at = datetime.now(timezone.utc)
+    mock_event.owner_email = None
 
     with patch("app.routers.calendar.create_meeting", return_value=mock_event):
         resp = client.post(

@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowRight, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
 
 import { GetCurrentUserService, LoginService } from '../../services/ApiService'
@@ -13,8 +12,6 @@ export default function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [focusedInput, setFocusedInput] = useState(null)
-
-  const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -58,7 +55,7 @@ export default function LoginForm() {
             }
           })
           setIsLoading(false)
-          navigate('/dashboard')
+          window.location.href = '/dashboard'
         },
         (status, msg) => {
           setError(msg || 'Failed to fetch user profile')

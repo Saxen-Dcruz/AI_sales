@@ -25,6 +25,8 @@ class CalendarEvent(Base):
     __tablename__ = "calendar_events"
 
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=new_uuid)
+    # RBAC owner — the user who scheduled this event. NOT NULL enforced (migration 022).
+    owner_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     google_event_id = Column(String, unique=True, index=True, nullable=True)
 
     lead_id = Column(PGUUID(as_uuid=True), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)

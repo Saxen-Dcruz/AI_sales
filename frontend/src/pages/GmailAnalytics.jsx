@@ -4,7 +4,7 @@ import {
   Mail, Clock, Zap, RefreshCw, ArrowDown, ArrowUp, ShieldAlert,
   CheckCircle, AlertCircle, TrendingUp, Package, DollarSign,
   ShoppingCart, Users, Building2, BarChart2, Activity, Target,
-  Inbox, Filter, ChevronRight, Search
+  Inbox, Filter, ChevronRight, Search, Shield
 } from 'lucide-react'
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip,
@@ -12,6 +12,7 @@ import {
   LineChart, Line, AreaChart, Area
 } from 'recharts'
 import { GetGmailAnalyticsService, GetEmailAccountsService, BackfillProductsService } from '../services/ApiService'
+import ApplicationStore from '../utils/ApplicationStore'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -324,6 +325,44 @@ function TabPipeline({ data, loading }) {
           </div>
         </SectionCard>
       )}
+
+      {/* Owner breakdown — super-admin only */}
+      {(() => {
+        const { userDetails } = ApplicationStore().getStorage('userDetails') || {}
+        const isSuperAdmin = userDetails?.userRole === 'Admin'
+        if (!isSuperAdmin || !data?.by_owner || Object.keys(data.by_owner).length === 0) return null
+        return (
+          <SectionCard title="Volume by Team Member" subtitle="Which user's Gmail account received each email" icon={Shield} iconColor="#7c3aed">
+            <div className="space-y-4">
+              {Object.entries(data.by_owner).sort(([,a],[,b]) => b.email_count - a.email_count).map(([userEmail, info], i) => {
+                const total = Object.values(data.by_owner).reduce((s, v) => s + v.email_count, 0)
+                const pct = total ? Math.round(info.email_count / total * 100) : 0
+                const color = SRC_COLORS[i % SRC_COLORS.length]
+                return (
+                  <div key={userEmail} className="space-y-1.5">
+                    <div className="flex items-center gap-3">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                      <span className="text-xs font-semibold text-gray-800 flex-1 truncate">{userEmail}</span>
+                      <span className="text-xs font-bold text-gray-700 w-8 text-right">{info.email_count}</span>
+                      <span className="text-[10px] text-gray-400 w-8 text-right">{pct}%</span>
+                    </div>
+                    <div className="ml-5 flex flex-wrap gap-1.5">
+                      {(info.gmail_accounts || []).map(gmail => (
+                        <span key={gmail} className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+                          <Mail size={8} /> {gmail}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="ml-5 h-1 rounded-full bg-gray-100 overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </SectionCard>
+        )
+      })()}
     </div>
   )
 }

@@ -169,6 +169,18 @@ export const LogoutService = (data, sucess, error) =>
 export const GetCurrentUserService = (sucess, error) =>
     _fetchService("auth/me", "GET", null, sucess, error);
 
+// ─── User Management (super-admin) ───────────────────────────────────────────
+export const ListUsersService = (sucess, error) =>
+    _fetchService("users", "GET", null, sucess, error);
+export const CreateUserService = (data, sucess, error) =>
+    _fetchService("users", "POST", data, sucess, error);
+export const UpdateUserService = (id, data, sucess, error) =>
+    _fetchService(`users/${id}`, "PATCH", data, sucess, error);
+export const DeleteUserService = (id, sucess, error) =>
+    _fetchService(`users/${id}`, "DELETE", null, sucess, error);
+export const ChangePasswordSelfService = (data, sucess, error) =>
+    _fetchService("users/me/password", "PATCH", data, sucess, error);
+
 // ─── Products ────────────────────────────────────────────────────────────────
 
 export const AddProductService = (data, sucess, error) =>

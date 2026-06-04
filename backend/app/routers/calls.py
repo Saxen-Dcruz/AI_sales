@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user, get_db
+from app.api.scoping import assert_can_access
 from app.models.call import Call, CallDirection, CallOutcome, CallStatus
 from app.models.user import User
 from app.schema.call import (
@@ -23,6 +24,13 @@ from app.services import call_service
 router = APIRouter(prefix="/calls", tags=["Calls"])
 
 
+def _effective_owner(current_user: User, requested: Optional[UUID]) -> Optional[UUID]:
+    """Regular user → own id; super-admin → requested or None for all."""
+    if not current_user.is_superuser:
+        return current_user.id
+    return requested
+
+
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=CallOut, status_code=status.HTTP_201_CREATED)
@@ -35,6 +43,7 @@ def log_call(
     return call_service.create_call(
         db=db,
         direction=payload.direction,
+        owner_id=current_user.id,
         phone_number=payload.phone_number,
         lead_id=payload.lead_id,
         livekit_room=payload.livekit_room,
@@ -50,37 +59,45 @@ def list_calls(
     outcome: Optional[CallOutcome] = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    items, total = call_service.list_calls(db, lead_id, status, direction, outcome, page, limit)
+    items, total = call_service.list_calls(
+        db, lead_id, status, direction, outcome, page, limit,
+        owner_id_filter=_effective_owner(current_user, owner_id),
+    )
     return CallListResponse(items=items, total=total, page=page, limit=limit)
 
 
 @router.get("/analytics", response_model=CallAnalyticsResponse)
 def call_analytics(
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Aggregate call metrics: volume, direction, outcome, sentiment, intent, avg duration."""
-    return call_service.get_call_analytics(db)
+    return call_service.get_call_analytics(db, owner_id_filter=_effective_owner(current_user, owner_id))
 
 
 @router.get("/gaps", response_model=CallGapNotificationListResponse)
 def list_call_gaps(
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """All completed calls with unresolved RAG knowledge gaps."""
-    rows = (
+    q = (
         db.query(Call)
         .filter(
             Call.followup_gaps.isnot(None),
             Call.status == CallStatus.COMPLETED,
         )
-        .order_by(Call.created_at.desc())
-        .all()
     )
+    effective = _effective_owner(current_user, owner_id)
+    if effective is not None:
+        q = q.filter(Call.owner_id == effective)
+    rows = q.order_by(Call.created_at.desc()).all()
     items = [
         CallGapNotificationOut(
             call_id=r.id,
@@ -106,11 +123,12 @@ def list_call_gaps(
 def get_call(
     call_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     call = call_service.get_call(db, call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    assert_can_access(call, current_user)
     return call
 
 
@@ -119,11 +137,12 @@ def update_call(
     call_id: UUID,
     payload: CallUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     call = call_service.get_call(db, call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    assert_can_access(call, current_user)
     return call_service.update_call(db, call, **payload.model_dump(exclude_none=True))
 
 
@@ -134,7 +153,7 @@ def submit_transcript(
     call_id: UUID,
     payload: TranscriptSubmit,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Submit a call transcript after the call ends.
@@ -143,6 +162,7 @@ def submit_transcript(
     call = call_service.get_call(db, call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    assert_can_access(call, current_user)
     if not payload.transcript.strip():
         raise HTTPException(status_code=422, detail="Transcript cannot be empty")
     return call_service.process_transcript(db, call, payload.transcript)
@@ -164,6 +184,7 @@ def resolve_call_gap(
     call = call_service.get_call(db, call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    assert_can_access(call, current_user)
     try:
         return call_service.resolve_gap(
             db=db,

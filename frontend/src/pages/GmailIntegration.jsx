@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import ApplicationStore from '../utils/ApplicationStore'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
 
 // ─── Account color palette — cycles through these for each connected account ─
@@ -93,11 +94,13 @@ function senderEmail(sender) {
 
 // ─── Email row ───────────────────────────────────────────────────────────────
 
-function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
+function EmailRow({ email, selected, onClick, accountColorMap = {}, acctOwnerMap = {} }) {
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const statusCfg = STATUS_CONFIG[email.status] || STATUS_CONFIG.classified
   const StatusIcon = statusCfg.icon
-  const isUnread = email.status === 'new'
+  // "Unread" = anything still needing human attention (not auto-replied/archived/ignored).
+  // Mirrors the backend's unread_priority ordering so the bold cue lines up with the sort.
+  const isUnread = ['new', 'draft_ready', 'pending_human'].includes(email.status)
   const isGrievance = email.label === 'Grievance'
   const unresolvedGaps = (email.followup_gaps || []).filter(g => !(typeof g === 'object' ? g.resolved : false)).length
   const acctColor = email.account_email ? accountColorMap[email.account_email] : null
@@ -170,11 +173,14 @@ function EmailRow({ email, selected, onClick, accountColorMap = {} }) {
                 ✓ Sent
               </span>
             )}
-            {/* Account pill — always shown, color-coded per account */}
+            {/* Account pill — color-coded per account + owner name for super-admin */}
             {email.account_email && acctColor && (
               <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border flex-shrink-0 flex items-center gap-0.5 ${acctColor.pill}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${acctColor.dot} inline-block`}></span>
                 {email.account_email}
+                {acctOwnerMap[email.account_email] && (
+                  <span className="ml-0.5 opacity-70">({acctOwnerMap[email.account_email].split('@')[0]})</span>
+                )}
               </span>
             )}
             <StatusIcon size={10} className={`${statusCfg.color} ml-auto flex-shrink-0`} />
@@ -240,14 +246,18 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
   const handleSendReply = () => {
     if (!replyBody.trim()) return
     setReplySending(true)
+    // Use the latest *inbound* message in the thread for In-Reply-To so Gmail
+    // threads it correctly. If the last message is outbound (a bot reply), walk
+    // back to find the most recent inbound. Fallback to the inbox email itself.
+    const latestInbound = [...threadMessages].reverse().find(m => m.direction === 'inbound') || email
     SendEmailService(
       {
-        to: senderEmail(email.sender),
+        to: senderEmail(latestInbound.sender || email.sender),
         subject: replySubject.trim() || 'Re:',
         body: replyBody,
         thread_id: email.gmail_thread_id || null,
         account_id: email.account_id || null,
-        reply_to_email_id: email.id,
+        reply_to_email_id: latestInbound.id,
       },
       () => { setReplySending(false); setReplyOpen(false); setReplyBody(''); setDone(true); setTimeout(onRefresh, 800) },
       (_s, err) => { setReplySending(false); alert('Failed to send: ' + err) }
@@ -543,13 +553,28 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                                 setGapResolving(false)
                                 setActiveGapIndex(null)
                                 if (isLastGap) {
-                                  // All gaps filled — backend will regenerate the draft.
-                                  // Show spinner while waiting for regeneration to complete.
+                                  // All gaps filled — backend regenerates draft (RAG + LLM).
+                                  // Poll every 2s until the email's draft_id or status changes,
+                                  // so we never show a stale or broken state.
                                   setRegenerating(true)
-                                  setTimeout(() => {
-                                    setRegenerating(false)
-                                    onRefresh()
-                                  }, 4000)  // give backend ~4s to finish RAG + draft generation
+                                  let attempts = 0
+                                  const poll = () => {
+                                    attempts++
+                                    GetEmailByIdService(email.id,
+                                      (fresh) => {
+                                        const draftChanged = fresh.gmail_draft_id !== email.gmail_draft_id
+                                        const doneWaiting = draftChanged || attempts >= 15
+                                        if (doneWaiting) {
+                                          setRegenerating(false)
+                                          onRefresh()
+                                        } else {
+                                          setTimeout(poll, 2000)
+                                        }
+                                      },
+                                      () => { setRegenerating(false); onRefresh() }
+                                    )
+                                  }
+                                  setTimeout(poll, 2000)
                                 } else {
                                   onRefresh()
                                 }
@@ -873,6 +898,8 @@ export default function GmailIntegration() {
   const [activeAccount, setActiveAccount] = useState('') // '' = all accounts
   // accountColorMap: email_address → ACCOUNT_COLORS[i]
   const [accountColorMap, setAccountColorMap] = useState({})
+  // acctOwnerMap: gmail_address → user_email (super-admin only)
+  const [acctOwnerMap, setAcctOwnerMap] = useState({})
   // Global counts independent of current tab/filter — always accurate
   const [globalNeedsReview, setGlobalNeedsReview] = useState(0)
   const [globalDraftReady, setGlobalDraftReady] = useState(0)
@@ -901,13 +928,14 @@ export default function GmailIntegration() {
     )
   }, [location.state])
 
-  // Load accounts on mount and build color map
+  // Load accounts on mount and build color map + owner map
   useEffect(() => {
+    const { userDetails } = ApplicationStore().getStorage('userDetails') || {}
+    const superAdmin = userDetails?.userRole === 'Admin'
     GetEmailAccountsService(
       (data) => {
         const items = data?.items || []
         setAccounts(items)
-        // Assign a stable color to each account by index
         const colorMap = {}
         items.forEach((a, i) => {
           colorMap[a.email_address] = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
@@ -916,6 +944,21 @@ export default function GmailIntegration() {
       },
       () => {}
     )
+    // Super-admin: build gmail → owner-user map from the users list
+    if (superAdmin) {
+      ListUsersService(
+        (users) => {
+          const ownerMap = {}
+          ;(users || []).forEach(u => {
+            ;(u.gmail_accounts || []).forEach(a => {
+              ownerMap[a.email_address] = u.email
+            })
+          })
+          setAcctOwnerMap(ownerMap)
+        },
+        () => {}
+      )
+    }
   }, [])
 
   // Fetch global counts (needs_human + draft_ready) independently of current tab
@@ -1129,6 +1172,7 @@ export default function GmailIntegration() {
                       selected={selected === email.id}
                       onClick={() => setSelected(selected === email.id ? null : email.id)}
                       accountColorMap={accountColorMap}
+                      acctOwnerMap={acctOwnerMap}
                     />
                   </motion.div>
                 ))}
@@ -1162,7 +1206,7 @@ export default function GmailIntegration() {
             {selectedEmail ? (
               <motion.div key={selectedEmail.id} className="h-full"
                 initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-                <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} />
+                <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} acctOwnerMap={acctOwnerMap} />
               </motion.div>
             ) : (
               <motion.div key="empty" className="flex flex-col items-center justify-center h-full gap-4 text-center p-10"

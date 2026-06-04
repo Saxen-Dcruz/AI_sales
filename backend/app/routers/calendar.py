@@ -26,7 +26,7 @@ router = APIRouter(prefix="/calendar", tags=["Calendar"])
 def schedule_meeting(
     payload: ScheduleMeetingRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Manually schedule a Google Meet call and send an invite email."""
     try:
@@ -36,6 +36,7 @@ def schedule_meeting(
             title=payload.title,
             description=payload.description or "",
             start_time=payload.start_time,
+            owner_id=current_user.id,
             duration_minutes=payload.duration_minutes,
             trigger=EventTrigger.MANUAL,
             lead_id=payload.lead_id,
@@ -52,12 +53,14 @@ def list_events(
     trigger: Optional[EventTrigger] = Query(default=None),
     lead_id: Optional[UUID] = Query(default=None),
     deal_id: Optional[UUID] = Query(default=None),
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(CalendarEvent)
+    from app.api.scoping import scope_query
+    q = scope_query(db.query(CalendarEvent), current_user, CalendarEvent.owner_id, owner_id)
     if status:
         q = q.filter(CalendarEvent.status == status)
     if trigger:
@@ -68,6 +71,21 @@ def list_events(
         q = q.filter(CalendarEvent.deal_id == deal_id)
     total = q.count()
     items = q.order_by(CalendarEvent.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
+
+    # Super-admin: attach owner email so the UI can show "scheduled by <user>"
+    if current_user.is_superuser and items:
+        owner_ids = {e.owner_id for e in items if e.owner_id}
+        owner_map: dict = {}
+        if owner_ids:
+            for u in db.query(User).filter(User.id.in_(owner_ids)).all():
+                owner_map[u.id] = u.email
+        out_items = []
+        for e in items:
+            ev = CalendarEventOut.model_validate(e)
+            ev.owner_email = owner_map.get(e.owner_id)
+            out_items.append(ev)
+        return CalendarEventListResponse(items=out_items, total=total, page=page, limit=limit)
+
     return CalendarEventListResponse(items=items, total=total, page=page, limit=limit)
 
 
@@ -228,11 +246,13 @@ def update_scheduling_config(
 def get_event(
     event_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     event = db.query(CalendarEvent).filter(CalendarEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    from app.api.scoping import assert_can_access
+    assert_can_access(event, current_user)
     return event
 
 
@@ -241,7 +261,7 @@ def reschedule_meeting(
     event_id: UUID,
     payload: RescheduleMeetingRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Reschedule an existing event.
@@ -252,6 +272,8 @@ def reschedule_meeting(
     event = db.query(CalendarEvent).filter(CalendarEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    from app.api.scoping import assert_can_access
+    assert_can_access(event, current_user)
     if event.status == EventStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Cannot reschedule a cancelled event")
     try:
@@ -264,11 +286,13 @@ def reschedule_meeting(
 def cancel_meeting(  # noqa: E302
     event_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     event = db.query(CalendarEvent).filter(CalendarEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    from app.api.scoping import assert_can_access
+    assert_can_access(event, current_user)
     if event.status == EventStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Event already cancelled")
     cancel_event(db, event)
