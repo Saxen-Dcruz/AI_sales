@@ -386,6 +386,9 @@ def node_upsert_lead(state: dict, config: RunnableConfig) -> dict:
     return {"lead_id": str(lead.id), "is_new_lead": True}
 
 
+_THREAD_PRODUCT_TTL_DAYS = 5
+
+
 def node_detect_product(state: dict, config: RunnableConfig) -> dict:
     """3-phase product detection from email subject + body.
 
@@ -393,8 +396,37 @@ def node_detect_product(state: dict, config: RunnableConfig) -> dict:
     Low/none-confidence matches trigger a clarification email instead — the
     product is not yet confirmed by the customer, so it must not show up in
     Product Intelligence analytics as a confirmed inquiry.
+
+    Thread-product inheritance: if a prior email in the same Gmail thread
+    already confirmed a product within the last 5 days, inherit it as
+    high-confidence and skip detection + clarification entirely.
     """
     db = _get_db(config)
+
+    thread_id = state.get("gmail_thread_id")
+    if thread_id:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=_THREAD_PRODUCT_TTL_DAYS)
+        prior = (
+            db.query(Email)
+            .filter(
+                Email.gmail_thread_id == thread_id,
+                Email.detected_product_id.isnot(None),
+                Email.received_at >= cutoff,
+            )
+            .order_by(Email.received_at.desc())
+            .first()
+        )
+        if prior:
+            logger.info(
+                f"[EMAIL WORKFLOW] Thread product inherited: {prior.detected_product_name} "
+                f"(thread={thread_id}, last_seen={prior.received_at.date()})"
+            )
+            return {
+                "product_id": prior.detected_product_id,
+                "product_name": prior.detected_product_name,
+                "product_confidence": "high",
+            }
+
     text = f"{state['subject']} {state['effective_body']}"
     product_id, product_name, confidence = detect_product(db, text)
     if state.get("email_id") and product_name and confidence == "high":
@@ -835,12 +867,23 @@ def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
                 new_time = find_next_free_slot(hours_from_now=hours_offset)
                 logger.info(f"[EMAIL WORKFLOW] Requested slot {requested_time} taken — using {new_time}")
                 requested_time = new_time
+            # owner_id comes from the EmailAccount that received this message
+            from app.models.email_account import EmailAccount
+            _acc_id = config["configurable"].get("account_id")
+            _owner = None
+            if _acc_id:
+                _acc = db.query(EmailAccount).filter(EmailAccount.id == UUID(_acc_id)).first()
+                _owner = _acc.owner_id if _acc else None
+            if _owner is None:
+                logger.warning("[EMAIL WORKFLOW] No owner_id for meeting — skipping schedule")
+                return {}
             event = create_meeting(
                 db=db,
                 attendee_email=state["sender_email"],
                 title=f"Sales Discussion — {state.get('product_name') or state['subject'] or 'Product Inquiry'}",
                 description=f"Meeting requested via email.\nSubject: {state['subject']}",
                 start_time=requested_time,
+                owner_id=_owner,
                 duration_minutes=30,
                 trigger=EventTrigger.MANUAL,
                 lead_id=lead_id,

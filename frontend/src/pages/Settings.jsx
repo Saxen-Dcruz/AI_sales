@@ -85,7 +85,7 @@ function EmailAccountsSection() {
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 3000)
+    setTimeout(() => setToast(null), 5000)
   }
 
   const fetchAccounts = () => {
@@ -104,10 +104,14 @@ function EmailAccountsSection() {
   }, [location.search])
 
   const handleAddAccount = () => {
+    if (accounts.length >= 1) {
+      showToast('You already have a Gmail account connected. Remove it before adding a new one.', 'error')
+      return
+    }
     setAuthLoading(true)
     GetEmailAccountAuthUrlService(
       (data) => { window.location.href = data.url },
-      () => { setAuthLoading(false); showToast('Could not get auth URL', 'error') }
+      (_status, msg) => { setAuthLoading(false); showToast(msg || 'Could not get auth URL', 'error') }
     )
   }
 
@@ -153,7 +157,7 @@ function EmailAccountsSection() {
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className={`fixed top-5 right-5 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg
+            className={`fixed top-20 right-5 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg
               ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>
             {toast.msg}
           </motion.div>
@@ -226,10 +230,25 @@ function EmailAccountsSection() {
                 {/* Auto-send toggle */}
                 <button
                   onClick={() => {
+                    const sending = !acct.auto_send_enabled
+                    console.log('[AUTO-SEND TOGGLE] click', { acct_id: acct.id, email: acct.email_address, current: acct.auto_send_enabled, sending_new_value: sending })
                     setActing(acct.id + '_autosend')
-                    UpdateEmailAccountService(acct.id, { auto_send_enabled: !acct.auto_send_enabled },
-                      () => { fetchAccounts(); setActing(null); showToast(`Auto-send ${!acct.auto_send_enabled ? 'enabled' : 'disabled'} for ${acct.email_address}`) },
-                      () => { setActing(null); showToast('Update failed', 'error') }
+                    UpdateEmailAccountService(acct.id, { auto_send_enabled: sending },
+                      (resp) => {
+                        console.log('[AUTO-SEND TOGGLE] PATCH success — server response:', resp)
+                        // Refetch and log what GET returns
+                        GetEmailAccountsService(
+                          (data) => {
+                            const updated = (data?.items || []).find(x => x.id === acct.id)
+                            console.log('[AUTO-SEND TOGGLE] GET refetch — server now says auto_send_enabled =', updated?.auto_send_enabled, 'for', updated?.email_address)
+                            setAccounts(data?.items || [])
+                            setActing(null)
+                            showToast(`Auto-send ${sending ? 'enabled' : 'disabled'} for ${acct.email_address}`)
+                          },
+                          (status, msg) => { console.warn('[AUTO-SEND TOGGLE] GET refetch FAILED', status, msg); setActing(null) }
+                        )
+                      },
+                      (status, msg) => { console.error('[AUTO-SEND TOGGLE] PATCH FAILED', status, msg); setActing(null); showToast('Update failed', 'error') }
                     )
                   }}
                   disabled={!!acting}

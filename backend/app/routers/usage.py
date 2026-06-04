@@ -104,27 +104,47 @@ def get_analytics_logs(
 @router.get("/analytics/gaps", response_model=GapAnalyticsSummary)
 def get_gap_analytics(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Aggregate RAG gap data from emails and calls.
     Shows which products/topics have the most unanswered questions
     and the gap resolution rate — tells you what to add to the knowledge base first.
     """
-    # Pull all gap items from emails and calls
-    rows = db.execute(text("""
-        SELECT gap->>'question'     AS question,
-               gap->>'topic'        AS topic,
-               gap->>'product_name' AS product_name,
-               (gap->>'resolved')::boolean AS resolved
-        FROM (
-            SELECT jsonb_array_elements(followup_gaps::jsonb) AS gap
-            FROM   emails WHERE followup_gaps IS NOT NULL
-            UNION ALL
-            SELECT jsonb_array_elements(followup_gaps::jsonb) AS gap
-            FROM   calls  WHERE followup_gaps IS NOT NULL
-        ) sub
-    """)).fetchall()
+    from app.models.communication import Email
+    from app.models.call import Call
+    from app.models.email_account import EmailAccount
+    from types import SimpleNamespace
+
+    email_q = db.query(Email.followup_gaps).filter(Email.followup_gaps.isnot(None))
+    call_q = db.query(Call.followup_gaps).filter(Call.followup_gaps.isnot(None))
+    if not current_user.is_superuser:
+        _allowed = [
+            a.id for a in db.query(EmailAccount.id)
+            .filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+        email_q = email_q.filter(Email.account_id.in_(_allowed))
+        call_q = call_q.filter(Call.owner_id == current_user.id)
+
+    rows = []
+    for (gaps,) in email_q.all():
+        for g in (gaps or []):
+            if isinstance(g, dict):
+                rows.append(SimpleNamespace(
+                    question=g.get("question"),
+                    topic=g.get("topic"),
+                    product_name=g.get("product_name"),
+                    resolved=bool(g.get("resolved", False)),
+                ))
+    for (gaps,) in call_q.all():
+        for g in (gaps or []):
+            if isinstance(g, dict):
+                rows.append(SimpleNamespace(
+                    question=g.get("question"),
+                    topic=g.get("topic"),
+                    product_name=g.get("product_name"),
+                    resolved=bool(g.get("resolved", False)),
+                ))
 
     if not rows:
         return GapAnalyticsSummary(
@@ -186,38 +206,40 @@ def get_gap_analytics(
 @router.get("/analytics/product-sentiment", response_model=ProductSentimentResponse)
 def get_product_sentiment(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Aggregate sentiment mentions per product from emails and calls.
     Shows which products have high positive/frustrated sentiment.
     """
-    rows = db.execute(text("""
-        SELECT product_name, sentiment, COUNT(*) AS cnt
-        FROM (
-            SELECT detected_product_name AS product_name, sentiment FROM calls
-            WHERE detected_product_name IS NOT NULL AND sentiment IS NOT NULL
-            UNION ALL
-            SELECT p.name AS product_name, 'NEUTRAL' AS sentiment
-            FROM emails e
-            JOIN products p ON p.id = (
-                SELECT f->>'product_id' FROM (
-                    SELECT jsonb_array_elements(e2.followup_gaps::jsonb) AS f
-                    FROM emails e2 WHERE e2.id = e.id AND e2.followup_gaps IS NOT NULL
-                    LIMIT 1
-                ) sub
-            )
-            WHERE e.label = 'Sales'
-        ) combined
-        GROUP BY product_name, sentiment
-    """)).fetchall()
-
+    from app.models.call import Call
+    from app.models.communication import Email, EmailLabel
+    from app.models.email_account import EmailAccount
     from collections import defaultdict
+
+    call_q = db.query(Call.detected_product_name, Call.sentiment).filter(
+        Call.detected_product_name.isnot(None),
+        Call.sentiment.isnot(None),
+    )
+    email_q = db.query(Email.detected_product_name).filter(
+        Email.detected_product_name.isnot(None),
+        Email.label == EmailLabel.SALES,
+    )
+    if not current_user.is_superuser:
+        call_q = call_q.filter(Call.owner_id == current_user.id)
+        _allowed = [
+            a.id for a in db.query(EmailAccount.id)
+            .filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+        email_q = email_q.filter(Email.account_id.in_(_allowed))
+
     data: dict = defaultdict(lambda: {"POSITIVE": 0, "NEUTRAL": 0, "FRUSTRATED": 0})
-    for r in rows:
-        s = (r.sentiment or "NEUTRAL").upper()
-        if s in data[r.product_name]:
-            data[r.product_name][s] += r.cnt
+    for product_name, sentiment in call_q.all():
+        s = (sentiment or "NEUTRAL").upper()
+        if s in data[product_name]:
+            data[product_name][s] += 1
+    for (product_name,) in email_q.all():
+        data[product_name]["NEUTRAL"] += 1
 
     items = []
     for pn, counts in sorted(data.items(), key=lambda x: -sum(x[1].values())):

@@ -35,6 +35,19 @@ from app.services.workflows.email_nodes import generate_sales_draft as _gen_draf
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
 
 
+def _check_email_access(db: Session, email: Email, user: User) -> None:
+    """RBAC: regular user can only access emails received by an account they own.
+    Super-admin bypasses. Raises 404 (not 403) so existence is not leaked."""
+    if user.is_superuser:
+        return
+    from app.models.email_account import EmailAccount
+    if not email.account_id:
+        raise HTTPException(status_code=404, detail="Email not found")
+    acc = db.query(EmailAccount).filter(EmailAccount.id == email.account_id).first()
+    if not acc or acc.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+
 # ── Inbox sync ────────────────────────────────────────────────────────────────
 
 def _get_active_accounts(db: Session):
@@ -47,7 +60,7 @@ def _get_active_accounts(db: Session):
 def sync_inbox(
     max_results: int = Query(default=20, ge=1, le=50),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Manually trigger inbox fetch and classification across all active accounts."""
     accounts = _get_active_accounts(db)
@@ -102,12 +115,31 @@ def list_emails(
     # business_only=true (default): show only Sales/Support/Grievance
     # business_only=false: show all including Promotional/Transactional
     business_only: bool = Query(default=True),
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    # RBAC: emails are scoped via the EmailAccount.owner_id of the receiving account
+    from app.models.email_account import EmailAccount
+    if not current_user.is_superuser:
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+    elif owner_id is not None:
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == owner_id).all()
+        ]
+    else:
+        _allowed_accts = None  # super-admin, no scope filter
+
     q = db.query(Email)
+    if _allowed_accts is not None:
+        if not _allowed_accts:
+            # User has no accounts → empty result
+            return EmailListResponse(items=[], total=0, page=page, limit=limit)
+        q = q.filter(Email.account_id.in_(_allowed_accts))
     if label:
         # Explicit label filter overrides business_only
         q = q.filter(Email.label == label)
@@ -136,17 +168,27 @@ def list_emails(
     # Collapse each Gmail thread to a single row (its latest message) so threads
     # group correctly regardless of pagination. Emails with no thread_id are
     # treated as their own single-message thread (keyed by id).
-    from sqlalchemy import func, Text, cast
+    from sqlalchemy import func, Text, cast, case
     thread_key = func.coalesce(Email.gmail_thread_id, cast(Email.id, Text))
     rn = func.row_number().over(
         partition_by=thread_key, order_by=Email.received_at.desc()
     ).label("rn")
     sub = q.add_columns(rn).subquery()
 
+    # "Unread" = the latest message in the thread still needs human attention
+    # (new arrival, draft awaiting approval, or pending human reply). These sort
+    # to the top; within each group, ordering is reverse-chronological.
+    unread_statuses = (
+        EmailStatus.NEW.value,
+        EmailStatus.DRAFT_READY.value,
+        EmailStatus.PENDING_HUMAN.value,
+    )
+    unread_priority = case((sub.c.status.in_(unread_statuses), 1), else_=0)
+
     latest_only = db.query(sub).filter(sub.c.rn == 1)
     total = latest_only.count()
     rows = (
-        latest_only.order_by(sub.c.received_at.desc())
+        latest_only.order_by(unread_priority.desc(), sub.c.received_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -186,7 +228,7 @@ def list_emails(
 def get_thread_messages(
     thread_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Return all email messages belonging to a single Gmail thread, ordered chronologically.
@@ -204,7 +246,7 @@ def get_thread_messages(
 @router.get("/gaps", response_model=GapNotificationListResponse)
 def list_rag_gaps(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Returns all draft-ready Sales emails where the RAG pipeline could not answer
@@ -247,7 +289,7 @@ _SINCE_HOURS = {
 @router.post("/backfill-products", status_code=200)
 def backfill_product_detection(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Re-run product detection on all Sales emails missing detected_product_name."""
     from app.services.sales_gap_service import detect_product
@@ -280,8 +322,9 @@ def get_email_analytics(
     since: str = "7d",
     account_id: Optional[UUID] = Query(default=None),
     account_email: Optional[str] = Query(default=None),
+    owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Email pipeline analytics. since=7h|24h|48h|7d|all. account_id/account_email filters to a specific Gmail account."""
     from sqlalchemy import case, extract
@@ -297,7 +340,22 @@ def get_email_analytics(
     else:
         cutoff = None
 
+    # RBAC: scope emails to accounts owned by the requesting user
+    from app.models.email_account import EmailAccount
+    if not current_user.is_superuser:
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+    elif owner_id is not None:
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == owner_id).all()
+        ]
+    else:
+        _allowed_accts = None  # super-admin sees all accounts
+
     query = db.query(Email)
+    if _allowed_accts is not None:
+        query = query.filter(Email.account_id.in_(_allowed_accts))
     if cutoff:
         query = query.filter(Email.received_at >= cutoff)
     if account_id:
@@ -645,6 +703,38 @@ def get_email_analytics(
         "Pending":    pending,
     }
 
+    # ── by_owner: super-admin view — user email → their Gmail accounts + email count ──
+    # Only populated for super-admin (reveals ownership; regular users don't need it)
+    by_owner: dict = {}
+    if current_user.is_superuser:
+        from app.models.user import User as _User
+        from app.models.email_account import EmailAccount as _EAcct
+        # Build: account_id → owner user email
+        acct_ids = {e.account_id for e in all_emails if e.account_id}
+        if acct_ids:
+            owner_rows = (
+                db.query(_EAcct.id, _EAcct.email_address, _User.email)
+                .join(_User, _EAcct.owner_id == _User.id)
+                .filter(_EAcct.id.in_(acct_ids))
+                .all()
+            )
+            acct_to_owner: dict = {}   # account_id → user_email
+            acct_to_gmail: dict = {}   # account_id → gmail_address
+            for acct_id, gmail_addr, user_email in owner_rows:
+                acct_to_owner[acct_id] = user_email
+                acct_to_gmail[acct_id] = gmail_addr
+            # Aggregate per user
+            for e in all_emails:
+                if not e.account_id:
+                    continue
+                user_email = acct_to_owner.get(e.account_id, "unknown")
+                gmail_addr = acct_to_gmail.get(e.account_id, e.account_email or "?")
+                if user_email not in by_owner:
+                    by_owner[user_email] = {"gmail_accounts": [], "email_count": 0}
+                if gmail_addr not in by_owner[user_email]["gmail_accounts"]:
+                    by_owner[user_email]["gmail_accounts"].append(gmail_addr)
+                by_owner[user_email]["email_count"] += 1
+
     return EmailSLAAnalytics(
         total_emails=len(all_emails),
         total_inbound=len(inbound_all),
@@ -671,6 +761,7 @@ def get_email_analytics(
         by_status=by_status,
         by_direction=by_direction,
         by_account=by_account,
+        by_owner=by_owner,
         by_product=by_product,
         top_products_purchased=top_products_purchased,
         revenue_total=round(revenue_total, 2),
@@ -707,7 +798,7 @@ def create_sequence(
 def list_sequences(
     lead_id: Optional[UUID] = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     return email_sequence_service.list_sequences(db, lead_id=lead_id)
 
@@ -716,7 +807,7 @@ def list_sequences(
 def pause_sequence(
     sequence_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     email_sequence_service.pause_sequence(db, sequence_id)
 
@@ -725,7 +816,7 @@ def pause_sequence(
 def cancel_sequence(
     sequence_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     email_sequence_service.cancel_sequence(db, sequence_id)
 
@@ -746,6 +837,7 @@ def resolve_gap(
     email = db.query(Email).filter(Email.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
 
     gaps: list[dict] = list(email.followup_gaps or [])
     if payload.gap_index < 0 or payload.gap_index >= len(gaps):
@@ -793,15 +885,14 @@ def resolve_gap(
     db.commit()
     db.refresh(email)
 
-    # If all gaps are now resolved, auto-send the draft via the LangGraph resume path
+    # If all gaps are now resolved, regenerate the draft with the new knowledge
     all_resolved = all(g.get("resolved") for g in gaps)
     if all_resolved and email.gmail_draft_id:
-        try:
-            from app.services.workflows.email_workflow import resume_after_gaps_resolved
-            resume_after_gaps_resolved(db, str(email_id))
-            db.refresh(email)
-        except Exception as e:
-            logger.warning(f"[GMAIL ROUTER] Workflow resume failed for {email_id}: {e}")
+        from app.services.workflows.email_workflow import resume_after_gaps_resolved
+        resume_after_gaps_resolved(db, str(email_id))
+        # Always re-read from DB — resume may have updated the draft_id / status
+        db.expire(email)
+        email = db.query(Email).filter(Email.id == email_id).first()
 
     return email
 
@@ -810,11 +901,12 @@ def resolve_gap(
 def get_email(
     email_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     email = db.query(Email).filter(Email.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
     return email
 
 
@@ -831,6 +923,7 @@ def resolve_email(
     email = db.query(Email).filter(Email.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
     email.needs_human = False
     email.resolved_by = payload.resolved_by or current_user.email
     email.resolved_at = datetime.now(timezone.utc)
@@ -891,6 +984,7 @@ def approve_draft(
     email = db.query(Email).filter(Email.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
     if email.status != EmailStatus.DRAFT_READY:
         raise HTTPException(status_code=400, detail="Email has no pending draft to approve")
     if not email.gmail_draft_id:
@@ -946,6 +1040,7 @@ def discard_draft(
     email = db.query(Email).filter(Email.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
 
     if email.gmail_draft_id:
         try:

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.database.core import get_db
+from app.models.email_account import EmailAccount
 from app.models.user import User
 from app.schema.settings import (
     EmailAccountListResponse, EmailAccountOut, EmailAccountUpdate, OAuthUrlResponse
@@ -82,9 +83,11 @@ def _callback_uri(request: Request) -> str:
 @router.get("/email-accounts", response_model=EmailAccountListResponse)
 def list_email_accounts(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    accounts = svc.list_accounts(db)
+    # Regular users see only their own accounts; super-admin sees all
+    owner_filter = None if current_user.is_superuser else current_user.id
+    accounts = svc.list_accounts(db, owner_id=owner_filter)
     return EmailAccountListResponse(items=accounts, total=len(accounts))
 
 
@@ -92,10 +95,20 @@ def list_email_accounts(
 def get_auth_url(
     request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Return Google OAuth consent URL. Frontend redirects user to this URL."""
-    url = svc.get_auth_url(redirect_uri=_callback_uri(request))
+    existing = (
+        db.query(EmailAccount)
+        .filter(EmailAccount.owner_id == current_user.id)
+        .count()
+    )
+    if existing >= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have a Gmail account connected. Remove it before adding a new one.",
+        )
+    url = svc.get_auth_url(redirect_uri=_callback_uri(request), owner_id=current_user.id)
     return OAuthUrlResponse(url=url)
 
 
