@@ -1,0 +1,17 @@
+{
+  // jcodemunch project config for AI_sales
+  // Token-efficient settings: core profile + compact schemas
+  "tool_profile": "standard",
+  "compact_schemas": true,
+  "languages": [
+    "python",
+    "javascript",
+    "typescript",
+    "tsx",
+    "json",
+    "yaml",
+    "sql",
+    "css",
+    "bash"
+  ]
+}

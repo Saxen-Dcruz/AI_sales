@@ -130,7 +130,8 @@ class EmailSLAAnalytics(BaseModel):
     by_label: dict
     by_status: dict
     by_direction: dict
-    by_account: dict = {}  # email_address → count, for "All" view
+    by_account: dict = {}  # gmail_address → count
+    by_owner: dict = {}   # super-admin only: user_email → {gmail_accounts: [...], email_count: int}
     # Product & revenue analytics
     by_product: dict = {}           # product_name → inquiry count
     top_products_purchased: list = []  # [{name, inquiries, converted, conversion_pct}]

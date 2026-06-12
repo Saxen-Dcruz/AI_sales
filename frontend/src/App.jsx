@@ -18,6 +18,11 @@ import GmailIntegration from './pages/GmailIntegration'
 import CalendarIntegration from './pages/CalendarIntegration'
 import EmbeddingsPage from './pages/EmbeddingsPage'
 import GmailAnalytics from './pages/GmailAnalytics'
+import LinkedInIntegration from './pages/LinkedInIntegration'
+import LeadDiscovery from './pages/LeadDiscovery'
+import Campaigns from './pages/Campaigns'
+import OutreachQueue from './pages/OutreachQueue'
+import UserManagement from './pages/UserManagement'
 
 export default function App() {
   return (
@@ -44,7 +49,12 @@ export default function App() {
           <Route path="knowledge-base/:id" element={<KnowledgeBase />} />
           <Route path="embeddings" element={<EmbeddingsPage />} />
           <Route path="gmail-analytics" element={<GmailAnalytics />} />
+          <Route path="linkedin-integration" element={<LinkedInIntegration />} />
+          <Route path="lead-discovery" element={<LeadDiscovery />} />
+          <Route path="campaigns" element={<Campaigns />} />
+          <Route path="outreach-queue" element={<OutreachQueue />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="user-management" element={<UserManagement />} />
         </Route>
       </Routes>
     </Router>

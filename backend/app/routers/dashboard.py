@@ -15,33 +15,62 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 @router.get("/summary")
 def dashboard_summary(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     from app.models.leads import Lead
     from app.models.deal import Deal
     from app.models.call import Call, CallDirection, CallStatus
     from app.models.communication import Email
     from app.models.linkedin import LinkedInOutreach
-    from sqlalchemy import func, extract
+    from app.models.email_account import EmailAccount
+    from sqlalchemy import func
 
     now = datetime.now(timezone.utc)
+    owner_filter = None if current_user.is_superuser else current_user.id
+
+    def _lead_q():
+        q = db.query(Lead)
+        if owner_filter:
+            q = q.filter(Lead.owner_id == owner_filter)
+        return q
+
+    def _call_q():
+        q = db.query(Call)
+        if owner_filter:
+            q = q.filter(Call.owner_id == owner_filter)
+        return q
+
+    def _deal_q():
+        q = db.query(Deal)
+        if owner_filter:
+            q = q.filter(Deal.owner_id == owner_filter)
+        return q
+
+    def _email_q():
+        q = db.query(Email)
+        if owner_filter:
+            _accts = [a.id for a in db.query(EmailAccount.id)
+                      .filter(EmailAccount.owner_id == owner_filter).all()]
+            q = q.filter(Email.account_id.in_(_accts))
+        return q
 
     # ── KPI cards ──────────────────────────────────────────────────────────────
-    total_leads     = db.query(Lead).count()
-    active_calls    = db.query(Call).filter(Call.status == CallStatus.ACTIVE).count()
-    linkedin_leads  = db.query(LinkedInOutreach).count()
-    inbound_calls   = db.query(Call).filter(Call.direction == CallDirection.INBOUND).count()
-    outbound_calls  = db.query(Call).filter(Call.direction == CallDirection.OUTBOUND).count()
-    qualified_leads = db.query(Lead).filter(Lead.classification == "HIGH").count()
+    total_leads     = _lead_q().count()
+    active_calls    = _call_q().filter(Call.status == CallStatus.ACTIVE).count()
+    linkedin_leads  = db.query(LinkedInOutreach).count()  # no owner_id on this table
+    inbound_calls   = _call_q().filter(Call.direction == CallDirection.INBOUND).count()
+    outbound_calls  = _call_q().filter(Call.direction == CallDirection.OUTBOUND).count()
+    qualified_leads = _lead_q().filter(Lead.classification == "HIGH").count()
 
-    converted = db.query(Lead).filter(Lead.status.ilike("%convert%")).count()
+    converted = _lead_q().filter(Lead.status.ilike("%convert%")).count()
     conversion_rate = round(converted / total_leads * 100, 1) if total_leads else 0.0
 
-    from sqlalchemy import text
-    revenue_row = db.execute(
-        text("SELECT COALESCE(SUM(deal_value), 0) FROM deals WHERE stage = 'Closed Won'")
-    ).fetchone()
-    revenue = float(revenue_row[0]) if revenue_row else 0.0
+    _rev_filters = [Deal.stage == "Closed Won"]
+    if owner_filter:
+        _rev_filters.append(Deal.owner_id == owner_filter)
+    revenue = float(
+        db.query(func.coalesce(func.sum(Deal.deal_value), 0)).filter(*_rev_filters).scalar() or 0
+    )
 
     # ── Monthly breakdown — last 12 months ────────────────────────────────────
     monthly = []
@@ -52,17 +81,17 @@ def dashboard_summary(
         month_end = (month_start + timedelta(days=32)).replace(day=1)
         month_label = month_start.strftime("%b")
 
-        leads_count = db.query(Lead).filter(
+        leads_count = _lead_q().filter(
             Lead.created_at >= month_start,
             Lead.created_at < month_end,
         ).count()
 
-        calls_count = db.query(Call).filter(
+        calls_count = _call_q().filter(
             Call.started_at >= month_start,
             Call.started_at < month_end,
         ).count()
 
-        deals_count = db.query(Deal).filter(
+        deals_count = _deal_q().filter(
             Deal.stage == "Closed Won",
             Deal.closed_at >= month_start,
             Deal.closed_at < month_end,
@@ -78,7 +107,7 @@ def dashboard_summary(
     # ── Recent activity — last 10 events ─────────────────────────────────────
     activity = []
 
-    recent_leads = db.query(Lead).order_by(Lead.created_at.desc()).limit(4).all()
+    recent_leads = _lead_q().order_by(Lead.created_at.desc()).limit(4).all()
     for l in recent_leads:
         activity.append({
             "type":   "lead",
@@ -87,7 +116,7 @@ def dashboard_summary(
             "time":   l.created_at.isoformat() if l.created_at else None,
         })
 
-    recent_calls = db.query(Call).filter(
+    recent_calls = _call_q().filter(
         Call.ai_summary.isnot(None)
     ).order_by(Call.created_at.desc()).limit(3).all()
     for c in recent_calls:
@@ -98,7 +127,7 @@ def dashboard_summary(
             "time":   (c.ended_at or c.created_at).isoformat() if (c.ended_at or c.created_at) else None,
         })
 
-    recent_emails = db.query(Email).filter(
+    recent_emails = _email_q().filter(
         Email.direction == "inbound"
     ).order_by(Email.received_at.desc()).limit(3).all()
     for e in recent_emails:

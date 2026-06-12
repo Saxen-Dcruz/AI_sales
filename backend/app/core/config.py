@@ -132,7 +132,8 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "rdl_redis"
     REDIS_PORT: int = 6379
 
-    # --- LinkedIn Scraper ---
+    # --- LinkedIn Scraper (Node.js microservice) ---
+    LINKEDIN_SCRAPER_URL: str = "http://linkedin-scraper:3001"
     LINKEDIN_EMAIL: str | None = None
     LINKEDIN_PASSWORD: str | None = None
 

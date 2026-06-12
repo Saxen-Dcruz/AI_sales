@@ -8,8 +8,8 @@ from app.models.leads import Lead
 from app.schema.leads import LeadCreate, LeadUpdate
 
 
-def create_lead(db: Session, payload: LeadCreate) -> Lead:
-    lead = Lead(**payload.model_dump(exclude_none=True))
+def create_lead(db: Session, payload: LeadCreate, owner_id: UUID) -> Lead:
+    lead = Lead(owner_id=owner_id, **payload.model_dump(exclude_none=True))
     db.add(lead)
     db.commit()
     db.refresh(lead)
@@ -28,8 +28,11 @@ def list_leads(
     search: Optional[str] = None,
     at_risk: Optional[bool] = None,
     classification: Optional[str] = None,
+    owner_id_filter: Optional[UUID] = None,
 ) -> Tuple[List[Lead], int]:
     q = db.query(Lead)
+    if owner_id_filter is not None:
+        q = q.filter(Lead.owner_id == owner_id_filter)
     if status:
         q = q.filter(Lead.status == status)
     if search:
@@ -50,9 +53,12 @@ def list_leads(
     return items, total
 
 
-def get_classification_summary(db: Session) -> dict:
+def get_classification_summary(db: Session, owner_id_filter: Optional[UUID] = None) -> dict:
     """Count and average score per classification tier."""
-    leads = db.query(Lead).all()
+    q = db.query(Lead)
+    if owner_id_filter is not None:
+        q = q.filter(Lead.owner_id == owner_id_filter)
+    leads = q.all()
     total = len(leads)
 
     tiers: dict = {"HIGH": [], "MEDIUM": [], "LOW": [], "UNCLASSIFIED": []}

@@ -211,6 +211,7 @@ def _generate_call_summary(transcript: str) -> tuple[str, str, object]:
 def create_call(
     db: Session,
     direction: CallDirection,
+    owner_id: Optional[UUID] = None,
     phone_number: Optional[str] = None,
     lead_id: Optional[UUID] = None,
     livekit_room: Optional[str] = None,
@@ -222,6 +223,7 @@ def create_call(
         lead_id = lead.id
 
     call = Call(
+        owner_id=owner_id,
         direction=direction,
         status=CallStatus.NEW,
         phone_number=phone_number,
@@ -249,8 +251,11 @@ def list_calls(
     outcome: Optional[CallOutcome] = None,
     page: int = 1,
     limit: int = 20,
+    owner_id_filter: Optional[UUID] = None,
 ) -> tuple[list[Call], int]:
     q = db.query(Call)
+    if owner_id_filter is not None:
+        q = q.filter(Call.owner_id == owner_id_filter)
     if lead_id:
         q = q.filter(Call.lead_id == lead_id)
     if status:
@@ -344,11 +349,14 @@ def process_transcript(db: Session, call: Call, transcript: str) -> Call:
 
 # ── Analytics ────────────────────────────────────────────────────────────────
 
-def get_call_analytics(db: Session) -> dict:
+def get_call_analytics(db: Session, owner_id_filter: Optional[UUID] = None) -> dict:
     """Aggregate call metrics across all calls."""
     from sqlalchemy import func as sqlfunc
 
-    calls = db.query(Call).all()
+    q = db.query(Call)
+    if owner_id_filter is not None:
+        q = q.filter(Call.owner_id == owner_id_filter)
+    calls = q.all()
     total = len(calls)
 
     by_direction: dict = {}

@@ -55,19 +55,46 @@ def test_email_account():
     Ensure the shared test EmailAccount row exists for the duration of the test session.
     _insert_email uses TEST_ACCOUNT_ID so analytics endpoints (which now filter by
     account_id IS NOT NULL) can see test emails.
+
+    Also seeds a stable owner user for the test account — required since
+    EmailAccount.owner_id is NOT NULL (migration 022) — and installs a
+    before_insert event listener on the 5 RBAC-owned models so legacy tests
+    that don't pass owner_id keep working (event auto-fills to the test owner).
     """
     import base64, pickle
+    from sqlalchemy import event
     from app.models.email_account import EmailAccount
+    from app.models.leads import Lead
+    from app.models.deal import Deal
+    from app.models.call import Call
+    from app.models.calendar_event import CalendarEvent
+    from app.models.user import User
+    from app.services.auth_service import hash_password
 
     fake_token = base64.b64encode(pickle.dumps(_FakeCredsForTest())).decode()
+    test_owner_email = "test-owner@rdltest.com"
 
     with SessionLocal() as db:
+        owner = db.query(User).filter(User.email == test_owner_email).first()
+        if not owner:
+            owner = User(
+                email=test_owner_email,
+                hashed_password=hash_password("test"),
+                is_active=True,
+                is_superuser=False,
+            )
+            db.add(owner)
+            db.commit()
+            db.refresh(owner)
+        owner_id = owner.id
+
         existing = db.query(EmailAccount).filter(
             EmailAccount.id == TEST_ACCOUNT_ID
         ).first()
         if not existing:
             acct = EmailAccount(
                 id=TEST_ACCOUNT_ID,
+                owner_id=owner_id,
                 email_address=TEST_ACCOUNT_EMAIL,
                 display_name="Test Account",
                 token_data=fake_token,
@@ -76,7 +103,24 @@ def test_email_account():
             )
             db.add(acct)
             db.commit()
+
+    # before_insert listener: legacy tests construct entities without owner_id;
+    # auto-fill it to the test owner so the NOT NULL constraint doesn't fail.
+    # Real (non-test) code paths always set owner_id explicitly, so this only
+    # affects test fixture inserts.
+    owned_models = (EmailAccount, Lead, Deal, Call, CalendarEvent)
+
+    def _fill_owner(_mapper, _connection, target):
+        if getattr(target, "owner_id", None) is None:
+            target.owner_id = owner_id
+
+    for m in owned_models:
+        event.listen(m, "before_insert", _fill_owner)
+
     yield
+
+    for m in owned_models:
+        event.remove(m, "before_insert", _fill_owner)
     # Clean up after session
     with SessionLocal() as db:
         db.query(EmailAccount).filter(EmailAccount.id == TEST_ACCOUNT_ID).delete()
@@ -91,9 +135,21 @@ def client() -> TestClient:
 
 @pytest.fixture(scope="session")
 def auth_headers(client: TestClient) -> dict:
-    """Register a test user once per session and return bearer headers."""
+    """Register a test super-admin once per session and return bearer headers.
+
+    The user is promoted to is_superuser=True directly in the DB so that all
+    legacy tests (which create entities owned by the test-owner fixture) can
+    still access them via assert_can_access() without needing per-test rewrites.
+    """
     email = _unique_email()
     client.post(f"{AUTH_BASE}/register", json={"email": email, "password": TEST_PASSWORD})
+    # Promote to super-admin so RBAC scoping bypasses for existing tests
+    with SessionLocal() as db:
+        from app.models.user import User
+        u = db.query(User).filter(User.email == email).first()
+        if u:
+            u.is_superuser = True
+            db.commit()
     resp = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": TEST_PASSWORD})
     assert resp.status_code == 200, f"Test user login failed: {resp.text}"
     token = resp.json()["access_token"]

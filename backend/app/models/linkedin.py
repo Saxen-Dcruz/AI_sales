@@ -16,6 +16,9 @@ class LinkedInOAuthAccount(Base):
     email             = Column(String, nullable=True)
     picture_url       = Column(String, nullable=True)
     access_token      = Column(Text, nullable=False)
+    # Stored LinkedIn account password used to auto-refresh the session when the
+    # OAuth access token expires (no headless re-login flow otherwise).
+    li_password       = Column(Text, nullable=True)
     is_active         = Column(Boolean, default=True, nullable=False)
     connected_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
