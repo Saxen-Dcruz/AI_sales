@@ -2,6 +2,7 @@ import base64
 import logging
 import pickle
 import re
+import uuid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -299,13 +300,18 @@ def archive_message(service, message_id: str) -> None:
 def create_draft(service, to: str, subject: str, body: str,
                  thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None,
                  references: Optional[str] = None) -> dict:
-    """Save a draft in Gmail. Returns the draft object (includes draft id)."""
-    msg = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id, references=references)
+    """Save a draft in Gmail. Returns the draft dict + a 'tracking_token' key (uuid str)
+    that is already embedded as a pixel in the HTML body — caller should persist this on
+    the Email row so opens can be attributed."""
+    token = str(uuid.uuid4())
+    msg = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id,
+                      references=references, tracking_token=token)
     draft_body: dict = {"message": {"raw": msg}}
     if thread_id:
         draft_body["message"]["threadId"] = thread_id
     draft = service.users().drafts().create(userId="me", body=draft_body).execute()
     logger.info(f"Gmail draft created: {draft['id']} → {to}")
+    draft["tracking_token"] = token
     return draft
 
 
@@ -319,13 +325,17 @@ def send_draft(service, draft_id: str) -> dict:
 def send_email(service, to: str, subject: str, body: str,
                thread_id: Optional[str] = None, reply_to_message_id: Optional[str] = None,
                references: Optional[str] = None) -> dict:
-    """Send immediately without saving a draft."""
-    raw = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id, references=references)
+    """Send immediately. Returns Gmail API result + 'tracking_token' key (uuid str) already
+    embedded in the HTML body — caller should persist this on the outbound Email row."""
+    token = str(uuid.uuid4())
+    raw = _build_mime(to, subject, body, reply_to_message_id=reply_to_message_id,
+                      references=references, tracking_token=token)
     msg_body: dict = {"raw": raw}
     if thread_id:
         msg_body["threadId"] = thread_id
     sent = service.users().messages().send(userId="me", body=msg_body).execute()
     logger.info(f"Email sent: {sent['id']} → {to}")
+    sent["tracking_token"] = token
     return sent
 
 
@@ -356,8 +366,14 @@ def _markdown_to_html(text: str) -> str:
     )
 
 
+def _tracking_pixel_html(tracking_token: str) -> str:
+    """Return a 1×1 transparent pixel img tag for open-tracking."""
+    url = f"{settings.PUBLIC_API_URL}/gmail/track/open/{tracking_token}.png"
+    return f'<img src="{url}" width="1" height="1" style="display:none;border:0" alt="">'
+
+
 def _build_mime(to: str, subject: str, body: str, reply_to_message_id: Optional[str] = None,
-                references: Optional[str] = None) -> str:
+                references: Optional[str] = None, tracking_token: Optional[str] = None) -> str:
     msg = MIMEMultipart("alternative")
     msg["to"] = to
     msg["subject"] = subject
@@ -369,6 +385,9 @@ def _build_mime(to: str, subject: str, body: str, reply_to_message_id: Optional[
     # plain text fallback (strips markdown syntax for clients that don't render HTML)
     plain = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', body)
     msg.attach(MIMEText(plain, "plain"))
-    # HTML version — rendered in Gmail and most modern clients
-    msg.attach(MIMEText(_markdown_to_html(body), "html"))
+    # HTML version — rendered in Gmail and most modern clients. Append tracking pixel if provided.
+    html_body = _markdown_to_html(body)
+    if tracking_token:
+        html_body += _tracking_pixel_html(tracking_token)
+    msg.attach(MIMEText(html_body, "html"))
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()

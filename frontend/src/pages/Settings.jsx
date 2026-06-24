@@ -42,15 +42,15 @@ const staticSections = [
       { label: 'Call Summary Digest', type: 'select', options: ['Daily', 'Weekly', 'Off'], value: 'Daily' },
     ]
   },
-  {
-    icon: Shield, title: 'Security', color: '#10b981',
-    fields: [
-      { label: 'Two-Factor Auth',           type: 'toggle', value: true },
-      { label: 'Session Timeout (minutes)', type: 'number', value: '60' },
-      { label: 'API Rate Limiting',         type: 'toggle', value: true },
-      { label: 'Data Encryption',           type: 'toggle', value: true },
-    ]
-  },
+  // {
+  //   icon: Shield, title: 'Security', color: '#10b981',
+  //   fields: [
+  //     { label: 'Two-Factor Auth',           type: 'toggle', value: true },
+  //     { label: 'Session Timeout (minutes)', type: 'number', value: '60' },
+  //     { label: 'API Rate Limiting',         type: 'toggle', value: true },
+  //     { label: 'Data Encryption',           type: 'toggle', value: true },
+  //   ]
+  // },
 ]
 
 function Toggle({ value }) {

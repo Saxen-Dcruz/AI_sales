@@ -28,3 +28,15 @@ class Deal(Base):
 
     company = relationship("Company", back_populates="deals")
     lead = relationship("Lead")
+
+    @property
+    def company_name(self):
+        return self.company.name if self.company else None
+
+    @property
+    def contact_name(self):
+        return self.lead.name if self.lead else None
+
+    @property
+    def lead_email(self):
+        return self.lead.email if self.lead else None

@@ -1,6 +1,23 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
+
+
+class FaqItem(BaseModel):
+    question: str
+    answer: str
+
+
+class BulkPricingTier(BaseModel):
+    quantity: Optional[float] = None
+    price: Optional[float] = None
+
+
+class ProductVariation(BaseModel):
+    order_code: Optional[str] = None
+    single_price: Optional[float] = None
+    bulk_pricing: Optional[List[BulkPricingTier]] = None
+    attributes: Optional[Dict[str, Any]] = None
 
 
 class ProductBase(BaseModel):
@@ -19,6 +36,12 @@ class ProductBase(BaseModel):
     bulk_price: Optional[float] = 0.0
     is_active: bool = True
     coverage_score: Optional[float] = None
+
+    categories: Optional[List[str]] = None
+    subcategories: Optional[List[str]] = None
+    faqs: Optional[List[FaqItem]] = None
+    bulk_pricing: Optional[List[BulkPricingTier]] = None
+    variations: Optional[List[ProductVariation]] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
@@ -41,6 +64,12 @@ class ProductUpdate(BaseModel):
     sdk_link: Optional[str] = None
     is_active: Optional[bool] = None
     sections: Optional[Dict[str, Any]] = None
+
+    categories: Optional[List[str]] = None
+    subcategories: Optional[List[str]] = None
+    faqs: Optional[List[FaqItem]] = None
+    bulk_pricing: Optional[List[BulkPricingTier]] = None
+    variations: Optional[List[ProductVariation]] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 

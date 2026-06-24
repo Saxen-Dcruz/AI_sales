@@ -1,5 +1,5 @@
 -- Phase 1b finalisation: owner_id is now backfilled on every row
--- (default super_admin = saxen@gmail.com), so the column can be made NOT NULL.
+-- (default super_admin = houldnt fallback @gmail.com), so the column can be made NOT NULL.
 -- This is a hard contract — every new row must specify its owner.
 --
 -- Rollback:

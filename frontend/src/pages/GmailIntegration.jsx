@@ -1,22 +1,34 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import ApplicationStore from '../utils/ApplicationStore'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
   Archive,
+  Briefcase,
+  Building2,
   CheckCircle,
   ChevronRight,
+  Clock,
+  FileText,
+  Filter,
   Inbox,
-  Mail, MailOpen,
-  RefreshCw, Reply, Search,
+  Mail,
+  MailOpen,
+  Phone,
+  RefreshCw,
+  Reply,
+  Search,
   Send,
-  Star, Tag,
+  Star,
+  Tag,
+  Target,
+  TrendingUp,
   Users,
-  X, Zap
+  X,
+  Zap,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
 
 // ─── Account color palette — cycles through these for each connected account ─
@@ -168,9 +180,14 @@ function EmailRow({ email, selected, onClick, accountColorMap = {}, acctOwnerMap
                 {unresolvedGaps} gap{unresolvedGaps > 1 ? 's' : ''}
               </span>
             )}
-            {email.status === 'replied' && (
+            {email.status === 'replied' && !email.opened_at && (
               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
                 ✓ Sent
+              </span>
+            )}
+            {email.opened_at && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-200 text-emerald-800">
+                ✓ Opened{email.open_count > 1 ? ` ×${email.open_count}` : ''}
               </span>
             )}
             {/* Account pill — color-coded per account + owner name for super-admin */}
@@ -210,6 +227,15 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
   const [replySubject, setReplySubject] = useState('')
   const [replyBody, setReplyBody] = useState('')
   const [replySending, setReplySending] = useState(false)
+  const [replyTemplates, setReplyTemplates] = useState([])
+  const [showReplyTemplates, setShowReplyTemplates] = useState(false)
+
+  useEffect(() => {
+    GetEmailTemplatesService(
+      (data) => setReplyTemplates(data?.items || []),
+      () => {}
+    )
+  }, [])
   // Thread conversation: all messages in the same gmail_thread_id (chronological)
   const [threadMessages, setThreadMessages] = useState([])
 
@@ -371,6 +397,7 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
               bubbles.push({
                 key: `${m.id}-out`, side: 'right', kind: 'sent',
                 sender: 'You', body: m.body_text, time: m.received_at,
+                openedAt: m.opened_at, openCount: m.open_count || 0,
               })
               continue
             }
@@ -417,10 +444,15 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                   return (
                     <div key={b.key} className={`rounded-xl p-3 border ${styles}`}>
                       <div className="flex items-center justify-between mb-1.5 gap-2">
-                        <span className={`text-[10px] font-semibold ${labelClr}`}>
+                        <span className={`text-[10px] font-semibold ${labelClr} flex items-center gap-1.5`}>
                           {b.kind === 'draft' && '✋ '}
                           {b.kind === 'sent' && '✓ '}
                           {b.sender}
+                          {b.kind === 'sent' && b.openedAt && (
+                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 ml-1">
+                              Opened {b.openCount > 1 ? `×${b.openCount}` : ''}
+                            </span>
+                          )}
                         </span>
                         <span className="text-[10px] text-gray-400 whitespace-nowrap">
                           {b.time ? new Date(b.time).toLocaleString() : ''}
@@ -677,7 +709,28 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
         {replyOpen && (
           <div className="mt-3 rounded-xl border border-gray-200 bg-white overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
-              <span className="text-xs font-semibold text-gray-600">Reply</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-gray-600">Reply</span>
+                <div className="relative">
+                  <button onClick={() => setShowReplyTemplates(s => !s)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-gray-500 hover:bg-gray-200 transition-all">
+                    <FileText size={11} /> Templates
+                  </button>
+                  {showReplyTemplates && (
+                    <div className="absolute top-full mt-1 left-0 z-20 bg-white rounded-xl border border-gray-100 shadow-xl min-w-[180px] max-h-48 overflow-y-auto">
+                      {replyTemplates.length === 0 ? (
+                        <p className="text-xs text-gray-400 px-4 py-3">No templates yet.</p>
+                      ) : replyTemplates.map(tpl => (
+                        <button key={tpl.id} onClick={() => { if (!replyBody) setReplyBody(tpl.body); setShowReplyTemplates(false) }}
+                          className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b border-gray-50 last:border-0">
+                          <p className="text-xs font-semibold text-gray-800">{tpl.name}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{tpl.subject}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
               <button onClick={() => { setReplyOpen(false); setReplyBody('') }}
                 className="text-gray-400 hover:text-gray-600 transition-colors">
                 <X size={15} />
@@ -719,6 +772,241 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
   )
 }
 
+// ─── CRM record panel ─────────────────────────────────────────────────────────
+// A compact "record" sidebar next to the email, in the spirit of the contact/
+// deal panels in Attio, Odoo CRM and FreshBooks — shows the linked contact,
+// company, lead status, classification and any associated deal/PO, all pulled
+// live from /gmail/{id}/crm (no hardcoded data).
+
+const LEAD_STATUS_OPTIONS = ['Uncontacted', 'Contacted', 'Engaged', 'PO Raised', 'Converted', 'Lost']
+const DEAL_STAGE_OPTIONS = ['Prospect', 'Contacted', 'Qualified', 'PO Raised', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost']
+
+const CLASSIFICATION_BADGE = {
+  HIGH:   'bg-emerald-100 text-emerald-700',
+  MEDIUM: 'bg-amber-100 text-amber-700',
+  LOW:    'bg-rose-100 text-rose-700',
+}
+
+function initials(name) {
+  if (!name) return '?'
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?'
+}
+
+function CrmPanel({ email, onSelectEmail }) {
+  const [crm, setCrm] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [savingStatus, setSavingStatus] = useState(false)
+  const [savingStage, setSavingStage] = useState(false)
+  const [activity, setActivity] = useState([])
+
+  useEffect(() => {
+    setLoading(true)
+    setCrm(null)
+    setActivity([])
+    GetEmailCrmContextService(email.id,
+      (data) => {
+        setCrm(data)
+        setLoading(false)
+        if (data?.lead?.id) {
+          GetGmailMessagesService({ lead_id: data.lead.id, limit: 8, page: 1, business_only: false },
+            (res) => setActivity((res?.items || []).filter(e => e.id !== email.id)),
+            () => {}
+          )
+        }
+      },
+      () => { setCrm(null); setLoading(false) }
+    )
+  }, [email.id])
+
+  const handleStatusChange = (newStatus) => {
+    if (!crm?.lead) return
+    setSavingStatus(true)
+    UpdateLeadService(crm.lead.id, { status: newStatus },
+      () => { setCrm({ ...crm, lead: { ...crm.lead, status: newStatus } }); setSavingStatus(false) },
+      (_s, err) => { setSavingStatus(false); alert('Failed to update status: ' + err) }
+    )
+  }
+
+  const handleStageChange = (newStage) => {
+    if (!crm?.deal) return
+    setSavingStage(true)
+    UpdateDealService(crm.deal.id, { stage: newStage },
+      () => { setCrm({ ...crm, deal: { ...crm.deal, stage: newStage } }); setSavingStage(false) },
+      (_s, err) => { setSavingStage(false); alert('Failed to update stage: ' + err) }
+    )
+  }
+
+  return (
+    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-gray-50/40 overflow-y-auto">
+      <div className="px-4 py-3 border-b border-gray-100">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">CRM Record</p>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-10 text-gray-400 text-xs">Loading...</div>
+      ) : !crm?.lead ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-10 px-4 text-center">
+          <Users size={22} className="text-gray-200" />
+          <p className="text-xs text-gray-400">No CRM contact linked to this email yet.</p>
+        </div>
+      ) : (
+        <div className="p-4 space-y-4">
+
+          {/* Contact card */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                {initials(crm.lead.name)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">{crm.lead.name || 'Unknown contact'}</p>
+                {crm.lead.email && <p className="text-[11px] text-gray-400 truncate">{crm.lead.email}</p>}
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-1.5">
+              {crm.lead.company_name && (
+                <div className="flex items-center gap-2 text-xs text-gray-600">
+                  <Building2 size={12} className="text-gray-400" />
+                  {crm.lead.company_name}
+                </div>
+              )}
+              {crm.lead.phone && (
+                <div className="flex items-center gap-2 text-xs text-gray-600">
+                  <Phone size={12} className="text-gray-400" />
+                  {crm.lead.phone}
+                </div>
+              )}
+              {crm.lead.classification && (
+                <div className="flex items-center gap-2">
+                  <Target size={12} className="text-gray-400" />
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${CLASSIFICATION_BADGE[crm.lead.classification] || 'bg-gray-100 text-gray-500'}`}>
+                    {crm.lead.classification} priority
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Status */}
+            <div className="mt-3">
+              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Status</label>
+              <select value={crm.lead.status} disabled={savingStatus}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className="mt-1 w-full text-xs font-semibold text-gray-700 border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 disabled:opacity-50">
+                {LEAD_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                {!LEAD_STATUS_OPTIONS.includes(crm.lead.status) && (
+                  <option value={crm.lead.status}>{crm.lead.status}</option>
+                )}
+              </select>
+            </div>
+
+            {/* Engagement score */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Engagement</span>
+                <span className="text-[10px] font-bold text-gray-600">{crm.lead.engagement_score}/100</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, crm.lead.engagement_score)}%` }} />
+              </div>
+            </div>
+
+            {crm.lead.next_best_action && (
+              <div className="mt-3 p-2.5 rounded-lg bg-blue-50 border border-blue-100">
+                <p className="text-[10px] font-semibold text-blue-600 uppercase tracking-wide mb-0.5">Next Best Action</p>
+                <p className="text-xs text-blue-700 leading-snug">{crm.lead.next_best_action}</p>
+              </div>
+            )}
+
+            {crm.lead.last_contacted_at && (
+              <p className="mt-2 text-[10px] text-gray-400">
+                Last contacted {new Date(crm.lead.last_contacted_at).toLocaleDateString()}
+              </p>
+            )}
+          </div>
+
+          {/* Deal / PO card */}
+          {crm.deal ? (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Briefcase size={13} className="text-violet-500" />
+                <p className="text-sm font-bold text-gray-900 truncate">{crm.deal.deal_name}</p>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-3">
+                <span className="flex items-center gap-1"><TrendingUp size={12} className="text-emerald-500" />Value</span>
+                <span className="font-bold text-gray-900">${Number(crm.deal.deal_value).toLocaleString()}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-3">
+                <span>Win Probability</span>
+                <span className="font-bold text-gray-900">{crm.deal.win_probability}%</span>
+              </div>
+              {crm.deal.expected_close_date && (
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-3">
+                  <span>Expected Close</span>
+                  <span className="font-medium text-gray-700">{new Date(crm.deal.expected_close_date).toLocaleDateString()}</span>
+                </div>
+              )}
+
+              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Deal Stage</label>
+              <select value={crm.deal.stage} disabled={savingStage}
+                onChange={(e) => handleStageChange(e.target.value)}
+                className="mt-1 w-full text-xs font-semibold text-gray-700 border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-violet-400 disabled:opacity-50">
+                {DEAL_STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                {!DEAL_STAGE_OPTIONS.includes(crm.deal.stage) && (
+                  <option value={crm.deal.stage}>{crm.deal.stage}</option>
+                )}
+              </select>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+              <Briefcase size={18} className="text-gray-200 mx-auto mb-1.5" />
+              <p className="text-xs text-gray-400">No deal/PO opened for this contact yet.</p>
+            </div>
+          )}
+
+          {/* Activity timeline */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock size={13} className="text-gray-400" />
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Recent Activity</p>
+            </div>
+            {activity.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-2">No other conversations yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {activity.map(e => {
+                  const cfg = LABEL_CONFIG[e.label] || LABEL_CONFIG.Unclassified
+                  const isOut = e.direction === 'outbound'
+                  return (
+                    <button key={e.id} onClick={() => onSelectEmail && onSelectEmail(e.id)}
+                      className="w-full text-left p-2 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${isOut ? 'bg-emerald-400' : 'bg-blue-400'}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium text-gray-800 truncate">{e.subject || '(no subject)'}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.badge}`}>{e.label}</span>
+                            {e.direction === 'outbound' && e.opened_at && (
+                              <span className="text-[9px] text-emerald-600 font-semibold">✓ Opened</span>
+                            )}
+                            <span className="text-[9px] text-gray-400 ml-auto">{relTime(e.received_at)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Compose Modal ────────────────────────────────────────────────────────────
 
 function ComposeModal({ onClose, onSent }) {
@@ -730,6 +1018,38 @@ function ComposeModal({ onClose, onSent }) {
   const [sending, setSending] = useState(false)
   const [aiGenerated, setAiGenerated] = useState(false)
   const [contextOpen, setContextOpen] = useState(true)
+  const [templates, setTemplates] = useState([])
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateName, setTemplateName] = useState('')
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+
+  useEffect(() => {
+    GetEmailTemplatesService(
+      (data) => setTemplates(data?.items || []),
+      () => {}
+    )
+  }, [])
+
+  const applyTemplate = (tpl) => {
+    if (!subject) setSubject(tpl.subject)
+    if (!body) setBody(tpl.body)
+    setShowTemplates(false)
+  }
+
+  const saveAsTemplate = () => {
+    if (!templateName.trim() || !subject || !body) return
+    setSavingTemplate(true)
+    CreateEmailTemplateService({ name: templateName.trim(), subject, body },
+      (tpl) => {
+        setTemplates(t => [...t, tpl])
+        setShowSaveTemplate(false)
+        setTemplateName('')
+        setSavingTemplate(false)
+      },
+      () => { setSavingTemplate(false); alert('Failed to save template') }
+    )
+  }
 
   const handleGenerate = () => {
     if (!to || !subject) return
@@ -802,6 +1122,50 @@ function ComposeModal({ onClose, onSent }) {
                 placeholder="Re: Product Inquiry"
                 className="flex-1 text-sm text-gray-800 focus:outline-none" />
             </div>
+          </div>
+
+          {/* Templates row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <button onClick={() => setShowTemplates(s => !s)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-all">
+                <FileText size={12} />
+                Templates {templates.length > 0 ? `(${templates.length})` : ''}
+              </button>
+              {showTemplates && templates.length > 0 && (
+                <div className="absolute top-full mt-1 left-0 z-20 bg-white rounded-xl border border-gray-100 shadow-xl min-w-[200px] max-h-52 overflow-y-auto">
+                  {templates.map(tpl => (
+                    <button key={tpl.id} onClick={() => applyTemplate(tpl)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b border-gray-50 last:border-0">
+                      <p className="text-xs font-semibold text-gray-800">{tpl.name}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{tpl.subject}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showTemplates && templates.length === 0 && (
+                <div className="absolute top-full mt-1 left-0 z-20 bg-white rounded-xl border border-gray-100 shadow-xl px-4 py-3">
+                  <p className="text-xs text-gray-400">No templates yet. Save one below.</p>
+                </div>
+              )}
+            </div>
+            {body && subject && (
+              <button onClick={() => setShowSaveTemplate(s => !s)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-all">
+                + Save as template
+              </button>
+            )}
+            {showSaveTemplate && (
+              <div className="flex items-center gap-1.5">
+                <input value={templateName} onChange={e => setTemplateName(e.target.value)}
+                  placeholder="Template name"
+                  className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-400" />
+                <button onClick={saveAsTemplate} disabled={savingTemplate || !templateName.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-all">
+                  {savingTemplate ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Context for AI — collapsible */}
@@ -887,11 +1251,15 @@ export default function GmailIntegration() {
   const [emails, setEmails] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  // const [syncing, setSyncing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [activeTab, setActiveTab] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(null)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
   const [directEmail, setDirectEmail] = useState(null)
   const [composeOpen, setComposeOpen] = useState(false)
   const [accounts, setAccounts] = useState([])
@@ -903,20 +1271,6 @@ export default function GmailIntegration() {
   // Global counts independent of current tab/filter — always accurate
   const [globalNeedsReview, setGlobalNeedsReview] = useState(0)
   const [globalDraftReady, setGlobalDraftReady] = useState(0)
-
-  useQueryClient()
-
-  const syncMutation = useMutation({
-    mutationFn: () => new Promise((resolve, reject) => {
-      SyncGmailService(
-        resolve,
-        (_s, err) => reject(new Error(err))
-      )
-    }),
-    onSuccess: () => {
-      fetchEmails()
-    }
-  })
 
   // When navigated from GapsPage with a specific email to show
   useEffect(() => {
@@ -984,6 +1338,9 @@ export default function GmailIntegration() {
     }
     if (activeTab !== 'other') params.business_only = true
     if (activeAccount) params.account_id = activeAccount
+    if (filterDateFrom) params.date_from = new Date(filterDateFrom).toISOString()
+    if (filterDateTo) { const d = new Date(filterDateTo); d.setHours(23,59,59,999); params.date_to = d.toISOString() }
+    if (filterStatus) params.status = filterStatus
 
     GetGmailMessagesService(params,
       (data) => {
@@ -994,7 +1351,7 @@ export default function GmailIntegration() {
       },
       () => setLoading(false)
     )
-  }, [page, activeTab, activeAccount])
+  }, [page, activeTab, activeAccount, filterDateFrom, filterDateTo, filterStatus])
 
   useEffect(() => { fetchEmails() }, [fetchEmails])
   useEffect(() => { fetchGlobalCounts() }, [fetchGlobalCounts])
@@ -1002,28 +1359,14 @@ export default function GmailIntegration() {
   useEffect(() => { setPage(1); setSelected(null) }, [activeAccount])
 
   const handleSync = () => {
-    syncMutation.mutate()
+    setSyncing(true)
+    SyncGmailService(
+      () => { setSyncing(false); setTimeout(fetchEmails, 2000) },
+      () => setSyncing(false)
+    )
   }
 
-  // 3. Smart Background Sync Polling (Every 60s & on Window Focus)
-  useQuery({
-    queryKey: ['backgroundSync'],
-    queryFn: () => new Promise((resolve, reject) => {
-      SyncGmailService(
-        () => {
-          fetchEmails()
-          resolve(true)
-        },
-        (_s, err) => reject(new Error(err))
-      )
-    }),
-    refetchInterval: 60000,
-    refetchOnWindowFocus: true,
-  })
-
   useEffect(() => { setPage(1); setSelected(null) }, [search])
-
-  const syncing = syncMutation.isPending
 
   const searched = search
     ? emails.filter(e =>
@@ -1143,13 +1486,49 @@ export default function GmailIntegration() {
           </div>
 
           {/* Search */}
-          <div className="px-3 py-2.5 border-b border-gray-100">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search emails..."
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-50 border border-gray-200 text-gray-700 placeholder:text-gray-400 focus:outline-none focus:border-blue-400 transition-all" />
+          <div className="px-3 py-2.5 border-b border-gray-100 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Search emails..."
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-50 border border-gray-200 text-gray-700 placeholder:text-gray-400 focus:outline-none focus:border-blue-400 transition-all" />
+              </div>
+              <button onClick={() => setFilterOpen(o => !o)}
+                className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border text-xs font-semibold transition-all flex-shrink-0
+                  ${(filterDateFrom || filterDateTo || filterStatus)
+                    ? 'border-blue-400 text-blue-600 bg-blue-50'
+                    : 'border-gray-200 text-gray-400 hover:bg-gray-50'}`}>
+                <Filter size={12} />
+                {(filterDateFrom || filterDateTo || filterStatus) ? 'Filtered' : 'Filter'}
+              </button>
             </div>
+            {filterOpen && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <input type="date" value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(1) }}
+                    className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400" />
+                  <span className="text-[10px] text-gray-400">to</span>
+                  <input type="date" value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(1) }}
+                    className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400" />
+                </div>
+                <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400 text-gray-600">
+                  <option value="">All statuses</option>
+                  <option value="new">New</option>
+                  <option value="draft_ready">Draft Ready</option>
+                  <option value="pending_human">Pending Human</option>
+                  <option value="replied">Replied</option>
+                  <option value="archived">Archived</option>
+                </select>
+                {(filterDateFrom || filterDateTo || filterStatus) && (
+                  <button onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setFilterStatus(''); setPage(1) }}
+                    className="text-[10px] text-rose-500 hover:text-rose-700 font-semibold">
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Email list */}
@@ -1201,15 +1580,18 @@ export default function GmailIntegration() {
         </div>
 
         {/* Right: detail */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex">
           <AnimatePresence mode="wait">
             {selectedEmail ? (
-              <motion.div key={selectedEmail.id} className="h-full"
+              <motion.div key={selectedEmail.id} className="h-full flex-1 min-w-0 flex"
                 initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-                <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} acctOwnerMap={acctOwnerMap} />
+                <div className="flex-1 min-w-0">
+                  <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} acctOwnerMap={acctOwnerMap} />
+                </div>
+                <CrmPanel email={selectedEmail} onSelectEmail={(id) => setSelected(id)} />
               </motion.div>
             ) : (
-              <motion.div key="empty" className="flex flex-col items-center justify-center h-full gap-4 text-center p-10"
+              <motion.div key="empty" className="flex-1 flex flex-col items-center justify-center h-full gap-4 text-center p-10"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <div className="w-20 h-20 rounded-full bg-gray-50 flex items-center justify-center">
                   <MailOpen size={44} className="text-gray-300" />

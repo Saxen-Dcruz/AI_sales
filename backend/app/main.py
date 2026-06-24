@@ -21,6 +21,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard, lead_gen, users
 from app.routers import settings as settings_router
 from app.routers import linkedin_accounts as linkedin_accounts_router
+from app.routers import email_templates as email_templates_router
 
 
 import app.models.user
@@ -42,6 +43,7 @@ import app.models.email_sequence
 import app.models.linkedin
 import app.models.linkedin_b2b
 import app.models.lead_gen
+import app.models.email_template
 
 
 # Rate Limiting
@@ -183,6 +185,7 @@ app.include_router(dashboard.router,  prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(lead_gen.router, prefix="/api/v1")
 app.include_router(linkedin_accounts_router.router, prefix="/api/v1")
+app.include_router(email_templates_router.router, prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
 # app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 

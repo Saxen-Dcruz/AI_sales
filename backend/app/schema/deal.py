@@ -32,7 +32,10 @@ class DealOut(BaseModel):
     id: UUID
     deal_name: str
     company_id: Optional[UUID] = None
+    company_name: Optional[str] = None
     lead_id: Optional[UUID] = None
+    contact_name: Optional[str] = None
+    lead_email: Optional[str] = None
     deal_value: Decimal
     stage: str
     win_probability: Decimal

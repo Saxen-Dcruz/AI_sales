@@ -4,10 +4,6 @@ version: '3.8'
 # Contains all local dev overrides — ports, code mounts, env files, credentials.
 
 services:
-  db:
-    ports:
-      - "5433:5432"
-
   redis:
     ports:
       - "6379:6379"

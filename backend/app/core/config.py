@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "local" # local, staging, production
     API_V1_STR: str = "/api/v1"
 
+    # Publicly reachable base URL for this API — used to build links embedded in
+    # outbound emails (e.g. the open-tracking pixel) that recipients' mail clients fetch.
+    PUBLIC_API_URL: str = "https://118-139-165-99.nip.io:8443/api/v1"
+
     ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1", "0.0.0.0"]
 
     @field_validator("ALLOWED_HOSTS", mode="before")
@@ -140,7 +144,6 @@ class Settings(BaseSettings):
     # --- LinkedIn OAuth ---
     LINKEDIN_CLIENT_ID: str = ""
     LINKEDIN_CLIENT_SECRET: str = ""
-
 
     # --- JWT Auth ---
     JWT_SECRET_KEY: str

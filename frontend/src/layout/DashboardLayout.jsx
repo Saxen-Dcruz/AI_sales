@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet, Navigate } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar'
 import TopNavbar from '../components/layout/TopNavbar'
+import Footer from '../components/layout/Footer'
 import ParticleBackground from '../components/effects/ParticleBackground'
 import ApplicationStore from '../utils/ApplicationStore'
 
@@ -62,6 +63,7 @@ export default function DashboardLayout() {
         <main className="flex-1 p-6 overflow-y-auto relative z-10">
           <Outlet />
         </main>
+        <Footer />
       </div>
 
       {/* Mobile layout override */}

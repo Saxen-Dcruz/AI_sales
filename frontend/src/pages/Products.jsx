@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   BookOpen,
   ChevronLeft, ChevronRight,
+  Copy,
   Edit2,
   ExternalLink,
   LayoutGrid, List,
@@ -24,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { DeleteProductService, ShowAllProductService, ToggleActiveInactiveService } from '../services/ApiService'
+import { DeleteProductService, ShowAllProductService, ShowOneProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
 // ── Animated loading overlay ──────────────────────────────────────────────────
 function ProductsLoadingOverlay() {
@@ -122,7 +123,7 @@ function CoverageBar({ score }) {
   )
 }
 
-function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
+function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView, onCopy }) {
   const isActive = product.status === 'Active'
   return (
     <motion.div
@@ -241,6 +242,11 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
           {isActive ? <PowerOff size={12} /> : <Power size={12} />}
           {isActive ? 'Off' : 'On'}
         </button>
+        <button onClick={() => onCopy(product)}
+          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-all">
+          <Copy size={12} />
+          Copy
+        </button>
         <button onClick={() => onDelete(product)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-red-50 hover:text-red-500 transition-all">
           <Trash2 size={12} />
@@ -251,7 +257,7 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   )
 }
 
-function ProductRow({ product, onToggle, onDelete, onView }) {
+function ProductRow({ product, onToggle, onDelete, onView, onCopy }) {
   const isActive = product.status === 'Active'
   const hasScore = product.coverage_score !== null && product.coverage_score !== undefined
   const pct = hasScore ? Math.round(product.coverage_score * 100) : null
@@ -347,6 +353,15 @@ function ProductRow({ product, onToggle, onDelete, onView }) {
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
           </button>
 
+          {/* Copy */}
+          <button
+            onClick={() => onCopy(product)}
+            className="p-1.5 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-400 transition-all"
+            title="Copy"
+          >
+            <Copy size={13} />
+          </button>
+
           {/* Delete */}
           <button
             onClick={() => onDelete(product)}
@@ -414,6 +429,16 @@ export default function Products() {
     DeleteProductService(selectedProduct.id,
       () => { setProducts(prev => prev.filter(p => p.id !== selectedProduct.id)); setDeleteDialogOpen(false) },
       (_s, err) => alert('Delete failed: ' + err)
+    )
+  }
+
+  const handleCopy = (product) => {
+    ShowOneProductService({ id: product.id },
+      (data) => {
+        sessionStorage.setItem('productCopySource', JSON.stringify(data))
+        navigate('/add-product')
+      },
+      (_s, err) => alert('Failed to load product for copying: ' + err)
     )
   }
 
@@ -541,6 +566,8 @@ export default function Products() {
 
                   onToggle={handleToggle}
 
+                  onCopy={handleCopy}
+
                   onDelete={(p) => {
                     setSelectedProduct(p)
                     setDeleteDialogOpen(true)
@@ -571,6 +598,7 @@ export default function Products() {
                   <ProductRow key={product.id} product={product}
                     onEdit={(id) => navigate(`/edit-product/${id}`)}
                     onToggle={handleToggle}
+                    onCopy={handleCopy}
                     onDelete={(p) => { setSelectedProduct(p); setDeleteDialogOpen(true) }}
                     onView={(p) => { setDetailProduct(p); setDetailOpen(true) }}
                   />
