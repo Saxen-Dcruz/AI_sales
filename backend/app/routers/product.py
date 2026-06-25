@@ -45,6 +45,14 @@ def list_products(
     )
 
 
+@router.get("/categories", summary="List distinct categories and subcategories for the Add Product form")
+def list_categories(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return product_service.get_categories(db)
+
+
 # ── Embedding inspection (must be before /{product_id} to avoid route shadowing) ──
 
 @router.get("/embeddings", summary="List all products with their RAG embeddings and product details")
@@ -132,7 +140,7 @@ def view_product(
                 ]
                 if features:
                     sections["features"] = features
-            elif ct in ("package_contains", "package_includes"):
+            elif ct in ("package_contains", "package_includes", "packagecontains"):
                 body = doc.split("\n\n", 1)[-1].strip()
                 items = [
                     line.lstrip("- ").strip()
@@ -141,6 +149,15 @@ def view_product(
                 ]
                 if items:
                     sections["packageContains"] = items
+            elif ct in ("applications", "benefits", "enclosure_dimensions"):
+                body = doc.split("\n\n", 1)[-1].strip()
+                items = [
+                    line.lstrip("- ").strip()
+                    for line in body.splitlines()
+                    if line.strip().startswith("-")
+                ]
+                if items:
+                    sections[ct] = items
     except Exception:
         pass  # sections remain empty — not fatal
 

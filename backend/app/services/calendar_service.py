@@ -49,6 +49,7 @@ def auto_log_completed_meetings(db) -> int:
         if not existing:
             duration = int((event.end_time - event.start_time).total_seconds())
             call = Call(
+                owner_id=event.owner_id,
                 lead_id=event.lead_id,
                 direction=CallDirection.OUTBOUND,
                 status=CallStatus.COMPLETED,
@@ -96,6 +97,7 @@ def create_meeting(
     lead_id: Optional[UUID] = None,
     deal_id: Optional[UUID] = None,
     send_invite_email: bool = True,
+    gmail_svc=None,
 ) -> CalendarEvent:
     """
     Create a Google Calendar event with a GMeet link.
@@ -156,7 +158,7 @@ def create_meeting(
     db.flush()
 
     if send_invite_email:
-        _send_invite_email(attendee_email, title, start_time, end_time, meet_link, description)
+        _send_invite_email(attendee_email, title, start_time, end_time, meet_link, description, gmail_svc=gmail_svc)
         event_row.invite_email_sent = True
 
     db.commit()
@@ -181,11 +183,13 @@ def _send_invite_email(
     end_time: datetime,
     meet_link: Optional[str],
     description: str,
+    gmail_svc=None,
 ) -> None:
     try:
         from zoneinfo import ZoneInfo
         ist = ZoneInfo("Asia/Kolkata")
-        gmail_svc = get_gmail_service()
+        if gmail_svc is None:
+            gmail_svc = get_gmail_service()
         time_str = start_time.astimezone(ist).strftime("%A, %d %B %Y at %I:%M %p IST")
         duration_mins = int((end_time - start_time).total_seconds() / 60)
 

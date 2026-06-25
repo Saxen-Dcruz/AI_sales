@@ -118,11 +118,15 @@ _MEETING_KEYWORDS = [
     "book a meeting", "book a call", "book a demo",
     "arrange a meeting", "arrange a call", "arrange a demo",
     "set up a meeting", "set up a call", "set up a demo",
+    "make a meeting", "make an online meeting", "make online meeting",
+    "online meeting", "online call", "online demo",
     "google meet", "gmeet", "video call",
     "can we meet", "let's meet", "meeting at", "call at", "demo at",
     "confirm the meeting", "confirm our call", "confirm the call",
     "i'd like a meeting", "i'd like a demo", "i want to schedule",
     "i need a product demo", "i need a demo", "product demo",
+    "want to talk", "want a call", "discuss this", "have a discussion",
+    "talk to someone", "speak to someone", "connect with someone",
 ]
 
 _MONTH_MAP = {
@@ -336,6 +340,7 @@ def node_persist(state: dict, config: RunnableConfig) -> dict:
         gmail_message_id=state["gmail_message_id"],
         gmail_thread_id=state.get("gmail_thread_id"),
         rfc_message_id=state.get("rfc_message_id"),
+        rfc_references=state.get("rfc_references"),
         direction="inbound",
         sender=state["sender_raw"],
         recipients=state.get("recipients", []),
@@ -375,9 +380,17 @@ def node_upsert_lead(state: dict, config: RunnableConfig) -> dict:
         db.flush()
         return {"lead_id": str(existing.id), "is_new_lead": False}
 
+    # owner_id comes from the EmailAccount that received this message
+    from app.models.email_account import EmailAccount
+    _acc_id = config["configurable"].get("account_id")
+    _owner = None
+    if _acc_id:
+        _acc = db.query(EmailAccount).filter(EmailAccount.id == UUID(_acc_id)).first()
+        _owner = _acc.owner_id if _acc else None
+
     display = state["sender_raw"].split("<")[0].strip().strip('"')
     name = display if display else sender_email.split("@")[0].replace(".", " ").title()
-    lead = Lead(name=name, email=sender_email, status="Uncontacted", interest_level="Warm", engagement_score=20)
+    lead = Lead(name=name, email=sender_email, status="Uncontacted", interest_level="Warm", engagement_score=20, owner_id=_owner)
     db.add(lead)
     db.flush()
     db.query(Email).filter(Email.id == UUID(state["email_id"])).update({"lead_id": lead.id})
@@ -543,7 +556,8 @@ def node_auto_send(state: dict, config: RunnableConfig) -> dict:
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"ai_draft": draft_text, "gmail_draft_id": None, "status": EmailStatus.REPLIED},
+            {"ai_draft": draft_text, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
+             "tracking_token": draft.get("tracking_token")},
             synchronize_session=False,
         )
         db.flush()
@@ -589,6 +603,7 @@ def node_hold_draft(state: dict, config: RunnableConfig) -> dict:
                 "gmail_draft_id": draft["id"],
                 "needs_human": True,
                 "status": EmailStatus.DRAFT_READY,
+                "tracking_token": draft.get("tracking_token"),
             },
             synchronize_session=False,
         )
@@ -647,7 +662,8 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"ai_draft": clarification, "gmail_draft_id": None, "status": EmailStatus.REPLIED},
+            {"ai_draft": clarification, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
+             "tracking_token": draft.get("tracking_token")},
             synchronize_session=False,
         )
         db.flush()
@@ -887,6 +903,7 @@ def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
                 duration_minutes=30,
                 trigger=EventTrigger.MANUAL,
                 lead_id=lead_id,
+                gmail_svc=_get_gmail_svc(config),
             )
             logger.info(f"[EMAIL WORKFLOW] Meeting scheduled: {event.meet_link} @ {requested_time}")
             return {"action": "meeting_scheduled"}
@@ -906,7 +923,7 @@ def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
         )
         subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
         gmail_svc = _get_gmail_svc(config)
-        gmail_service.send_email(
+        sent = gmail_service.send_email(
             gmail_svc,
             to=state["sender_email"],
             subject=subject,
@@ -915,6 +932,11 @@ def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
             reply_to_message_id=state.get("rfc_message_id") or None,
             references=state.get("rfc_references") or None,
         )
+        db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
+            {"tracking_token": sent.get("tracking_token")},
+            synchronize_session=False,
+        )
+        db.flush()
         logger.info(f"[EMAIL WORKFLOW] Proposed {len(slots)} meeting slots to {state['sender_email']}")
         return {"action": "meeting_slots_proposed"}
     except Exception as e:

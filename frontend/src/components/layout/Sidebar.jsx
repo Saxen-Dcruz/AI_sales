@@ -7,10 +7,11 @@ import {
     Calendar,
     ChevronDown,
     ChevronRight,
-    LayoutDashboard, Linkedin,
+    Inbox,
+    LayoutDashboard,
+    Linkedin,
     Mail,
     MailSearch,
-    Inbox,
     Megaphone,
     MessageSquare,
     Package,
@@ -20,7 +21,7 @@ import {
     Settings,
     Target,
     UserCheck,
-    X, Zap,
+    X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
@@ -41,7 +42,7 @@ const navSections = [
     items: [
       { path: '/dashboard', icon: BarChart2, label: 'Pipeline' },
       { path: '/calls', icon: PhoneCall, label: 'Call Analytics' },
-      { path: '/gmail-analytics', icon: MailSearch, label: 'Email Analytics' },
+      { path: '/sales-analytics', icon: MailSearch, label: 'Sales Analytics' },
       { path: '/ai-analytics', icon: BrainCircuit, label: 'AI Analytics' },
       { path: '/linkedin', icon: Linkedin, label: 'LinkedIn Analytics' },
       { path: '/linkedin-integration', icon: Linkedin, label: 'LinkedIn Pipeline' },
@@ -198,12 +199,7 @@ export default function Sidebar({ open, mobileOpen, onMobileClose }) {
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-200">
-        <div
-          className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #2563eb, #3b82f6)' }}
-        >
-          <Zap size={16} className="text-white" />
-        </div>
+        <img src="/favicon.png" alt="RDL Technologies" className="w-8 h-8 rounded-xl flex-shrink-0 object-contain" />
         <AnimatePresence>
           {open && (
             <motion.div

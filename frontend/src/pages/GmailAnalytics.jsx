@@ -1,17 +1,22 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Mail, Clock, Zap, RefreshCw, ArrowDown, ArrowUp, ShieldAlert,
-  CheckCircle, AlertCircle, TrendingUp, Package, DollarSign,
-  ShoppingCart, Users, Building2, BarChart2, Activity, Target,
-  Inbox, Filter, ChevronRight, Search, Shield
+  Activity, AlertCircle, BarChart2, Building2, CheckCircle, ChevronDown, ChevronRight, ChevronUp,
+  Clock, DollarSign, Filter, Inbox, Mail, MailOpen, Package, RefreshCw,
+  Search, Shield, ShieldAlert, ShoppingCart, TrendingUp, Users, X, Zap,
+  Kanban, Briefcase, Target, UserCheck,
 } from 'lucide-react'
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
   LineChart, Line, AreaChart, Area
 } from 'recharts'
-import { GetGmailAnalyticsService, GetEmailAccountsService, BackfillProductsService } from '../services/ApiService'
+import {
+  GetGmailAnalyticsService, GetEmailAccountsService,
+  GetAllDealsService, GetDealAnalyticsService,
+  GetAllLeadsService, GetLeadClassificationSummaryService,
+  GetContactMessagesService,
+} from '../services/ApiService'
 import ApplicationStore from '../utils/ApplicationStore'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -38,12 +43,227 @@ const TABS = [
   { key: 'pipeline',   label: 'Pipeline',   icon: Activity },
   { key: 'products',   label: 'Products',   icon: Package },
   { key: 'resolution', label: 'Resolution', icon: CheckCircle },
+  { key: 'salescrm',   label: 'Sales CRM',  icon: Kanban },
 ]
 const TOOLTIP_STYLE = { borderRadius: 10, border: 'none', boxShadow: '0 4px 20px rgba(0,0,0,0.10)', fontSize: 12 }
+
+// Deal stages — ordered for Kanban display. Unknown/custom stages are appended alphabetically.
+const STAGE_ORDER = ['Prospect', 'New', 'Contacted', 'Qualified', 'PO Raised', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost']
+const STAGE_COLORS = {
+  'Prospect': '#94a3b8', 'New': '#94a3b8', 'Contacted': '#3b82f6', 'Qualified': '#6172f3',
+  'PO Raised': '#0ea5e9', 'Proposal': '#8b5cf6', 'Negotiation': '#f59e0b', 'Closed Won': '#10b981', 'Closed Lost': '#ef4444',
+}
+const CLASSIFICATION_COLORS = { high: '#10b981', medium: '#f59e0b', low: '#ef4444', unclassified: '#9ca3af' }
 
 function fmt(n) {
   if (n === null || n === undefined) return '—'
   return Number(n).toLocaleString()
+}
+
+function fmtMoney(n) {
+  if (n === null || n === undefined) return '—'
+  const v = Number(n)
+  if (v >= 1000000) return `$${(v / 1000000).toFixed(2)}M`
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`
+  return `$${v.toFixed(0)}`
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function relTime(ts) {
+  if (!ts) return ''
+  const diff = (Date.now() - new Date(ts)) / 1000
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
+  return new Date(ts).toLocaleDateString()
+}
+
+// ─── Contact Messages Modal ───────────────────────────────────────────────────
+// Shown when a user clicks on a contact/sender anywhere in the analytics page.
+// Fetches ALL emails exchanged with that person and shows them with status chips.
+
+const STATUS_CHIP = {
+  replied:      'bg-emerald-100 text-emerald-700',
+  draft_ready:  'bg-amber-100 text-amber-700',
+  pending_human:'bg-rose-100 text-rose-700',
+  new:          'bg-blue-100 text-blue-700',
+  classified:   'bg-gray-100 text-gray-600',
+  archived:     'bg-gray-100 text-gray-500',
+  ignored:      'bg-gray-100 text-gray-400',
+}
+const STATUS_LABEL = {
+  replied: 'Replied', draft_ready: 'Draft Ready', pending_human: 'Needs Review',
+  new: 'New', classified: 'Classified', archived: 'Archived', ignored: 'Ignored',
+}
+
+function ContactMessagesModal({ contact, onClose }) {
+  const [messages, setMessages] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState({})   // { [msg.id]: bool }
+
+  const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }))
+
+  useEffect(() => {
+    if (!contact?.email) return
+    setLoading(true)
+    GetContactMessagesService(contact.email, {},
+      (data) => { setMessages(data?.items || []); setLoading(false) },
+      () => setLoading(false)
+    )
+  }, [contact?.email])
+
+  if (!contact) return null
+
+  const inbound = messages.filter(m => m.direction === 'inbound').length
+  const outbound = messages.filter(m => m.direction === 'outbound').length
+  const opened = messages.filter(m => m.opened_at).length
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-end">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
+      <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+        className="relative bg-white h-full w-full max-w-lg shadow-2xl flex flex-col z-10 text-gray-900 font-sans">
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                style={{ background: '#6172f3' }}>
+                {(contact.company || contact.email || '?')[0].toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">{contact.company || contact.email}</p>
+                <p className="text-[11px] text-gray-400 truncate">{contact.email}</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 flex-shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Summary stats */}
+          {!loading && messages.length > 0 && (
+            <div className="flex items-center gap-3 mt-3">
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-600">
+                {messages.length} total emails
+              </span>
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600">
+                {inbound} received
+              </span>
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600">
+                {outbound} sent
+              </span>
+              {opened > 0 && (
+                <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-teal-50 text-teal-600">
+                  {opened} opened
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Message list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-40 text-gray-400 text-xs">Loading…</div>
+          ) : messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <MailOpen size={28} className="text-gray-200" />
+              <p className="text-xs text-gray-400">No emails found for this contact.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {messages.map(msg => {
+                const isOut = msg.direction === 'outbound'
+                const labelColor = LABEL_COLORS[msg.label] || '#9ca3af'
+                return (
+                  <div key={msg.id} className="px-5 py-3.5 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start gap-3">
+                      {/* Direction dot */}
+                      <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isOut ? 'bg-emerald-400' : 'bg-blue-400'}`} />
+
+                      <div className="flex-1 min-w-0">
+                        {/* Subject + time + expand toggle */}
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <p className="text-xs font-semibold text-gray-800 truncate">
+                            {msg.subject || '(no subject)'}
+                          </p>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="text-[10px] text-gray-400 whitespace-nowrap">
+                              {relTime(msg.received_at)}
+                            </span>
+                            {msg.body_text && (
+                              <button
+                                onClick={() => toggleExpand(msg.id)}
+                                className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                                title={expanded[msg.id] ? 'Collapse' : 'Read email'}
+                              >
+                                {expanded[msg.id] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Status chips */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full text-white"
+                            style={{ background: labelColor }}>
+                            {msg.label}
+                          </span>
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${STATUS_CHIP[msg.status] || 'bg-gray-100 text-gray-500'}`}>
+                            {STATUS_LABEL[msg.status] || msg.status}
+                          </span>
+                          {msg.opened_at && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">
+                              ✓ Opened{msg.open_count > 1 ? ` ×${msg.open_count}` : ''}
+                            </span>
+                          )}
+                          {isOut && !msg.opened_at && msg.status === 'replied' && (
+                            <span className="text-[10px] text-gray-400">Not opened yet</span>
+                          )}
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ml-auto ${isOut ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
+                            {isOut ? '↑ Sent' : '↓ Received'}
+                          </span>
+                        </div>
+
+                        {/* Date */}
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {new Date(msg.received_at).toLocaleString()}
+                        </p>
+
+                        {/* Expandable body */}
+                        <AnimatePresence>
+                          {expanded[msg.id] && msg.body_text && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.2 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="mt-2 p-3 bg-white rounded-lg border border-gray-100 text-[11px] !text-gray-900 whitespace-pre-wrap leading-relaxed max-h-56 overflow-y-auto" style={{ color: '#111827' }}>
+                                {msg.body_text}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
 }
 
 // ─── Reusable components ──────────────────────────────────────────────────────
@@ -221,11 +441,12 @@ function TabOverview({ data, loading }) {
       </div>
 
       {/* Performance KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard icon={Zap}         label="Auto-Sent Rate"    value={loading ? '—' : `${data?.auto_sent_rate_pct ?? 0}%`}         color="#10b981" loading={loading} sub="No human touch needed" />
         <KpiCard icon={Clock}       label="Avg Reply Time"    value={loading ? '—' : `${data?.avg_reply_minutes ?? 0}m`}           color="#f59e0b" loading={loading} sub="Sales emails only" />
         <KpiCard icon={ShieldAlert} label="SLA Compliance"    value={loading ? '—' : (() => { const t=(data?.sla_met??0)+(data?.sla_breached??0); return t ? `${Math.round((data?.sla_met??0)/t*100)}%` : '—' })()} color="#6172f3" loading={loading} sub={`${data?.sla_met??0} met · ${data?.sla_breached??0} breached`} />
         <KpiCard icon={TrendingUp}  label="Conversion Rate"   value={loading ? '—' : `${data?.conversion_rate_pct ?? 0}%`}        color="#8b5cf6" loading={loading} sub="Sales → replied" />
+        <KpiCard icon={BarChart2}   label="Email Open Rate"   value={loading ? '—' : `${data?.open_rate_pct ?? 0}%`}              color="#0ea5e9" loading={loading} sub={`${data?.opened_count ?? 0} opens tracked`} />
       </div>
     </div>
   )
@@ -404,6 +625,7 @@ function ProductIntelligence({ data, loading }) {
   const INNER_TABS = [{ key: 'all', label: 'All Products' }, { key: 'source', label: 'By Source' }, { key: 'company', label: 'By Company' }]
 
   return (
+    <>
     <SectionCard title="Product Intelligence" subtitle="Inquiries tracked across emails, sources & companies" icon={Package} iconColor="#6172f3"
       action={
         <div className="flex items-center gap-2">
@@ -425,7 +647,7 @@ function ProductIntelligence({ data, loading }) {
       {loading ? <EmptyState text="Loading…" /> : noData ? (
         <div className="h-40 flex flex-col items-center justify-center gap-2 text-gray-300">
           <Package size={28} />
-          <p className="text-xs text-gray-400">No product data yet — click <strong className="text-indigo-500">Detect Products</strong> to backfill</p>
+          <p className="text-xs text-gray-400">No product data yet</p>
         </div>
       ) : (
         <AnimatePresence mode="wait">
@@ -509,7 +731,8 @@ function ProductIntelligence({ data, loading }) {
                 {companyRows.length === 0 ? <EmptyState text="No results" /> : companyRows.map((row, i) => {
                   const color = SRC_COLORS[i % SRC_COLORS.length]
                   return (
-                    <div key={row.email} className="rounded-xl border border-gray-100 p-3 hover:border-indigo-100 hover:bg-indigo-50/20 transition-all">
+                    <div key={row.email}
+                      className="w-full text-left rounded-xl border border-gray-100 p-3 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <div className="w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-xs font-black" style={{ background: color }}>
@@ -523,6 +746,7 @@ function ProductIntelligence({ data, loading }) {
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: color }}>{row.source}</span>
                           <span className="text-[10px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{row.total_emails} emails</span>
+                          <ChevronRight size={12} className="text-gray-200" />
                         </div>
                       </div>
                       {row.products.length > 0 && (
@@ -544,6 +768,7 @@ function ProductIntelligence({ data, loading }) {
         </AnimatePresence>
       )}
     </SectionCard>
+    </>
   )
 }
 
@@ -666,17 +891,257 @@ function TabResolution({ data, loading }) {
   )
 }
 
+function TabSalesCRM() {
+  const [analytics, setAnalytics] = useState(null)
+  const [deals, setDeals] = useState([])
+  const [leads, setLeads] = useState([])
+  const [leadSummary, setLeadSummary] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [selectedContact, setSelectedContact] = useState(null)
+
+  useEffect(() => {
+    setLoading(true)
+    let pending = 4
+    const done = () => { pending -= 1; if (pending <= 0) setLoading(false) }
+    GetDealAnalyticsService(d => { setAnalytics(d); done() }, done)
+    GetAllDealsService({ limit: 100 }, d => { setDeals(d?.items || []); done() }, done)
+    GetAllLeadsService({ limit: 8, page: 1 }, d => { setLeads(d?.items || []); done() }, done)
+    GetLeadClassificationSummaryService(d => { setLeadSummary(d); done() }, done)
+  }, [])
+
+  // Group deals by stage for the Kanban board
+  const stageGroups = {}
+  deals.forEach(d => {
+    const s = d.stage || 'Unknown'
+    if (!stageGroups[s]) stageGroups[s] = []
+    stageGroups[s].push(d)
+  })
+  const stageKeys = Object.keys(stageGroups).sort((a, b) => {
+    const ia = STAGE_ORDER.indexOf(a), ib = STAGE_ORDER.indexOf(b)
+    if (ia === -1 && ib === -1) return a.localeCompare(b)
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
+
+  const stageChartData = Object.entries(analytics?.by_stage || {}).map(([stage, v]) => ({
+    stage, count: v.count, value: v.total_value,
+  })).sort((a, b) => {
+    const ia = STAGE_ORDER.indexOf(a.stage), ib = STAGE_ORDER.indexOf(b.stage)
+    if (ia === -1 && ib === -1) return 0
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
+
+  const revenueData = analytics ? [
+    { name: 'Last Month', value: analytics.revenue.last_month },
+    { name: 'This Month', value: analytics.revenue.this_month },
+    { name: 'This Quarter', value: analytics.revenue.this_quarter },
+    { name: 'YTD', value: analytics.revenue.ytd },
+  ] : []
+
+  const classificationData = leadSummary ? [
+    { name: 'High', value: leadSummary.high.count, key: 'high' },
+    { name: 'Medium', value: leadSummary.medium.count, key: 'medium' },
+    { name: 'Low', value: leadSummary.low.count, key: 'low' },
+    { name: 'Unclassified', value: leadSummary.unclassified.count, key: 'unclassified' },
+  ].filter(d => d.value > 0) : []
+
+  const closedDeals = (analytics?.total_won ?? 0) + (analytics?.total_lost ?? 0)
+
+  return (
+    <div className="space-y-6">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <KpiCard icon={Users}      label="Total Leads"          value={fmt(leadSummary?.total)}                color="#6172f3" loading={loading} />
+        <KpiCard icon={Briefcase}  label="Active Opportunities" value={fmt(analytics?.open_deals)}             color="#3b82f6" loading={loading} />
+        <KpiCard icon={DollarSign} label="Pipeline Value"       value={fmtMoney(analytics?.total_open_value)}  color="#10b981" loading={loading} sub={`Avg deal ${fmtMoney(analytics?.avg_deal_size)}`} />
+        <KpiCard icon={CheckCircle} label="Closed Deals"        value={fmt(closedDeals)}                       color="#f59e0b" loading={loading} sub={`${fmt(analytics?.total_won)} won · ${fmt(analytics?.total_lost)} lost`} />
+        <KpiCard icon={Target}     label="Conversion Rate"      value={analytics ? `${analytics.win_rate}%` : '—'} color="#8b5cf6" loading={loading} sub="Win rate" />
+      </div>
+
+      {/* Kanban board */}
+      <SectionCard title="Sales Pipeline" subtitle="Deals grouped by stage" icon={Kanban} iconColor="#6172f3">
+        {loading ? <EmptyState text="Loading…" /> : stageKeys.length === 0 ? <EmptyState text="No deals yet" /> : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 overflow-x-auto">
+            {stageKeys.map(stage => {
+              const cards = stageGroups[stage]
+              const total = cards.reduce((s, c) => s + Number(c.deal_value || 0), 0)
+              const color = STAGE_COLORS[stage] || '#9ca3af'
+              return (
+                <div key={stage} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3 min-w-[180px]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold px-2 py-1 rounded-lg" style={{ background: `${color}15`, color }}>{stage}</span>
+                    <span className="text-[11px] text-gray-400">{cards.length}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mb-2">{fmtMoney(total)} total</p>
+                  <div className="space-y-2">
+                    {cards.slice(0, 5).map(c => (
+                      <button key={c.id} onClick={() => c.lead_email && setSelectedContact({ company: c.company_name || c.deal_name, email: c.lead_email })}
+                        className={`w-full text-left rounded-lg border border-gray-100 bg-white p-2 shadow-sm transition-all ${c.lead_email ? 'hover:border-indigo-200 hover:bg-indigo-50/20 cursor-pointer' : 'cursor-default'}`}>
+                        <p className="text-xs font-semibold text-gray-800 truncate">{c.company_name || c.deal_name}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{c.contact_name || '—'}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs font-bold text-indigo-600">{fmtMoney(c.deal_value)}</span>
+                          <span className="text-[10px] text-gray-400">{c.win_probability}%</span>
+                        </div>
+                      </button>
+                    ))}
+                    {cards.length > 5 && <p className="text-[10px] text-gray-400 text-center pt-1">+{cards.length - 5} more</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Opportunities table + Lead management */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <SectionCard title="Opportunities" subtitle="Open and recently closed deals" icon={Briefcase} iconColor="#3b82f6">
+          {loading ? <EmptyState text="Loading…" /> : deals.length === 0 ? <EmptyState text="No opportunities yet" /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
+                    <th className="py-2 pr-3 font-semibold">Company</th>
+                    <th className="py-2 pr-3 font-semibold">Contact</th>
+                    <th className="py-2 pr-3 font-semibold">Value</th>
+                    <th className="py-2 pr-3 font-semibold">Prob.</th>
+                    <th className="py-2 pr-3 font-semibold">Close Date</th>
+                    <th className="py-2 pr-1 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deals.slice(0, 8).map(d => {
+                    const color = STAGE_COLORS[d.stage] || '#9ca3af'
+                    return (
+                      <tr key={d.id} onClick={() => d.lead_email && setSelectedContact({ company: d.company_name || d.deal_name, email: d.lead_email })}
+                        className={`border-b border-gray-50 last:border-0 hover:bg-indigo-50/30 transition-colors ${d.lead_email ? 'cursor-pointer' : ''}`}>
+                        <td className="py-2.5 pr-3 font-semibold text-gray-800">{d.company_name || '—'}</td>
+                        <td className="py-2.5 pr-3 text-gray-500">{d.contact_name || '—'}</td>
+                        <td className="py-2.5 pr-3 font-bold text-indigo-600">{fmtMoney(d.deal_value)}</td>
+                        <td className="py-2.5 pr-3 text-gray-600">{d.win_probability}%</td>
+                        <td className="py-2.5 pr-3 text-gray-500">{d.expected_close_date ? new Date(d.expected_close_date).toLocaleDateString() : '—'}</td>
+                        <td className="py-2.5 pr-1">
+                          <span className="text-[11px] font-bold px-2 py-1 rounded-full" style={{ background: `${color}15`, color }}>{d.stage}</span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Lead Management" subtitle="Top leads by recency" icon={UserCheck} iconColor="#10b981">
+          {loading ? <EmptyState text="Loading…" /> : leads.length === 0 ? <EmptyState text="No leads yet" /> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
+                    <th className="py-2 pr-3 font-semibold">Lead</th>
+                    <th className="py-2 pr-3 font-semibold">Status</th>
+                    <th className="py-2 pr-3 font-semibold">Score</th>
+                    <th className="py-2 pr-1 font-semibold">Next Best Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map(l => (
+                    <tr key={l.id} onClick={() => l.email && setSelectedContact({ company: l.name, email: l.email })}
+                      className={`border-b border-gray-50 last:border-0 hover:bg-emerald-50/30 transition-colors ${l.email ? 'cursor-pointer' : ''}`}>
+                      <td className="py-2.5 pr-3">
+                        <p className="font-semibold text-gray-800">{l.name}</p>
+                        <p className="text-[11px] text-gray-400">{l.company_name || l.headline || '—'}</p>
+                      </td>
+                      <td className="py-2.5 pr-3 text-gray-500">{l.status}</td>
+                      <td className="py-2.5 pr-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-14 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                            <div className="h-full" style={{ width: `${l.engagement_score}%`, background: CLASSIFICATION_COLORS[(l.classification || '').toLowerCase()] || '#6172f3' }} />
+                          </div>
+                          <span className="text-xs font-bold text-gray-700">{l.engagement_score}</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 pr-1 text-[11px] text-gray-500 max-w-[220px] truncate">{l.next_best_action || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <SectionCard title="Pipeline by Stage" subtitle="Deal count & value per stage" icon={Activity} iconColor="#6172f3">
+          {loading ? <EmptyState text="Loading…" /> : stageChartData.length === 0 ? <EmptyState /> : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={stageChartData} margin={{ left: 0, right: 4, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                <XAxis dataKey="stage" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} interval={0} angle={-35} textAnchor="end" />
+                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} allowDecimals={false} width={24} />
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
+                <Bar dataKey="count" name="Deals" fill="#6172f3" radius={[5, 5, 0, 0]} maxBarSize={32} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Revenue" subtitle="Closed-won value by period" icon={DollarSign} iconColor="#10b981">
+          {loading ? <EmptyState text="Loading…" /> : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={revenueData} margin={{ left: 0, right: 4, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} interval={0} angle={-35} textAnchor="end" />
+                <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={fmtMoney} width={40} />
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => fmtMoney(v)} />
+                <Bar dataKey="value" name="Revenue" fill="#10b981" radius={[5, 5, 0, 0]} maxBarSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Lead Classification" subtitle="Distribution by quality tier" icon={Users} iconColor="#8b5cf6">
+          {loading ? <EmptyState text="Loading…" /> : classificationData.length === 0 ? <EmptyState /> : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={classificationData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                  {classificationData.map((d, i) => <Cell key={i} fill={CLASSIFICATION_COLORS[d.key]} stroke="none" />)}
+                </Pie>
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Contact messages slide-over */}
+      <AnimatePresence>
+        {selectedContact && (
+          <ContactMessagesModal
+            contact={selectedContact}
+            onClose={() => setSelectedContact(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export default function GmailAnalytics() {
+export default function GmailAnalytics({ hideHeader = false }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [since, setSince] = useState('7d')
   const [accounts, setAccounts] = useState([])
   const [activeAccount, setActiveAccount] = useState('')
   const [activeTab, setActiveTab] = useState('overview')
-  const [backfilling, setBackfilling] = useState(false)
-  const [backfillResult, setBackfillResult] = useState(null)
   const tabBarRef = useRef(null)
 
   useEffect(() => {
@@ -690,27 +1155,24 @@ export default function GmailAnalytics() {
 
   useEffect(() => { load(since, activeAccount) }, [since, activeAccount])
 
-  const handleBackfill = () => {
-    setBackfilling(true)
-    setBackfillResult(null)
-    BackfillProductsService(
-      res => { setBackfilling(false); setBackfillResult(res); load(since, activeAccount) },
-      () => { setBackfilling(false); setBackfillResult({ error: true }) }
-    )
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
-      {/* Page header */}
-      <div className="bg-white border-b border-gray-100 px-6 py-5">
+    <div className={hideHeader ? '' : 'min-h-screen bg-gray-50 font-sans'}>
+      {/* Controls + tab bar header */}
+      <div className={`border-b border-gray-100 px-6 py-4 ${hideHeader ? 'bg-gray-50' : 'bg-white py-5'}`}>
         <div className="max-w-[1400px] mx-auto">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h1 className="text-xl font-black text-gray-900 tracking-tight">Email Analytics</h1>
-              <p className="text-xs text-gray-400 mt-0.5">Pipeline performance, product intelligence & resolution tracking</p>
+          {/* Title row — only shown when NOT embedded */}
+          {!hideHeader && (
+            <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
+              <div>
+                <h1 className="text-xl font-black text-gray-900 tracking-tight">Email Analytics</h1>
+                <p className="text-xs text-gray-400 mt-0.5">Pipeline performance, product intelligence & resolution tracking</p>
+              </div>
             </div>
+          )}
 
-            {/* Controls */}
+          {/* Controls row — always visible */}
+          <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
+            <div /> {/* spacer */}
             <div className="flex items-center gap-2 flex-wrap">
               {accounts.length > 1 && (
                 <select value={activeAccount} onChange={e => setActiveAccount(e.target.value)}
@@ -735,23 +1197,11 @@ export default function GmailAnalytics() {
                 <RefreshCw size={13} className={loading ? 'animate-spin text-indigo-500' : ''} />
                 Refresh
               </button>
-
-              <button onClick={handleBackfill} disabled={backfilling}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50">
-                <Package size={13} className={backfilling ? 'animate-pulse' : ''} />
-                {backfilling ? 'Detecting…' : 'Detect Products'}
-              </button>
-
-              {backfillResult && !backfillResult.error && (
-                <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100">
-                  ✓ {backfillResult.backfilled} stored
-                </span>
-              )}
             </div>
           </div>
 
-          {/* Tab bar */}
-          <div ref={tabBarRef} className="flex gap-1 mt-5 border-b border-gray-100 -mb-px">
+          {/* Inner tab bar — always visible */}
+          <div ref={tabBarRef} className="flex gap-1 border-b border-gray-100 -mb-px">
             {TABS.map(({ key, label, icon: Icon }) => (
               <button key={key} onClick={() => setActiveTab(key)}
                 className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition-all rounded-t-lg ${activeTab === key ? 'text-indigo-600 bg-indigo-50/60' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
@@ -774,6 +1224,7 @@ export default function GmailAnalytics() {
             {activeTab === 'pipeline'   && <TabPipeline   data={data} loading={loading} />}
             {activeTab === 'products'   && <TabProducts   data={data} loading={loading} />}
             {activeTab === 'resolution' && <TabResolution data={data} loading={loading} />}
+            {activeTab === 'salescrm'   && <TabSalesCRM />}
           </motion.div>
         </AnimatePresence>
       </div>

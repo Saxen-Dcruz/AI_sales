@@ -49,6 +49,38 @@ async def _process_embeddings(product_id: int, product_name: str, sections: dict
     finally:
         db.close()
 
+def _sync_category_fields(data: dict):
+    """Keep legacy single-value category/sub_category columns in sync with the
+    new categories/subcategories arrays so existing filters and search keep working."""
+    categories = data.get("categories")
+    if categories:
+        data["category"] = categories[0]
+    subcategories = data.get("subcategories")
+    if subcategories:
+        data["sub_category"] = subcategories[0]
+
+
+def get_categories(db: Session):
+    """Return the distinct set of categories and subcategories across all products,
+    for populating the multi-select 'create new' dropdowns on the Add Product form."""
+    categories: set[str] = set()
+    subcategories: set[str] = set()
+    for row in db.query(Product.category, Product.sub_category, Product.categories, Product.subcategories).all():
+        category, sub_category, cats, subs = row
+        if category:
+            categories.add(category)
+        if sub_category:
+            subcategories.add(sub_category)
+        for c in (cats or []):
+            categories.add(c)
+        for s in (subs or []):
+            subcategories.add(s)
+    return {
+        "categories": sorted(categories),
+        "subcategories": sorted(subcategories),
+    }
+
+
 def get_all_products(
     db: Session,
     skip: int = 0,
@@ -77,8 +109,9 @@ def get_product(db: Session, product_id: int):
 async def create_product(db: Session, product_in: ProductCreate, background_tasks: BackgroundTasks):
     # Fix: by_alias=False maps 'Product_id' alias back to 'name' column
     product_data = product_in.model_dump(exclude={"sections"}, by_alias=False)
+    _sync_category_fields(product_data)
     db_product = Product(**product_data)
-    
+
     db.add(db_product)
     try:
         db.commit()
@@ -100,7 +133,8 @@ async def update_product(db: Session, product_id: int, product_in: ProductUpdate
     # exclude_unset=True is vital so we don't overwrite existing data with None
     update_data = product_in.model_dump(exclude_unset=True, by_alias=False)
     sections = update_data.pop("sections", None)
-    
+    _sync_category_fields(update_data)
+
     # Don't allow updating the primary key if it's in the payload
     update_data.pop("id", None)
     
