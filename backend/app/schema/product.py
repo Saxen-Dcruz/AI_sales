@@ -10,7 +10,7 @@ class FaqItem(BaseModel):
 
 class BulkPricingTier(BaseModel):
     quantity: Optional[float] = None
-    price: Optional[float] = None
+    discount_percent: Optional[float] = None  # % off the single_price for this quantity tier
 
 
 class ProductVariation(BaseModel):
@@ -18,6 +18,16 @@ class ProductVariation(BaseModel):
     single_price: Optional[float] = None
     bulk_pricing: Optional[List[BulkPricingTier]] = None
     attributes: Optional[Dict[str, Any]] = None
+
+
+class OrderInfoRow(BaseModel):
+    attribute: str
+    values: List[str] = Field(default_factory=list)  # index-aligned to order_codes
+
+
+class OrderInformation(BaseModel):
+    order_codes: List[str] = Field(default_factory=list)
+    rows: List[OrderInfoRow] = Field(default_factory=list)
 
 
 class ProductBase(BaseModel):
@@ -42,6 +52,7 @@ class ProductBase(BaseModel):
     faqs: Optional[List[FaqItem]] = None
     bulk_pricing: Optional[List[BulkPricingTier]] = None
     variations: Optional[List[ProductVariation]] = None
+    order_information: Optional[OrderInformation] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
@@ -70,6 +81,7 @@ class ProductUpdate(BaseModel):
     faqs: Optional[List[FaqItem]] = None
     bulk_pricing: Optional[List[BulkPricingTier]] = None
     variations: Optional[List[ProductVariation]] = None
+    order_information: Optional[OrderInformation] = None
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 

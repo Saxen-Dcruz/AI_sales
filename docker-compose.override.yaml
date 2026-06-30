@@ -22,8 +22,19 @@ services:
       - ./backend/.env.local
 
   backend:
+    # Dev-only container name — avoids a stale 'rdl_backend' name registered in the
+    # local Docker daemon. Inter-service DNS uses the 'backend' service name, and the
+    # dev frontend reaches it via localhost:8001, so this rename is safe for local dev.
+    container_name: rdl_backend_dev
     ports:
       - "8001:8000"
+    environment:
+      # Local dev talks to the standalone rdl_db container directly over the
+      # compose network (rdl_db is attached to ai_sales_rdl_network at startup).
+      # Container-to-container avoids host.docker.internal resolving to an
+      # unreachable IPv6 address. Prod keeps the base compose's 6432 (pgbouncer).
+      - POSTGRES_SERVER=rdl_db
+      - POSTGRES_PORT=5432
     volumes:
       - ./backend:/app
       - ./data:/data

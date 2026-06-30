@@ -49,6 +49,31 @@ async def _process_embeddings(product_id: int, product_name: str, sections: dict
     finally:
         db.close()
 
+def _order_info_text(order_info) -> str:
+    """Render the Order Information matrix as one readable line per order code so the
+    RAG agent can answer 'does RDL838C have USB?'. Accepts a Pydantic model or a dict."""
+    if not order_info:
+        return ""
+    if isinstance(order_info, dict):
+        codes = order_info.get("order_codes") or []
+        rows = order_info.get("rows") or []
+    else:
+        codes = order_info.order_codes or []
+        rows = order_info.rows or []
+    lines = []
+    for i, code in enumerate(codes):
+        parts = []
+        for row in rows:
+            attr = row.get("attribute") if isinstance(row, dict) else row.attribute
+            values = (row.get("values") if isinstance(row, dict) else row.values) or []
+            val = values[i] if i < len(values) else ""
+            if attr and str(val).strip():
+                parts.append(f"{attr}: {val}")
+        if parts:
+            lines.append(f"{code or f'Code {i + 1}'} — " + "; ".join(parts))
+    return "\n".join(lines)
+
+
 def _sync_category_fields(data: dict):
     """Keep legacy single-value category/sub_category columns in sync with the
     new categories/subcategories arrays so existing filters and search keep working."""
@@ -65,12 +90,17 @@ def get_categories(db: Session):
     for populating the multi-select 'create new' dropdowns on the Add Product form."""
     categories: set[str] = set()
     subcategories: set[str] = set()
+    # category -> set of subcategories, so the form can make subcategory depend on category
+    mapping: dict[str, set[str]] = {}
     for row in db.query(Product.category, Product.sub_category, Product.categories, Product.subcategories).all():
         category, sub_category, cats, subs = row
         if category:
             categories.add(category)
         if sub_category:
             subcategories.add(sub_category)
+        # The reliable category->subcategory pair is the single-value columns
+        if category and sub_category:
+            mapping.setdefault(category, set()).add(sub_category)
         for c in (cats or []):
             categories.add(c)
         for s in (subs or []):
@@ -78,6 +108,7 @@ def get_categories(db: Session):
     return {
         "categories": sorted(categories),
         "subcategories": sorted(subcategories),
+        "category_subcategories": {k: sorted(v) for k, v in mapping.items()},
     }
 
 
@@ -119,10 +150,14 @@ async def create_product(db: Session, product_in: ProductCreate, background_task
         db.rollback()
         raise ValueError("Order code already exists")
     db.refresh(db_product)
-    
-    if product_in.sections:
-        background_tasks.add_task(_process_embeddings, db_product.id, db_product.name, product_in.sections)
-    
+
+    sections = dict(product_in.sections or {})
+    oi_text = _order_info_text(product_in.order_information)
+    if oi_text:
+        sections["order_information"] = oi_text
+    if sections:
+        background_tasks.add_task(_process_embeddings, db_product.id, db_product.name, sections)
+
     return db_product
 
 async def update_product(db: Session, product_id: int, product_in: ProductUpdate, background_tasks: BackgroundTasks):
@@ -145,6 +180,10 @@ async def update_product(db: Session, product_id: int, product_in: ProductUpdate
     db.refresh(db_product)
 
     if sections is not None:
+        sections = dict(sections)
+        oi_text = _order_info_text(db_product.order_information)
+        if oi_text:
+            sections["order_information"] = oi_text
         background_tasks.add_task(_process_embeddings, db_product.id, db_product.name, sections)
-    
+
     return db_product

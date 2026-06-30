@@ -27,8 +27,9 @@ class Product(Base):
     categories = Column(JSONB, nullable=True)       # list[str] — multi-category support
     subcategories = Column(JSONB, nullable=True)    # list[str] — multi-subcategory support
     faqs = Column(JSONB, nullable=True)             # list[{question, answer}]
-    bulk_pricing = Column(JSONB, nullable=True)      # list[{min_qty, discount_percent, final_price}]
+    bulk_pricing = Column(JSONB, nullable=True)      # list[{quantity, discount_percent}] — % off single_price per qty tier
     variations = Column(JSONB, nullable=True)       # list[{order_code, name, single_price, attributes}]
+    order_information = Column(JSONB, nullable=True) # {order_codes: [..], rows: [{attribute, values: [..]}]}
 
     embeddings = relationship("ProductEmbedding", back_populates="product", cascade="all, delete-orphan")
 

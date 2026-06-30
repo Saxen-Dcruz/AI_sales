@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { BarChart2, Linkedin, Mail, MessageCircle, Phone } from 'lucide-react'
 import GmailAnalytics from './GmailAnalytics'
+import CallAnalytics from './CallAnalytics'
+import LinkedInAnalytics from './LinkedInAnalytics'
 
 const OUTER_TABS = [
   { key: 'email',     label: 'Email',     icon: Mail },
@@ -82,14 +84,12 @@ export default function SalesAnalytics() {
 
       {activeTab === 'call' && (
         <div className="max-w-[1400px] mx-auto px-6 py-6">
-          <PlaceholderTab icon={Phone} label="AI Call" color="#6172f3" />
+          <CallAnalytics />
         </div>
       )}
 
       {activeTab === 'linkedin' && (
-        <div className="max-w-[1400px] mx-auto px-6 py-6">
-          <PlaceholderTab icon={Linkedin} label="LinkedIn" color="#0077B5" />
-        </div>
+        <LinkedInAnalytics hideHeader={true} />
       )}
     </div>
   )

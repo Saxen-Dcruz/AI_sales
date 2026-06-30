@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Container,
   Paper,
@@ -17,7 +17,15 @@ import {
   DialogContent,
   DialogActions,
   Chip,
-  Divider
+  Divider,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableContainer,
+  Checkbox,
+  Tooltip
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -30,8 +38,18 @@ import {
   Visibility as PreviewIcon,
   DescriptionOutlined as DraftIcon,
   HelpOutline as FaqIcon,
-  LocalOffer as PricingIcon
+  LocalOffer as PricingIcon,
+  TableChart as TableChartIcon,
+  CategoryRounded as CategoryIcon,
+  QrCode2Rounded as CodeIcon,
+  LinkRounded as LinkIcon,
+  NotesRounded as NotesIcon,
+  ChecklistRounded as ChecklistIcon,
+  RocketLaunchRounded as ApplicationIcon,
+  EmojiEventsRounded as BenefitsIcon,
+  StraightenRounded as DimensionsIcon
 } from '@mui/icons-material'
+import { alpha } from '@mui/material/styles'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -49,15 +67,48 @@ const CATEGORY_MAP = {
 }
 
 const emptyFaq = () => ({ question: '', answer: '' })
-const emptyBulkTier = () => ({ quantity: '', price: '' })
+const emptyBulkTier = () => ({ quantity: '', discount_percent: '' })
 const defaultBulkTiers = () => [
-  { quantity: '10', price: '' },
-  { quantity: '25', price: '' },
-  { quantity: '100', price: '' }
+  { quantity: '10', discount_percent: '' },
+  { quantity: '25', discount_percent: '' },
+  { quantity: '100', discount_percent: '' }
 ]
 const emptyProductCode = () => ({ order_code: '', single_price: '', bulk_pricing: defaultBulkTiers() })
 
 const DRAFT_PREFIX = 'addProductDraft_'
+
+// Shared card styling for every form section — rounded, subtle border, hover lift
+const cardSx = {
+  p: { xs: 2.5, sm: 3.5 },
+  borderRadius: 3,
+  border: '1px solid',
+  borderColor: 'divider',
+  bgcolor: 'background.paper',
+  transition: 'box-shadow .25s ease, border-color .25s ease, transform .25s ease',
+  '&:hover': { boxShadow: '0 12px 32px -16px rgba(0,0,0,0.22)', borderColor: 'primary.light' },
+}
+
+// Consistent iconed section header with an optional action button and subtitle
+function SectionHeader({ icon, title, subtitle, action, accent = 'primary' }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2, mb: subtitle ? 2 : 3, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+        <Box sx={{
+          width: 42, height: 42, borderRadius: 2, display: 'grid', placeItems: 'center', flexShrink: 0,
+          color: `${accent}.main`,
+          bgcolor: (t) => alpha(t.palette[accent].main, 0.12),
+        }}>
+          {icon}
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h6" fontWeight={700} lineHeight={1.25}>{title}</Typography>
+          {subtitle && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>{subtitle}</Typography>}
+        </Box>
+      </Box>
+      {action && <Box sx={{ flexShrink: 0 }}>{action}</Box>}
+    </Box>
+  )
+}
 
 export default function AddProduct() {
   const navigate = useNavigate()
@@ -77,6 +128,8 @@ export default function AddProduct() {
   const [availableSubcategories, setAvailableSubcategories] = useState(
     Array.from(new Set(Object.values(CATEGORY_MAP).flat()))
   )
+  // category -> [subcategories]; seeded with CATEGORY_MAP, extended from the catalog
+  const [categorySubMap, setCategorySubMap] = useState(CATEGORY_MAP)
 
   // Core Form State
   const [formData, setFormData] = useState({
@@ -100,6 +153,8 @@ export default function AddProduct() {
   const [enclosureDimensions, setEnclosureDimensions] = useState([''])
   const [faqs, setFaqs] = useState([emptyFaq()])
   const [productCodes, setProductCodes] = useState([emptyProductCode()])
+  // Order Information matrix: rows of { attribute, values[] }; values are index-aligned to productCodes
+  const [orderInfoRows, setOrderInfoRows] = useState([])
 
   const hasLoadedRef = useRef(false)
 
@@ -113,10 +168,30 @@ export default function AddProduct() {
         if (data?.subcategories?.length) {
           setAvailableSubcategories(prev => Array.from(new Set([...prev, ...data.subcategories])))
         }
+        if (data?.category_subcategories) {
+          setCategorySubMap(prev => {
+            const merged = { ...prev }
+            Object.entries(data.category_subcategories).forEach(([cat, subs]) => {
+              merged[cat] = Array.from(new Set([...(merged[cat] || []), ...(subs || [])]))
+            })
+            return merged
+          })
+        }
       },
       () => {}
     )
   }, [])
+
+  // Subcategory options depend on the selected categories. With no category chosen
+  // yet, show every known subcategory; once categories are picked, narrow to their
+  // mapped subcategories (already-selected values are always kept visible).
+  const subcategoryOptions = useMemo(() => {
+    if (!formData.categories.length) return availableSubcategories
+    const opts = new Set()
+    formData.categories.forEach(cat => (categorySubMap[cat] || []).forEach(s => opts.add(s)))
+    formData.subcategories.forEach(s => opts.add(s))
+    return Array.from(opts)
+  }, [formData.categories, formData.subcategories, categorySubMap, availableSubcategories])
 
   // ── Load existing product (edit mode) ──────────────────────────────────────
   useEffect(() => {
@@ -180,13 +255,13 @@ export default function AddProduct() {
     hasLoadedRef.current = true
   }
 
-  // Convert legacy/back-end tier shapes (min_qty/discount_percent/final_price) into the
-  // simple quantity/price tiers used by the Product Details form
+  // Convert legacy/back-end tier shapes (min_qty/price/final_price) into the
+  // simple quantity/discount_percent tiers used by the Product Details form
   const normalizeBulkTiers = (tiers) => {
     if (!tiers?.length) return defaultBulkTiers()
     return tiers.map(t => ({
       quantity: t.quantity ?? t.min_qty ?? '',
-      price: t.price ?? t.final_price ?? ''
+      discount_percent: t.discount_percent ?? ''
     }))
   }
 
@@ -224,6 +299,15 @@ export default function AddProduct() {
       bulk_pricing: normalizeBulkTiers(v.bulk_pricing)
     }))
     setProductCodes([mainCode, ...extraCodes])
+
+    // Restore the Order Information matrix (round-trips via its own column)
+    const oi = data.order_information
+    if (oi?.rows?.length) {
+      setOrderInfoRows(oi.rows.map(r => ({
+        attribute: r.attribute || '',
+        values: Array.isArray(r.values) ? r.values.map(v => (v ?? '').toString()) : []
+      })))
+    }
   }
 
   const applyDraftData = (draft) => {
@@ -237,17 +321,18 @@ export default function AddProduct() {
     if (draft.enclosureDimensions) setEnclosureDimensions(draft.enclosureDimensions)
     if (draft.faqs) setFaqs(draft.faqs)
     if (draft.productCodes) setProductCodes(draft.productCodes)
+    if (draft.orderInfoRows) setOrderInfoRows(draft.orderInfoRows)
   }
 
   // ── Autosave to localStorage ────────────────────────────────────────────────
   useEffect(() => {
     if (!hasLoadedRef.current) return
     const timer = setTimeout(() => {
-      const draft = { formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes }
+      const draft = { formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes, orderInfoRows }
       localStorage.setItem(draftKey, JSON.stringify(draft))
     }, 800)
     return () => clearTimeout(timer)
-  }, [formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes, draftKey])
+  }, [formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes, orderInfoRows, draftKey])
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -278,7 +363,55 @@ export default function AddProduct() {
 
   // Product Code handlers — each code has an order code, single price, and its own bulk pricing tiers
   const addProductCode = () => setProductCodes(prev => [...prev, emptyProductCode()])
-  const removeProductCode = (index) => setProductCodes(prev => prev.filter((_, i) => i !== index))
+  const removeProductCode = (index) => {
+    setProductCodes(prev => prev.filter((_, i) => i !== index))
+    // Drop the matching column from every Order Information row to stay aligned
+    setOrderInfoRows(prev => prev.map(row => ({
+      ...row,
+      values: (row.values || []).filter((_, i) => i !== index)
+    })))
+  }
+
+  // ── Order Information matrix (per-order-code feature comparison) ─────────────
+  // Cells are checkboxes: "✓" = the order code has the feature, "✗" = it doesn't.
+  const FEATURE_YES = '✓'
+  const FEATURE_NO = '✗'
+  const orderInfoColumns = productCodes.map((pc, i) => pc.order_code?.trim() || `Code ${i + 1}`)
+  const addOrderInfoRow = () =>
+    setOrderInfoRows(prev => [...prev, { attribute: '', values: Array(productCodes.length).fill(FEATURE_NO) }])
+  const removeOrderInfoRow = (rowIndex) =>
+    setOrderInfoRows(prev => prev.filter((_, i) => i !== rowIndex))
+  const updateOrderInfoAttribute = (rowIndex, value) =>
+    setOrderInfoRows(prev => {
+      const updated = [...prev]
+      updated[rowIndex] = { ...updated[rowIndex], attribute: value }
+      return updated
+    })
+  // Toggle a single cell's checkbox between ✓ and ✗
+  const toggleOrderInfoValue = (rowIndex, colIndex) =>
+    setOrderInfoRows(prev => {
+      const updated = [...prev]
+      const values = [...(updated[rowIndex].values || [])]
+      while (values.length < productCodes.length) values.push(FEATURE_NO)
+      values[colIndex] = values[colIndex] === FEATURE_YES ? FEATURE_NO : FEATURE_YES
+      updated[rowIndex] = { ...updated[rowIndex], values }
+      return updated
+    })
+  // Pull the Product Features list in as comparison rows. Existing rows (matched by
+  // attribute text) keep their ticked checkboxes; brand-new features default to ✗.
+  const loadFeaturesAsRows = () => {
+    const featureList = features.map(f => f.trim()).filter(Boolean)
+    setOrderInfoRows(prev => {
+      const byAttribute = new Map(prev.map(r => [r.attribute.trim(), r]))
+      return featureList.map(feature => {
+        const existing = byAttribute.get(feature)
+        const values = Array.from({ length: productCodes.length }, (_, i) =>
+          existing?.values?.[i] === FEATURE_YES ? FEATURE_YES : FEATURE_NO
+        )
+        return { attribute: feature, values }
+      })
+    })
+  }
   const updateProductCode = (index, field, value) => {
     setProductCodes(prev => {
       const updated = [...prev]
@@ -313,10 +446,10 @@ export default function AddProduct() {
   }
 
   const cleanBulkTiers = (tiers) => (tiers || [])
-    .filter(t => t.quantity !== '' || t.price !== '')
+    .filter(t => t.quantity !== '' || t.discount_percent !== '')
     .map(t => ({
       quantity: t.quantity !== '' ? parseFloat(t.quantity) : null,
-      price: t.price !== '' ? parseFloat(t.price) : null
+      discount_percent: t.discount_percent !== '' ? parseFloat(t.discount_percent) : null
     }))
 
   const buildPayload = () => {
@@ -332,15 +465,30 @@ export default function AddProduct() {
         bulk_pricing: cleanBulkTiers(v.bulk_pricing)
       }))
 
+    // Order Information matrix — keep only rows with an attribute label, align values to codes
+    const cleanOrderInfo = orderInfoRows
+      .filter(r => r.attribute.trim())
+      .map(r => ({
+        attribute: r.attribute.trim(),
+        values: productCodes.map((_, i) => (r.values?.[i] ?? '').toString())
+      }))
+    const orderInformation = cleanOrderInfo.length
+      ? { order_codes: orderInfoColumns, rows: cleanOrderInfo }
+      : null
+
     return {
       name: formData.name,
       order_code: mainCode.order_code,
+      order_information: orderInformation,
       category: formData.categories[0] || '',
       sub_category: formData.subcategories[0] || '',
       categories: formData.categories,
       subcategories: formData.subcategories,
       single_price: parseFloat(mainCode.single_price) || 0,
-      bulk_price: mainBulkPricing[0]?.price ?? 0,
+      // Lowest tier's discount applied to single_price → effective bulk price in money
+      bulk_price: mainBulkPricing[0]?.discount_percent != null
+        ? Math.round((parseFloat(mainCode.single_price) || 0) * (1 - mainBulkPricing[0].discount_percent / 100) * 100) / 100
+        : 0,
       product_link: formData.productLink || null,
       datasheet_link: formData.dataSheetLink || null,
       user_manual_link: formData.userManualLink || null,
@@ -397,7 +545,7 @@ export default function AddProduct() {
   }
 
   const handleSaveDraft = () => {
-    const draft = { formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes }
+    const draft = { formData, subheading, showSubheading, features, packageItems, applications, benefits, enclosureDimensions, faqs, productCodes, orderInfoRows }
     localStorage.setItem(draftKey, JSON.stringify(draft))
     setStatusMsg({ type: 'success', text: 'Draft saved locally on this browser.' })
   }
@@ -425,13 +573,28 @@ export default function AddProduct() {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
 
         {/* Header Navigation */}
-        <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/products')} sx={{ color: 'text.secondary' }}>
-            Back to Products
-          </Button>
-          <Typography variant="h4" fontWeight={800} color="primary.main">
-            {isEdit ? 'Edit Product' : 'New Product'}
-          </Typography>
+        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/products')} sx={{ color: 'text.secondary', mb: 2 }}>
+          Back to Products
+        </Button>
+
+        {/* Gradient banner */}
+        <Box sx={{
+          mb: 4, p: { xs: 3, sm: 4 }, borderRadius: 3, color: 'common.white',
+          display: 'flex', alignItems: 'center', gap: 2.5,
+          background: (t) => `linear-gradient(135deg, ${t.palette.primary.main} 0%, ${t.palette.primary.dark} 100%)`,
+          boxShadow: (t) => `0 16px 40px -16px ${alpha(t.palette.primary.main, 0.6)}`,
+        }}>
+          <Box sx={{ width: 54, height: 54, borderRadius: 2.5, display: 'grid', placeItems: 'center', bgcolor: alpha('#fff', 0.18), flexShrink: 0 }}>
+            <InventoryIcon sx={{ fontSize: 30 }} />
+          </Box>
+          <Box>
+            <Typography variant="h4" fontWeight={800} lineHeight={1.1}>
+              {isEdit ? 'Edit Product' : 'New Product'}
+            </Typography>
+            <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.5 }}>
+              {isEdit ? 'Update details, pricing and knowledge for this product.' : 'Fill in the details below to add a product to your catalog.'}
+            </Typography>
+          </Box>
         </Box>
 
         {statusMsg.text && (
@@ -444,10 +607,13 @@ export default function AddProduct() {
           <Stack spacing={4}>
 
             {/* 1. Identity & Classification */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Typography variant="h6" gutterBottom fontWeight={700} sx={{ mb: 3 }}>
-                Identity & Classification
-              </Typography>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="primary"
+                icon={<CategoryIcon />}
+                title="Identity & Classification"
+                subtitle="Name your product and place it in the catalog"
+              />
               <Stack spacing={3}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <Autocomplete
@@ -470,7 +636,7 @@ export default function AddProduct() {
                     multiple
                     freeSolo
                     fullWidth
-                    options={availableSubcategories}
+                    options={subcategoryOptions}
                     value={formData.subcategories}
                     onChange={(_e, newValue) => setFormData(prev => ({ ...prev, subcategories: newValue }))}
                     renderTags={(value, getTagProps) =>
@@ -507,11 +673,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 2. Product Details */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Product Details</Typography>
-                <Button startIcon={<AddIcon />} onClick={addProductCode} size="small" variant="outlined">Add Product Code</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="info"
+                icon={<CodeIcon />}
+                title="Product Details"
+                subtitle="Order codes, pricing and bulk tiers"
+                action={<Button startIcon={<AddIcon />} onClick={addProductCode} size="small" variant="outlined">Add Product Code</Button>}
+              />
               <Stack spacing={3}>
                 <AnimatePresence mode="popLayout">
                   {productCodes.map((pc, codeIndex) => (
@@ -543,9 +712,9 @@ export default function AddProduct() {
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <TextField size="small" type="number" label="Buy Qty" value={tier.quantity} sx={{ width: 100 }}
                                     onChange={(e) => updateBulkTier(codeIndex, tierIndex, 'quantity', e.target.value)} />
-                                  <TextField size="small" type="number" label="Price" value={tier.price} sx={{ width: 120 }}
-                                    onChange={(e) => updateBulkTier(codeIndex, tierIndex, 'price', e.target.value)}
-                                    InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }} />
+                                  <TextField size="small" type="number" label="Discount %" value={tier.discount_percent} sx={{ width: 120 }}
+                                    onChange={(e) => updateBulkTier(codeIndex, tierIndex, 'discount_percent', e.target.value)}
+                                    InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }} />
                                   {pc.bulk_pricing.length > 1 && (
                                     <IconButton size="small" color="error" onClick={() => removeBulkTier(codeIndex, tierIndex)}>
                                       <DeleteIcon fontSize="small" />
@@ -563,9 +732,88 @@ export default function AddProduct() {
               </Stack>
             </Paper>
 
+            {/* 2b. Order Information Table — tick which features each Order Code has */}
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="secondary"
+                icon={<TableChartIcon />}
+                title="Order Information Table"
+                action={
+                  <Stack direction="row" spacing={1}>
+                    <Tooltip title="Pull rows from the Product Features list below">
+                      <span>
+                        <Button startIcon={<PlaylistAddIcon />} onClick={loadFeaturesAsRows} size="small" variant="contained"
+                          disabled={features.every(f => !f.trim())}>
+                          Load Features
+                        </Button>
+                      </span>
+                    </Tooltip>
+                    <Button startIcon={<AddIcon />} onClick={addOrderInfoRow} size="small" variant="outlined">Add Row</Button>
+                  </Stack>
+                }
+              />
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', p: 1.5, mb: 2, borderRadius: 2, bgcolor: (t) => alpha(t.palette.info.main, 0.07) }}>
+                <Typography variant="body2" color="text.secondary">
+                  Columns are your Order Codes above. Click <strong>Load Features</strong> to turn the Product Features list into rows,
+                  then tick the box under each Order Code (e.g. RDL838A) that includes that feature. A ticked box shows ✓, unticked shows ✗.
+                </Typography>
+              </Box>
+              <TableContainer sx={{ overflowX: 'auto' }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700, minWidth: 200 }}>Feature / Spec</TableCell>
+                      {orderInfoColumns.map((col, i) => (
+                        <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: 110 }}>{col}</TableCell>
+                      ))}
+                      <TableCell padding="none" />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {orderInfoRows.map((row, rowIndex) => (
+                      <TableRow key={rowIndex}>
+                        <TableCell>
+                          <TextField size="small" fullWidth placeholder="e.g. Isolated Digital 4CH Inputs" value={row.attribute}
+                            onChange={(e) => updateOrderInfoAttribute(rowIndex, e.target.value)} />
+                        </TableCell>
+                        {orderInfoColumns.map((_, colIndex) => (
+                          <TableCell key={colIndex} align="center" padding="checkbox">
+                            <Checkbox
+                              color="success"
+                              checked={row.values?.[colIndex] === FEATURE_YES}
+                              onChange={() => toggleOrderInfoValue(rowIndex, colIndex)}
+                            />
+                          </TableCell>
+                        ))}
+                        <TableCell padding="none">
+                          <IconButton size="small" color="error" onClick={() => removeOrderInfoRow(rowIndex)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {orderInfoRows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={orderInfoColumns.length + 2}>
+                          <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+                            No rows yet — click “Load Features” to bring in your Product Features, or “Add Row” for a custom spec.
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
+
             {/* Documentation Links */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Typography variant="h6" gutterBottom fontWeight={700} sx={{ mb: 3 }}>Resource Links</Typography>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="info"
+                icon={<LinkIcon />}
+                title="Resource Links"
+                subtitle="Webpage, datasheet, manual and SDK URLs"
+              />
               <Stack spacing={3}>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <TextField fullWidth label="Product Webpage URL" name="productLink" value={formData.productLink} onChange={handleInputChange} />
@@ -579,17 +827,25 @@ export default function AddProduct() {
             </Paper>
 
             {/* 3. Description */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Typography variant="h6" gutterBottom fontWeight={700}>Description</Typography>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="primary"
+                icon={<NotesIcon />}
+                title="Description"
+                subtitle="A short overview of the product"
+              />
               <TextField fullWidth multiline rows={5} name="description" value={formData.description} onChange={handleInputChange} />
             </Paper>
 
             {/* 4. Features */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Product Features</Typography>
-                <Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setFeatures)} size="small" variant="outlined">Add Feature</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="success"
+                icon={<ChecklistIcon />}
+                title="Product Features"
+                subtitle="These feed the Order Information rows above"
+                action={<Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setFeatures)} size="small" variant="outlined">Add Feature</Button>}
+              />
               <Stack spacing={2}>
                 <AnimatePresence mode="popLayout">
                   {features.map((feature, index) => (
@@ -610,11 +866,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 5. Package Contains */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Package Includes</Typography>
-                <Button startIcon={<InventoryIcon />} onClick={() => addDynamicField(setPackageItems)} size="small" variant="outlined">Add Item</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="warning"
+                icon={<InventoryIcon />}
+                title="Package Includes"
+                subtitle="What ships in the box"
+                action={<Button startIcon={<InventoryIcon />} onClick={() => addDynamicField(setPackageItems)} size="small" variant="outlined">Add Item</Button>}
+              />
               <Stack spacing={2}>
                 {packageItems.map((item, index) => (
                   <TextField key={index} fullWidth size="small" value={item} onChange={(e) => updateDynamicField(index, e.target.value, setPackageItems)}
@@ -631,11 +890,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 5b. Application */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Application</Typography>
-                <Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setApplications)} size="small" variant="outlined">Add Item</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="info"
+                icon={<ApplicationIcon />}
+                title="Application"
+                subtitle="Where this product is typically used"
+                action={<Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setApplications)} size="small" variant="outlined">Add Item</Button>}
+              />
               <Stack spacing={2}>
                 <AnimatePresence mode="popLayout">
                   {applications.map((item, index) => (
@@ -656,11 +918,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 5c. Benefits */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Benefits</Typography>
-                <Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setBenefits)} size="small" variant="outlined">Add Item</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="success"
+                icon={<BenefitsIcon />}
+                title="Benefits"
+                subtitle="Why customers should choose it"
+                action={<Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setBenefits)} size="small" variant="outlined">Add Item</Button>}
+              />
               <Stack spacing={2}>
                 <AnimatePresence mode="popLayout">
                   {benefits.map((item, index) => (
@@ -681,11 +946,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 5d. Enclosure Dimensions */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700}>Enclosure Dimensions</Typography>
-                <Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setEnclosureDimensions)} size="small" variant="outlined">Add Item</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="secondary"
+                icon={<DimensionsIcon />}
+                title="Enclosure Dimensions"
+                subtitle="Physical size and form factor"
+                action={<Button startIcon={<PlaylistAddIcon />} onClick={() => addDynamicField(setEnclosureDimensions)} size="small" variant="outlined">Add Item</Button>}
+              />
               <Stack spacing={2}>
                 <AnimatePresence mode="popLayout">
                   {enclosureDimensions.map((item, index) => (
@@ -706,13 +974,14 @@ export default function AddProduct() {
             </Paper>
 
             {/* 6. FAQs */}
-            <Paper elevation={0} sx={{ p: 4, border: '1px solid', borderColor: 'divider', borderRadius: 4 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                <Typography variant="h6" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <FaqIcon fontSize="small" /> Frequently Asked Questions
-                </Typography>
-                <Button startIcon={<AddIcon />} onClick={addFaq} size="small" variant="outlined">Add FAQ</Button>
-              </Box>
+            <Paper elevation={0} sx={cardSx}>
+              <SectionHeader
+                accent="primary"
+                icon={<FaqIcon />}
+                title="Frequently Asked Questions"
+                subtitle="Answers the AI can use to reply to customers"
+                action={<Button startIcon={<AddIcon />} onClick={addFaq} size="small" variant="outlined">Add FAQ</Button>}
+              />
               <Stack spacing={3}>
                 <AnimatePresence mode="popLayout">
                   {faqs.map((faq, index) => (
@@ -734,8 +1003,15 @@ export default function AddProduct() {
               </Stack>
             </Paper>
 
-            {/* Submit Actions */}
-            <Box sx={{ pt: 2, display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            {/* Submit Actions — sticky footer bar */}
+            <Box sx={{
+              position: 'sticky', bottom: 16, zIndex: 5, mt: 1,
+              p: 1.5, display: 'flex', gap: 1.5, justifyContent: 'flex-end', flexWrap: 'wrap', alignItems: 'center',
+              borderRadius: 3, border: '1px solid', borderColor: 'divider',
+              bgcolor: (t) => alpha(t.palette.background.paper, 0.85),
+              backdropFilter: 'blur(8px)',
+              boxShadow: '0 8px 30px -12px rgba(0,0,0,0.25)',
+            }}>
               {isEdit && (
                 <Button startIcon={<ContentCopyIcon />} onClick={handleCopyProduct} disabled={loading} sx={{ borderRadius: 3 }}>
                   Copy Product
@@ -747,8 +1023,9 @@ export default function AddProduct() {
               <Button startIcon={<PreviewIcon />} onClick={() => setPreviewOpen(true)} disabled={loading} sx={{ borderRadius: 3 }}>
                 Preview
               </Button>
-              <Button onClick={() => navigate('/products')} disabled={loading}>Cancel</Button>
-              <Button type="submit" variant="contained" startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />} disabled={loading} sx={{ borderRadius: 3, px: 6 }}>
+              <Box sx={{ flex: 1 }} />
+              <Button onClick={() => navigate('/products')} disabled={loading} color="inherit">Cancel</Button>
+              <Button type="submit" variant="contained" startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SaveIcon />} disabled={loading} sx={{ borderRadius: 3, px: 5, boxShadow: 'none' }}>
                 {loading ? 'Saving...' : (isEdit ? 'Update Product' : 'Create Product')}
               </Button>
             </Box>
@@ -822,16 +1099,16 @@ export default function AddProduct() {
                   {enclosureDimensions.filter(d => d.trim()).map((d, i) => <Typography key={i} variant="body2">• {d}</Typography>)}
                 </>
               )}
-              {productCodes.some(pc => pc.bulk_pricing.some(t => t.quantity !== '' || t.price !== '')) && (
+              {productCodes.some(pc => pc.bulk_pricing.some(t => t.quantity !== '' || t.discount_percent !== '')) && (
                 <>
                   <Divider />
                   <Typography variant="subtitle2" fontWeight={700}>Bulk Pricing</Typography>
                   {productCodes.map((pc, i) => (
-                    pc.bulk_pricing.filter(t => t.quantity !== '' || t.price !== '').length > 0 && (
+                    pc.bulk_pricing.filter(t => t.quantity !== '' || t.discount_percent !== '').length > 0 && (
                       <Box key={i}>
                         <Typography variant="caption" color="text.secondary">{pc.order_code || `Product Code ${i + 1}`}</Typography>
-                        {pc.bulk_pricing.filter(t => t.quantity !== '' || t.price !== '').map((t, j) => (
-                          <Typography key={j} variant="body2">Buy {t.quantity || '—'}: {t.price ? `$${t.price}` : '—'}</Typography>
+                        {pc.bulk_pricing.filter(t => t.quantity !== '' || t.discount_percent !== '').map((t, j) => (
+                          <Typography key={j} variant="body2">Buy {t.quantity || '—'}: {t.discount_percent ? `${t.discount_percent}% off` : '—'}</Typography>
                         ))}
                       </Box>
                     )
@@ -844,6 +1121,18 @@ export default function AddProduct() {
                   <Typography variant="subtitle2" fontWeight={700}>Additional Order Codes</Typography>
                   {productCodes.slice(1).map((pc, i) => (
                     <Typography key={i} variant="body2">{pc.order_code || 'no code'} {pc.single_price ? `($${pc.single_price})` : ''}</Typography>
+                  ))}
+                </>
+              )}
+              {orderInfoRows.some(r => r.attribute.trim()) && (
+                <>
+                  <Divider />
+                  <Typography variant="subtitle2" fontWeight={700}>Order Information</Typography>
+                  {orderInfoRows.filter(r => r.attribute.trim()).map((r, i) => (
+                    <Typography key={i} variant="body2">
+                      <strong>{r.attribute}:</strong>{' '}
+                      {orderInfoColumns.map((c, j) => `${c}=${r.values?.[j]?.trim() || '—'}`).join(', ')}
+                    </Typography>
                   ))}
                 </>
               )}

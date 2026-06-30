@@ -265,39 +265,24 @@ function ProductRow({ product, onToggle, onDelete, onView, onCopy }) {
 
   return (
     <motion.tr layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="table-row">
+      {/* Product (name + order code) */}
       <td className="py-3 px-4">
-        <div className="flex items-center gap-1">
-
-          {/* View */}
-          <button
-            onClick={() => onView(product)}
-            className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all"
-            title="View"
-          >
-            <BookOpen size={13} />
-          </button>
-
-          {/* Toggle Active/Inactive */}
-          <button
-            onClick={() => onToggle(product)}
-            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive
-              ? 'hover:bg-orange-50 hover:text-orange-500'
-              : 'hover:bg-green-50 hover:text-green-500'
-              }`}
-            title={isActive ? 'Deactivate' : 'Activate'}
-          >
-            {isActive ? <PowerOff size={13} /> : <Power size={13} />}
-          </button>
-
-          {/* Delete */}
-          <button
-            onClick={() => onDelete(product)}
-            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all"
-            title="Delete"
-          >
-            <Trash2 size={13} />
-          </button>
-
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+            <Package size={15} className="text-blue-500" />
+          </div>
+          <div className="min-w-0">
+            <button
+              onClick={() => onView(product)}
+              className="text-xs font-semibold text-gray-900 truncate max-w-[200px] block hover:text-blue-600 transition-colors text-left"
+              title={product.name}
+            >
+              {product.name}
+            </button>
+            {product['Order Code'] && (
+              <span className="text-[10px] font-mono text-gray-400">{product['Order Code']}</span>
+            )}
+          </div>
         </div>
       </td>
 
