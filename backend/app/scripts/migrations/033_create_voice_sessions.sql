@@ -1,6 +1,6 @@
--- Migration 027: Voice Call Sessions
+-- Migration 033: Voice Call Sessions
 -- Tracks every AI voice call: origin channel, room, status, escalation, transcript.
--- Reversible: DROP TABLE voice_sessions CASCADE; DROP TABLE voice_call_feedbacks CASCADE;
+-- Reversible: DROP TABLE voice_sessions CASCADE; DROP TABLE voice_call_feedbacks CASCADE; -- (033+034)
 
 CREATE TABLE IF NOT EXISTS voice_sessions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),

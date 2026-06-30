@@ -1,4 +1,4 @@
--- Migration 029: Link calls to voice_sessions
+-- Migration 035: Link calls to voice_sessions
 -- Allows querying all calls that originated from a Voice Bridge session.
 -- Reversible: ALTER TABLE calls DROP COLUMN IF EXISTS voice_session_id;
 

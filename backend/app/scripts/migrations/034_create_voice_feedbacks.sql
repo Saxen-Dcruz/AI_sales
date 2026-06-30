@@ -1,6 +1,6 @@
--- Migration 028: Voice Call Feedbacks
+-- Migration 034: Voice Call Feedbacks
 -- Post-call feedback: rating 1-5 + comment, collected via WA or Gmail.
--- Depends on: 027_create_voice_sessions.sql
+-- Depends on: 033_create_voice_sessions.sql
 
 CREATE TABLE IF NOT EXISTS voice_call_feedbacks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
