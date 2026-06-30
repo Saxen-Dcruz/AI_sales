@@ -39,6 +39,10 @@ services:
       - ./backend/.env.local
 
   backend:
+    # Build the development stage so uvicorn runs with --reload against the
+    # bind-mounted source below (the Dockerfile's default stage is production).
+    build:
+      target: development
     # Dev-only container name — avoids a stale 'rdl_backend' name registered in the
     # local Docker daemon. Inter-service DNS uses the 'backend' service name, and the
     # dev frontend reaches it via localhost:8001, so this rename is safe for local dev.

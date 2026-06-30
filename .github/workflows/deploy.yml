@@ -1,0 +1,143 @@
+name: Build & Deploy
+
+# Production pipeline. Triggered by pushes to dev (dev == production here) and
+# manually via workflow_dispatch (e.g. to redeploy or roll forward to a tag).
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Existing image tag to deploy (blank = build the current commit)'
+        required: false
+        default: ''
+
+# Serialize deploys so two runs never race on the server. Do NOT cancel an
+# in-flight deploy — a half-applied deploy is worse than a queued one.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Build, scan, and push both images to GHCR. Skipped when redeploying an
+  #    already-built tag via workflow_dispatch.
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build & push · ${{ matrix.service }}
+    if: ${{ github.event_name == 'push' || inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # push to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+          - service: frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR requires a lowercase repository path.
+      - name: Compute image name (lowercase)
+        id: img
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER@L}/ai_sales-${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=dev
+            type=raw,value=latest
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # Vulnerability scan of the pushed image.
+      # Default policy: REPORT ONLY (exit-code 0) so a CVE never blocks a deploy.
+      # Flip exit-code to 1 (and adjust severity) to make it a hard gate.
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.img.outputs.name }}:dev
+          format: 'sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-${{ matrix.service }}.sarif'
+          category: trivy-${{ matrix.service }}
+
+  # ---------------------------------------------------------------------------
+  # 2) Deploy over SSH: pull the tagged images and run the server-side script,
+  #    which backs up, brings the stack up, health-gates, and auto-rolls back.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to production
+    needs: [build-push]
+    # Run even if build-push was skipped (workflow_dispatch redeploy of a tag).
+    if: ${{ always() && (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "value=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          port: ${{ secrets.SERVER_PORT }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          # Fail the job (red run) if the remote script exits non-zero.
+          script_stop: true
+          envs: IMAGE_TAG
+          script: |
+            set -euo pipefail
+            cd "${DEPLOY_DIR:-$HOME/AI_sales}"
+            git fetch --quiet origin dev && git checkout dev && git pull --ff-only
+            chmod +x deploy/*.sh
+            ./deploy/deploy.sh "${IMAGE_TAG}"
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.value }}

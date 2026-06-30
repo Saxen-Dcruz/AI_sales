@@ -1,6 +1,15 @@
 # --- Claude Config (local only) ---
 .claude/
 CLAUDE.md
+.mcp.json
+.jcodemunch.jsonc
+
+# --- Node ---
+node_modules/
+dist/
+
+# --- Root environment file (contains live secrets — never commit) ---
+.env
 
 # --- gstack (local skill pack — never commit) ---
 .gstack/

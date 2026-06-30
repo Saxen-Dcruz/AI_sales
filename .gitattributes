@@ -1,0 +1,8 @@
+# Shell scripts and container/CI configs must stay LF so they run on the Linux
+# server and in GitHub Actions even when cloned on Windows (autocrlf=true).
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+deploy/*        text eol=lf
