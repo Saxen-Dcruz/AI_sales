@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Float, Boolean, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 from app.database.core import Base
@@ -23,6 +23,13 @@ class Product(Base):
     sdk_link = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     coverage_score = Column(Float, nullable=True)   # % of RAG gaps resolved for this product
+
+    categories = Column(JSONB, nullable=True)       # list[str] — multi-category support
+    subcategories = Column(JSONB, nullable=True)    # list[str] — multi-subcategory support
+    faqs = Column(JSONB, nullable=True)             # list[{question, answer}]
+    bulk_pricing = Column(JSONB, nullable=True)      # list[{quantity, discount_percent}] — % off single_price per qty tier
+    variations = Column(JSONB, nullable=True)       # list[{order_code, name, single_price, attributes}]
+    order_information = Column(JSONB, nullable=True) # {order_codes: [..], rows: [{attribute, values: [..]}]}
 
     embeddings = relationship("ProductEmbedding", back_populates="product", cascade="all, delete-orphan")
 

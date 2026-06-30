@@ -1,21 +1,4 @@
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: rdl_db
-    environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin
-      - POSTGRES_DB=rdl_sales
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - rdl_network
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U admin -d rdl_sales" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:alpine
     container_name: rdl_redis
@@ -93,8 +76,8 @@ services:
       - "8003:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - POSTGRES_SERVER=db
-      - POSTGRES_PORT=5432
+      - POSTGRES_SERVER=host.docker.internal
+      - POSTGRES_PORT=6432
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
@@ -109,8 +92,6 @@ services:
     networks:
       - rdl_network
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       livekit:
@@ -155,7 +136,6 @@ services:
 
 volumes:
   redis_data:
-  postgres_data:
   linkedin_session:
 
 

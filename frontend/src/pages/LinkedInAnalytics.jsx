@@ -64,7 +64,7 @@ function BudgetBar({ label, used, limit, color }) {
 
 const FUNNEL_COLORS = ['#0077b5', '#3b9ed4', '#6172f3', '#10b981', '#f59e0b']
 
-export default function LinkedInAnalytics() {
+export default function LinkedInAnalytics({ hideHeader = false }) {
   const [stats, setStats] = useState(null)
   const [budget, setBudget] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -93,21 +93,23 @@ export default function LinkedInAnalytics() {
   const b = budget || {}
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans">
+    <div className={hideHeader ? 'font-sans' : 'min-h-screen bg-gray-50 font-sans'}>
       <div className="max-w-[1400px] mx-auto px-6 py-6 space-y-6">
 
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ background: `${LINKEDIN_BLUE}18` }}>
-              <Linkedin size={20} style={{ color: LINKEDIN_BLUE }} />
+        <div className={`flex items-center justify-between ${hideHeader ? 'justify-end' : ''}`}>
+          {!hideHeader && (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: `${LINKEDIN_BLUE}18` }}>
+                <Linkedin size={20} style={{ color: LINKEDIN_BLUE }} />
+              </div>
+              <div>
+                <h1 className="text-xl font-black text-gray-900">LinkedIn Analytics</h1>
+                <p className="text-xs text-gray-400 mt-0.5">Real-time outreach funnel & daily budget</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-black text-gray-900">LinkedIn Analytics</h1>
-              <p className="text-xs text-gray-400 mt-0.5">Real-time outreach funnel & daily budget</p>
-            </div>
-          </div>
+          )}
           <button onClick={load}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100 transition-all">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh

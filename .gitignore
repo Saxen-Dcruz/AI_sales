@@ -16,6 +16,7 @@ assets/
 data/
 backend/linkedin_profile_context/
 work/
+docs/
 
 # --- Python / Environment ---
 .venv/

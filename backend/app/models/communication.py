@@ -34,6 +34,7 @@ class Email(Base):
     gmail_message_id = Column(String, unique=True, index=True, nullable=False)
     gmail_thread_id = Column(String, index=True, nullable=True)
     rfc_message_id = Column(String, nullable=True)          # RFC 2822 Message-ID for reply threading
+    rfc_references = Column(String, nullable=True)         # RFC 2822 References chain for reply threading
 
     lead_id = Column(PGUUID(as_uuid=True), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)
 
@@ -67,6 +68,13 @@ class Email(Base):
     needs_human = Column(Boolean, default=False, index=True)
     resolved_by = Column(String, nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Open tracking: tracking_token is embedded in a 1×1 pixel in outbound emails.
+    # opened_at and open_count are updated by the unauthenticated /gmail/track/open/ endpoint
+    # whenever the recipient's mail client loads the pixel.
+    tracking_token = Column(PGUUID(as_uuid=True), unique=True, nullable=True, index=True)
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    open_count = Column(Integer, default=0, nullable=False)
 
     # Multi-account Gmail — which account received/sent this email
     account_id    = Column(PGUUID(as_uuid=True), ForeignKey("email_accounts.id", ondelete="SET NULL"), nullable=True, index=True)

@@ -16,6 +16,15 @@ from app.services import product_knowledge_service
 router = APIRouter(prefix="/products", tags=["Knowledge Base"])
 
 
+def _embedding_table_exists(db: Session) -> bool:
+    """The pgvector `langchain_pg_embedding` table is created lazily on the first
+    embed. Until something is ingested it won't exist, so guard reads against it
+    to avoid a 500 (UndefinedTable) when no product has been embedded yet."""
+    return db.execute(
+        text("SELECT to_regclass('public.langchain_pg_embedding')")
+    ).scalar() is not None
+
+
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def add_product(
     product: ProductCreate,
@@ -45,6 +54,14 @@ def list_products(
     )
 
 
+@router.get("/categories", summary="List distinct categories and subcategories for the Add Product form")
+def list_categories(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return product_service.get_categories(db)
+
+
 # ── Embedding inspection (must be before /{product_id} to avoid route shadowing) ──
 
 @router.get("/embeddings", summary="List all products with their RAG embeddings and product details")
@@ -56,7 +73,7 @@ def list_all_embeddings(
     rows = db.execute(text(
         "SELECT id, cmetadata, left(document, 500) AS doc_preview "
         "FROM langchain_pg_embedding ORDER BY cmetadata->>'product_id', cmetadata->>'chunk_type'"
-    )).fetchall()
+    )).fetchall() if _embedding_table_exists(db) else []
     chunks_by_product: dict[str, list] = {}
     for row in rows:
         meta = row.cmetadata or {}
@@ -114,7 +131,7 @@ def view_product(
             "SELECT cmetadata->>'chunk_type' AS chunk_type, document "
             "FROM langchain_pg_embedding "
             "WHERE cmetadata->>'product_id' = :pid"
-        ), {"pid": str(product_id)}).fetchall()
+        ), {"pid": str(product_id)}).fetchall() if _embedding_table_exists(db) else []
         for row in rows:
             ct = row.chunk_type or ""
             doc = row.document or ""
@@ -132,7 +149,7 @@ def view_product(
                 ]
                 if features:
                     sections["features"] = features
-            elif ct in ("package_contains", "package_includes"):
+            elif ct in ("package_contains", "package_includes", "packagecontains"):
                 body = doc.split("\n\n", 1)[-1].strip()
                 items = [
                     line.lstrip("- ").strip()
@@ -141,8 +158,17 @@ def view_product(
                 ]
                 if items:
                     sections["packageContains"] = items
+            elif ct in ("applications", "benefits", "enclosure_dimensions"):
+                body = doc.split("\n\n", 1)[-1].strip()
+                items = [
+                    line.lstrip("- ").strip()
+                    for line in body.splitlines()
+                    if line.strip().startswith("-")
+                ]
+                if items:
+                    sections[ct] = items
     except Exception:
-        pass  # sections remain empty — not fatal
+        db.rollback()  # clear any aborted transaction; sections remain empty — not fatal
 
     # Build response dict manually so we can inject sections
     resp = ProductResponse.model_validate(product)
@@ -278,7 +304,7 @@ def get_product_embeddings(
     rows = db.execute(text(
         "SELECT id, cmetadata, document FROM langchain_pg_embedding "
         "WHERE cmetadata->>'product_id' = :pid ORDER BY cmetadata->>'chunk_type'"
-    ), {"pid": str(product_id)}).fetchall()
+    ), {"pid": str(product_id)}).fetchall() if _embedding_table_exists(db) else []
     chunks = [
         {
             "chunk_id": str(row.id),

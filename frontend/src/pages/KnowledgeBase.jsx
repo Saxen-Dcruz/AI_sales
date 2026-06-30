@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Database,
   Edit2,
+  HelpCircle,
   Plus,
   Save, Trash2, X
 } from 'lucide-react'
@@ -289,7 +290,49 @@ export default function KnowledgeBase() {
         ))}
       </div>
 
+      {/* Product FAQs — separate table from the RAG chunks */}
+      {Array.isArray(product.faqs) && product.faqs.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 px-1">
+            <HelpCircle size={14} className="text-gray-400" />
+            <h2 className="text-sm font-semibold text-gray-700">
+              Frequently Asked Questions
+            </h2>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+              {product.faqs.length} FAQ{product.faqs.length !== 1 ? 's' : ''}
+            </span>
+          </div>
 
+          <div className="glass-card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                    <th className="px-4 py-3 w-16 text-center">Sl No.</th>
+                    <th className="px-4 py-3 w-1/3">Question</th>
+                    <th className="px-4 py-3">Answer</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {product.faqs.map((faq, index) => (
+                    <tr key={index} className="hover:bg-gray-50/50 transition-colors align-top">
+                      <td className="px-4 py-4 text-xs font-medium text-gray-500 text-center w-16">
+                        {index + 1}
+                      </td>
+                      <td className="px-4 py-4 w-1/3">
+                        <p className="text-xs font-semibold text-gray-800 leading-relaxed">{faq.question}</p>
+                      </td>
+                      <td className="px-4 py-4">
+                        <p className="text-[11px] text-gray-600 leading-relaxed whitespace-pre-wrap">{faq.answer}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!loading && chunks.length > 0 && (
         <div className="space-y-3">

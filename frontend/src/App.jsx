@@ -20,6 +20,7 @@ import WhatsAppAnalytics from './pages/WhatsAppAnalytics'
 import CalendarIntegration from './pages/CalendarIntegration'
 import EmbeddingsPage from './pages/EmbeddingsPage'
 import GmailAnalytics from './pages/GmailAnalytics'
+import SalesAnalytics from './pages/SalesAnalytics'
 import LinkedInIntegration from './pages/LinkedInIntegration'
 import LeadDiscovery from './pages/LeadDiscovery'
 import Campaigns from './pages/Campaigns'
@@ -32,7 +33,7 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        
+
         <Route path="/" element={<DashboardLayout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="knowledge-base/:id" element={<KnowledgeBase />} />
           <Route path="embeddings" element={<EmbeddingsPage />} />
           <Route path="gmail-analytics" element={<GmailAnalytics />} />
+          <Route path="sales-analytics" element={<SalesAnalytics />} />
           <Route path="linkedin-integration" element={<LinkedInIntegration />} />
           <Route path="lead-discovery" element={<LeadDiscovery />} />
           <Route path="campaigns" element={<Campaigns />} />

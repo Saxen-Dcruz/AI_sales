@@ -187,7 +187,7 @@ export const AddProductService = (data, sucess, error) =>
     _fetchService("products/", "POST", data, sucess, error);
 
 export const ShowAllProductService = (data, sucess, error) =>
-    _fetchService("products/", "GET", data, sucess, error);
+    _fetchService("products/?limit=1000", "GET", data, sucess, error);
 
 export const ShowOneProductService = (data, sucess, error) =>
     _fetchService(`products/${data.id}`, "GET", null, sucess, error);
@@ -200,6 +200,9 @@ export const DeleteProductService = (id, sucess, error) =>
 
 export const ToggleActiveInactiveService = (id, sucess, error) =>
     _fetchService(`products/${id}/availability`, "PATCH", null, sucess, error);
+
+export const GetProductCategoriesService = (sucess, error) =>
+    _fetchService("products/categories", "GET", null, sucess, error);
 
 // Product Knowledge Base
 export const GetAllEmbeddingsService = (sucess, error) =>
@@ -354,11 +357,18 @@ export const GetGmailMessagesService = (params, sucess, error) => {
 export const GetGmailThreadService = (threadId, sucess, error) =>
     _fetchService(`gmail/threads/${threadId}`, "GET", null, sucess, error);
 
+// CRM record panel for an email's linked lead/contact + deal
+export const GetEmailCrmContextService = (emailId, sucess, error) =>
+    _fetchService(`gmail/${emailId}/crm`, "GET", null, sucess, error);
+
+// All messages from/to a specific contact email address (full conversation history)
+export const GetContactMessagesService = (senderEmail, params, sucess, error) => {
+    const q = new URLSearchParams({ sender_email: senderEmail, business_only: false, limit: 200, page: 1, ...params }).toString()
+    return _fetchService(`gmail/?${q}`, "GET", null, sucess, error)
+}
+
 export const SyncGmailService = (sucess, error) =>
     _fetchService("gmail/sync", "POST", null, sucess, error);
-
-export const BackfillProductsService = (sucess, error) =>
-    _fetchService("gmail/backfill-products", "POST", null, sucess, error);
 
 export const GetEmailGapsService = (sucess, error) =>
     _fetchService("gmail/gaps", "GET", null, sucess, error);
@@ -457,6 +467,20 @@ export const AddBlockedTimeService = (data, sucess, error) =>
 
 export const DeleteBlockedTimeService = (id, sucess, error) =>
     _fetchService(`calendar/blocked-times/${id}`, "DELETE", null, sucess, error);
+
+// ─── Email Templates ─────────────────────────────────────────────────────────
+
+export const GetEmailTemplatesService = (sucess, error) =>
+    _fetchService("email-templates/", "GET", null, sucess, error);
+
+export const CreateEmailTemplateService = (data, sucess, error) =>
+    _fetchService("email-templates/", "POST", data, sucess, error);
+
+export const UpdateEmailTemplateService = (id, data, sucess, error) =>
+    _fetchService(`email-templates/${id}`, "PATCH", data, sucess, error);
+
+export const DeleteEmailTemplateService = (id, sucess, error) =>
+    _fetchService(`email-templates/${id}`, "DELETE", null, sucess, error);
 
 // ─── Lead Generation ─────────────────────────────────────────────────────────
 

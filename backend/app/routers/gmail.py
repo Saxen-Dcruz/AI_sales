@@ -14,6 +14,9 @@ from app.models.communication import Email, EmailLabel, EmailStatus
 from app.models.user import User
 from app.schema.gmail import (
     ApproveDraftRequest,
+    EmailCrmContext,
+    EmailCrmDeal,
+    EmailCrmLead,
     EmailListResponse,
     EmailOut,
     EmailSLAAnalytics,
@@ -116,8 +119,11 @@ def list_emails(
     # business_only=false: show all including Promotional/Transactional
     business_only: bool = Query(default=True),
     owner_id: Optional[UUID] = Query(default=None, description="Super-admin: scope to one user"),
+    date_from: Optional[datetime] = Query(default=None, description="Filter: emails received on or after this datetime (ISO 8601)"),
+    date_to: Optional[datetime] = Query(default=None, description="Filter: emails received on or before this datetime (ISO 8601)"),
+    sender_email: Optional[str] = Query(default=None, description="Filter: all emails from/to this contact email address (inbound sender OR outbound recipient)"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=300),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -143,6 +149,9 @@ def list_emails(
     if label:
         # Explicit label filter overrides business_only
         q = q.filter(Email.label == label)
+    elif sender_email:
+        # Contact history view — show all labels so the full conversation is visible
+        pass
     elif business_only:
         # Default inbox: only pipeline labels (Sales/Support/Grievance)
         q = q.filter(Email.label.notin_(_NOISE_LABEL_VALUES))
@@ -155,20 +164,50 @@ def list_emails(
         q = q.filter(Email.needs_human == needs_human)
     if lead_id:
         q = q.filter(Email.lead_id == lead_id)
+    if date_from:
+        q = q.filter(Email.received_at >= date_from)
+    if date_to:
+        q = q.filter(Email.received_at <= date_to)
+    if sender_email:
+        # Match inbound emails where sender contains this address OR outbound where recipients contain it
+        from sqlalchemy import or_, cast, Text
+        q = q.filter(or_(
+            Email.sender.ilike(f"%{sender_email}%"),
+            cast(Email.recipients, Text).ilike(f"%{sender_email}%"),
+        ))
     if account_id:
         q = q.filter(Email.account_id == account_id)
     elif account_email:
         q = q.filter(Email.account_email == account_email)
-    else:
-        # Default: only emails from active accounts. Legacy (no account_id) and
-        # orphaned (deleted account) emails are not shown in the "All" inbox.
+    elif not sender_email:
+        # Default: only emails from active accounts. Skip this when fetching a
+        # contact's full history (sender_email) so legacy emails are included.
         q = q.filter(Email.account_id.isnot(None))
+
+    from sqlalchemy import func, Text, cast, case
+
+    # ── Contact history view — skip thread grouping ───────────────────────────
+    # When filtering by sender_email we want every individual message, not one
+    # row per thread. Thread collapsing only makes sense for the main inbox list.
+    if sender_email:
+        total = q.count()
+        ordered = (
+            q.order_by(Email.received_at.asc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        items = []
+        for e in ordered:
+            out = EmailOut.model_validate(e)
+            out.thread_count = 1
+            items.append(out)
+        return EmailListResponse(items=items, total=total, page=page, limit=limit)
 
     # ── Thread grouping (server-side) ──────────────────────────────────────────
     # Collapse each Gmail thread to a single row (its latest message) so threads
     # group correctly regardless of pagination. Emails with no thread_id are
     # treated as their own single-message thread (keyed by id).
-    from sqlalchemy import func, Text, cast, case
     thread_key = func.coalesce(Email.gmail_thread_id, cast(Email.id, Text))
     rn = func.row_number().over(
         partition_by=thread_key, order_by=Email.received_at.desc()
@@ -234,13 +273,51 @@ def get_thread_messages(
     Return all email messages belonging to a single Gmail thread, ordered chronologically.
     Used by the inbox UI to show the full conversation when a thread is selected.
     """
-    items = (
-        db.query(Email)
-        .filter(Email.gmail_thread_id == thread_id)
-        .order_by(Email.received_at.asc())
-        .all()
-    )
+    q = db.query(Email).filter(Email.gmail_thread_id == thread_id)
+    if not current_user.is_superuser:
+        from app.models.email_account import EmailAccount
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+        if not _allowed_accts:
+            return EmailListResponse(items=[], total=0, page=1, limit=1)
+        q = q.filter(Email.account_id.in_(_allowed_accts))
+    items = q.order_by(Email.received_at.asc()).all()
     return EmailListResponse(items=items, total=len(items), page=1, limit=len(items) or 1)
+
+
+@router.get("/track/open/{tracking_token}.png", include_in_schema=False)
+def track_email_open(
+    tracking_token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Unauthenticated 1×1 pixel endpoint embedded in outbound HTML emails.
+    Records the first open (opened_at) and increments open_count each subsequent load.
+    Returns a transparent 1×1 GIF — must NOT require auth so recipient mail clients can fetch it.
+    """
+    import uuid as _uuid
+    from fastapi.responses import Response as FastAPIResponse
+    try:
+        token_uuid = _uuid.UUID(tracking_token)
+    except ValueError:
+        pass
+    else:
+        email = db.query(Email).filter(Email.tracking_token == token_uuid).first()
+        if email:
+            if not email.opened_at:
+                email.opened_at = datetime.now(timezone.utc)
+            email.open_count = (email.open_count or 0) + 1
+            db.commit()
+
+    # 1×1 transparent GIF (minimal valid GIF89a)
+    GIF1x1 = (
+        b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00"
+        b"!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01"
+        b"\x00\x00\x02\x02D\x01\x00;"
+    )
+    return FastAPIResponse(content=GIF1x1, media_type="image/gif",
+                           headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @router.get("/gaps", response_model=GapNotificationListResponse)
@@ -249,31 +326,46 @@ def list_rag_gaps(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Returns all draft-ready Sales emails where the RAG pipeline could not answer
-    at least one customer question. Used by the dashboard to show the sales team
-    what information needs to be manually filled in before sending.
+    Returns all Sales emails (draft-ready or already replied) where the RAG
+    pipeline could not answer at least one customer question and that gap is
+    still unresolved. Used by the Gaps/Knowledge Base page so the sales team
+    can fill in missing knowledge even after a reply has been sent.
     """
-    rows = (
-        db.query(Email)
-        .filter(
-            Email.label == EmailLabel.SALES,
-            Email.followup_gaps.isnot(None),
-            Email.status == EmailStatus.DRAFT_READY,
-        )
-        .order_by(Email.received_at.desc())
-        .all()
+    from app.models.email_account import EmailAccount
+    if not current_user.is_superuser:
+        _allowed_accts = [
+            a.id for a in db.query(EmailAccount.id).filter(EmailAccount.owner_id == current_user.id).all()
+        ]
+        if not _allowed_accts:
+            return GapNotificationListResponse(items=[], total=0)
+    else:
+        _allowed_accts = None
+
+    q = db.query(Email).filter(
+        Email.label == EmailLabel.SALES,
+        Email.followup_gaps.isnot(None),
+        Email.status.in_([EmailStatus.DRAFT_READY, EmailStatus.REPLIED]),
     )
-    items = [
-        GapNotificationOut(
-            email_id=r.id,
-            gmail_draft_id=r.gmail_draft_id,
-            customer_email=r.sender,
-            subject=r.subject,
-            received_at=r.received_at,
-            gaps=r.followup_gaps or [],
+    if _allowed_accts is not None:
+        q = q.filter(Email.account_id.in_(_allowed_accts))
+    rows = q.order_by(Email.received_at.desc()).all()
+
+    items = []
+    for r in rows:
+        gaps = r.followup_gaps or []
+        unresolved = [g for g in gaps if not (isinstance(g, dict) and g.get("resolved"))]
+        if not unresolved:
+            continue
+        items.append(
+            GapNotificationOut(
+                email_id=r.id,
+                gmail_draft_id=r.gmail_draft_id,
+                customer_email=r.sender,
+                subject=r.subject,
+                received_at=r.received_at,
+                gaps=gaps,
+            )
         )
-        for r in rows
-    ]
     return GapNotificationListResponse(items=items, total=len(items))
 
 
@@ -284,37 +376,6 @@ _SINCE_HOURS = {
     "7d":   168,   # 7 × 24
     "all":  None,
 }
-
-
-@router.post("/backfill-products", status_code=200)
-def backfill_product_detection(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Re-run product detection on all Sales emails missing detected_product_name."""
-    from app.services.sales_gap_service import detect_product
-    rows = (
-        db.query(Email)
-        .filter(
-            Email.label == EmailLabel.SALES,
-            Email.detected_product_name.is_(None),
-            Email.direction == "inbound",
-        )
-        .all()
-    )
-    updated = 0
-    for e in rows:
-        text = f"{e.subject or ''} {e.body_text or ''}"[:1000]
-        try:
-            product_id, product_name, _ = detect_product(db, text)
-            if product_name:
-                e.detected_product_id = product_id
-                e.detected_product_name = product_name
-                updated += 1
-        except Exception:
-            continue
-    db.commit()
-    return {"backfilled": updated, "total_checked": len(rows)}
 
 
 @router.get("/analytics", response_model=EmailSLAAnalytics)
@@ -332,11 +393,7 @@ def get_email_analytics(
     now = datetime.now(timezone.utc)
     hours = _SINCE_HOURS.get(since)
     if hours:
-        if since == "7d":
-            # Align to midnight 7 days ago so all emails land in a date bucket
-            cutoff = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - timedelta(days=6)
-        else:
-            cutoff = now - timedelta(hours=hours)
+        cutoff = now - timedelta(hours=hours)
     else:
         cutoff = None
 
@@ -696,6 +753,11 @@ def get_email_analytics(
         reverse=True,
     )[:40]
 
+    # ── Open tracking analytics ───────────────────────────────────────────────
+    outbound_sales = [e for e in all_emails if e.direction == "outbound" and e.label == EmailLabel.SALES]
+    opened_count = sum(1 for e in outbound_sales if e.opened_at is not None)
+    open_rate_pct = round(opened_count / len(outbound_sales) * 100, 1) if outbound_sales else 0.0
+
     # ── Total volume breakdown ─────────────────────────────────────────────────
     total_volume_breakdown = {
         "Total":      len(all_emails),
@@ -817,6 +879,8 @@ def get_email_analytics(
         product_company_rows=product_company_rows,
         top_senders=top_senders,
         top_products=top_products_purchased,
+        opened_count=opened_count,
+        open_rate_pct=open_rate_pct,
     )
 
 
@@ -929,9 +993,11 @@ def resolve_gap(
     db.commit()
     db.refresh(email)
 
-    # If all gaps are now resolved, regenerate the draft with the new knowledge
+    # If all gaps are now resolved, regenerate the draft with the new knowledge.
+    # Skip regeneration for already-replied emails — the answer is embedded into
+    # the product knowledge base above, but the sent draft itself is untouched.
     all_resolved = all(g.get("resolved") for g in gaps)
-    if all_resolved and email.gmail_draft_id:
+    if all_resolved and email.gmail_draft_id and email.status != EmailStatus.REPLIED:
         from app.services.workflows.email_workflow import resume_after_gaps_resolved
         resume_after_gaps_resolved(db, str(email_id))
         # Always re-read from DB — resume may have updated the draft_id / status
@@ -952,6 +1018,66 @@ def get_email(
         raise HTTPException(status_code=404, detail="Email not found")
     _check_email_access(db, email, current_user)
     return email
+
+
+@router.get("/{email_id}/crm", response_model=EmailCrmContext)
+def get_email_crm_context(
+    email_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    CRM record panel for this email's sender — the linked Lead (contact/company,
+    status, classification, engagement) and its associated Deal (stage, value,
+    win probability), if any. Used by the email view's CRM side panel.
+    """
+    from app.models.lead import Lead
+    from app.models.deal import Deal
+
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
+
+    if not email.lead_id:
+        return EmailCrmContext(lead=None, deal=None)
+
+    lead = db.query(Lead).filter(Lead.id == email.lead_id).first()
+    if not lead:
+        return EmailCrmContext(lead=None, deal=None)
+
+    lead_out = EmailCrmLead(
+        id=lead.id,
+        name=lead.name,
+        email=lead.email,
+        phone=lead.phone,
+        company_name=lead.company.name if lead.company else None,
+        status=lead.status,
+        classification=lead.classification,
+        interest_level=lead.interest_level,
+        engagement_score=lead.engagement_score or 0,
+        next_best_action=lead.next_best_action,
+        last_contacted_at=lead.last_contacted_at,
+    )
+
+    deal = (
+        db.query(Deal)
+        .filter(Deal.lead_id == lead.id)
+        .order_by(Deal.created_at.desc())
+        .first()
+    )
+    deal_out = None
+    if deal:
+        deal_out = EmailCrmDeal(
+            id=deal.id,
+            deal_name=deal.deal_name,
+            stage=deal.stage,
+            deal_value=float(deal.deal_value or 0),
+            win_probability=float(deal.win_probability or 0),
+            expected_close_date=deal.expected_close_date,
+        )
+
+    return EmailCrmContext(lead=lead_out, deal=deal_out)
 
 
 # ── Human-in-the-loop ─────────────────────────────────────────────────────────
@@ -1056,9 +1182,14 @@ def approve_draft(
             subject=reply_subject,
             body=payload.edit_body,
             thread_id=email.gmail_thread_id,
+            reply_to_message_id=email.rfc_message_id,
+            references=email.rfc_references,
         )
         email.ai_draft = payload.edit_body
         email.gmail_draft_id = new_draft["id"]
+        if new_draft.get("tracking_token"):
+            import uuid as _uuid
+            email.tracking_token = _uuid.UUID(new_draft["tracking_token"])
         db.flush()
 
     try:
@@ -1163,6 +1294,7 @@ def send_email(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
 
+    import uuid as _uuid
     email_row = Email(
         gmail_message_id=sent["id"],
         gmail_thread_id=sent.get("threadId"),
@@ -1177,6 +1309,7 @@ def send_email(
         account_id=account.id if account else (original.account_id if original else None),
         account_email=account.email_address if account else (original.account_email if original else None),
         lead_id=(original.lead_id if original else None),
+        tracking_token=_uuid.UUID(sent["tracking_token"]) if sent.get("tracking_token") else None,
     )
     db.add(email_row)
 

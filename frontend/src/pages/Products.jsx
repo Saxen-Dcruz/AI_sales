@@ -10,6 +10,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   BookOpen,
   ChevronLeft, ChevronRight,
+  Copy,
   Edit2,
   ExternalLink,
   LayoutGrid, List,
@@ -24,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { DeleteProductService, ShowAllProductService, ToggleActiveInactiveService } from '../services/ApiService'
+import { DeleteProductService, ShowAllProductService, ShowOneProductService, ToggleActiveInactiveService } from '../services/ApiService'
 
 // ── Animated loading overlay ──────────────────────────────────────────────────
 function ProductsLoadingOverlay() {
@@ -122,7 +123,7 @@ function CoverageBar({ score }) {
   )
 }
 
-function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
+function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView, onCopy }) {
   const isActive = product.status === 'Active'
   return (
     <motion.div
@@ -241,6 +242,11 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
           {isActive ? <PowerOff size={12} /> : <Power size={12} />}
           {isActive ? 'Off' : 'On'}
         </button>
+        <button onClick={() => onCopy(product)}
+          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-all">
+          <Copy size={12} />
+          Copy
+        </button>
         <button onClick={() => onDelete(product)}
           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-red-50 hover:text-red-500 transition-all">
           <Trash2 size={12} />
@@ -251,7 +257,7 @@ function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView }) {
   )
 }
 
-function ProductRow({ product, onToggle, onDelete, onView }) {
+function ProductRow({ product, onToggle, onDelete, onView, onCopy }) {
   const isActive = product.status === 'Active'
   const hasScore = product.coverage_score !== null && product.coverage_score !== undefined
   const pct = hasScore ? Math.round(product.coverage_score * 100) : null
@@ -259,39 +265,24 @@ function ProductRow({ product, onToggle, onDelete, onView }) {
 
   return (
     <motion.tr layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="table-row">
+      {/* Product (name + order code) */}
       <td className="py-3 px-4">
-        <div className="flex items-center gap-1">
-
-          {/* View */}
-          <button
-            onClick={() => onView(product)}
-            className="p-1.5 rounded-lg hover:bg-purple-50 hover:text-purple-600 text-gray-400 transition-all"
-            title="View"
-          >
-            <BookOpen size={13} />
-          </button>
-
-          {/* Toggle Active/Inactive */}
-          <button
-            onClick={() => onToggle(product)}
-            className={`p-1.5 rounded-lg text-gray-400 transition-all ${isActive
-              ? 'hover:bg-orange-50 hover:text-orange-500'
-              : 'hover:bg-green-50 hover:text-green-500'
-              }`}
-            title={isActive ? 'Deactivate' : 'Activate'}
-          >
-            {isActive ? <PowerOff size={13} /> : <Power size={13} />}
-          </button>
-
-          {/* Delete */}
-          <button
-            onClick={() => onDelete(product)}
-            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-gray-400 transition-all"
-            title="Delete"
-          >
-            <Trash2 size={13} />
-          </button>
-
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+            <Package size={15} className="text-blue-500" />
+          </div>
+          <div className="min-w-0">
+            <button
+              onClick={() => onView(product)}
+              className="text-xs font-semibold text-gray-900 truncate max-w-[200px] block hover:text-blue-600 transition-colors text-left"
+              title={product.name}
+            >
+              {product.name}
+            </button>
+            {product['Order Code'] && (
+              <span className="text-[10px] font-mono text-gray-400">{product['Order Code']}</span>
+            )}
+          </div>
         </div>
       </td>
 
@@ -345,6 +336,15 @@ function ProductRow({ product, onToggle, onDelete, onView }) {
             title={isActive ? 'Deactivate' : 'Activate'}
           >
             {isActive ? <PowerOff size={13} /> : <Power size={13} />}
+          </button>
+
+          {/* Copy */}
+          <button
+            onClick={() => onCopy(product)}
+            className="p-1.5 rounded-lg hover:bg-blue-50 hover:text-blue-600 text-gray-400 transition-all"
+            title="Copy"
+          >
+            <Copy size={13} />
           </button>
 
           {/* Delete */}
@@ -414,6 +414,16 @@ export default function Products() {
     DeleteProductService(selectedProduct.id,
       () => { setProducts(prev => prev.filter(p => p.id !== selectedProduct.id)); setDeleteDialogOpen(false) },
       (_s, err) => alert('Delete failed: ' + err)
+    )
+  }
+
+  const handleCopy = (product) => {
+    ShowOneProductService({ id: product.id },
+      (data) => {
+        sessionStorage.setItem('productCopySource', JSON.stringify(data))
+        navigate('/add-product')
+      },
+      (_s, err) => alert('Failed to load product for copying: ' + err)
     )
   }
 
@@ -541,6 +551,8 @@ export default function Products() {
 
                   onToggle={handleToggle}
 
+                  onCopy={handleCopy}
+
                   onDelete={(p) => {
                     setSelectedProduct(p)
                     setDeleteDialogOpen(true)
@@ -571,6 +583,7 @@ export default function Products() {
                   <ProductRow key={product.id} product={product}
                     onEdit={(id) => navigate(`/edit-product/${id}`)}
                     onToggle={handleToggle}
+                    onCopy={handleCopy}
                     onDelete={(p) => { setSelectedProduct(p); setDeleteDialogOpen(true) }}
                     onView={(p) => { setDetailProduct(p); setDetailOpen(true) }}
                   />

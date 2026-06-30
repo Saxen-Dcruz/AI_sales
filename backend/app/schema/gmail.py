@@ -46,6 +46,8 @@ class EmailOut(BaseModel):
     updated_at: Optional[datetime] = None
     created_at: datetime
     thread_count: int = 1
+    opened_at: Optional[datetime] = None
+    open_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -79,6 +81,34 @@ class EmailListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class EmailCrmDeal(BaseModel):
+    id: UUID
+    deal_name: str
+    stage: str
+    deal_value: float
+    win_probability: float
+    expected_close_date: Optional[datetime] = None
+
+
+class EmailCrmLead(BaseModel):
+    id: UUID
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company_name: Optional[str] = None
+    status: str
+    classification: Optional[str] = None
+    interest_level: Optional[str] = None
+    engagement_score: int = 0
+    next_best_action: Optional[str] = None
+    last_contacted_at: Optional[datetime] = None
+
+
+class EmailCrmContext(BaseModel):
+    lead: Optional[EmailCrmLead] = None
+    deal: Optional[EmailCrmDeal] = None
 
 
 class GapNotificationOut(BaseModel):
@@ -147,6 +177,8 @@ class EmailSLAAnalytics(BaseModel):
     # Customer-level aggregations
     top_senders: list = []         # [{sender, total, labels, last_at, lead_id, lead_name}] top 20 by volume
     top_products: list = []        # [{name, inquiries, converted, conversion_pct}] alias for top_products_purchased
+    opened_count: int = 0           # outbound emails with at least one confirmed open
+    open_rate_pct: float = 0.0      # opened_count / total outbound Sales emails * 100
 
 
 class GenerateDraftRequest(BaseModel):
