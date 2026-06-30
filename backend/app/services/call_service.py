@@ -81,6 +81,46 @@ def _extract_structured_fields(transcript: str, client) -> dict:
         return {"intent": "exploring", "urgency": "unknown", "product_interest": None}
 
 
+def _send_post_call_whatsapp(db, call, lead) -> None:
+    """
+    Send 'rdl_post_call_summary' WhatsApp template to the lead's phone number.
+    Silently skips if: lead has no phone, no WA account exists, template not APPROVED.
+    """
+    if not lead or not lead.phone:
+        return
+    try:
+        from app.models.whatsapp_account import WhatsAppAccount
+        from app.models.whatsapp_template import WhatsAppTemplate, WATemplateStatus
+        from app.services.whatsapp_service import send_template_message
+        from app.services.whatsapp_template_service import build_template_components
+
+        # Find any active WA account owned by the lead's owner
+        account = db.query(WhatsAppAccount).filter(
+            WhatsAppAccount.is_active == True,
+        ).first()
+        if not account:
+            return
+
+        # Find the post-call summary template
+        tmpl = db.query(WhatsAppTemplate).filter(
+            WhatsAppTemplate.name == "rdl_post_call_summary",
+            WhatsAppTemplate.status == WATemplateStatus.APPROVED,
+        ).first()
+        if not tmpl:
+            logger.debug("[CALL] rdl_post_call_summary template not approved — skipping WA follow-up")
+            return
+
+        product = call.product_interest or "our products"
+        next_step = "schedule a demo" if call.intent == "ready_to_buy" else "learn more"
+
+        components = build_template_components(tmpl, {"1": product, "2": next_step})
+        send_template_message(account, lead.phone, tmpl.name, tmpl.language, components)
+        logger.info(f"[CALL] Post-call WA template sent to {lead.phone}")
+
+    except Exception as e:
+        logger.warning(f"[CALL] Post-call WhatsApp follow-up failed: {e}")
+
+
 def _send_post_call_email(call, lead) -> None:
     """Auto-send a follow-up email after a call when intent is not_interested is false."""
     if not lead or not lead.email:
@@ -330,14 +370,16 @@ def process_transcript(db: Session, call: Call, transcript: str) -> Call:
         except Exception as e:
             logger.warning(f"[CALL] Lead score update failed: {e}")
 
-    # Post-call follow-up email when customer showed interest
+    # Post-call follow-up: email + WhatsApp template (when customer showed interest)
     if call.intent in ("ready_to_buy", "exploring") and call.lead_id:
         try:
             from app.models.leads import Lead
             lead = db.query(Lead).filter(Lead.id == call.lead_id).first()
-            _send_post_call_email(call, lead)
+            if lead:
+                _send_post_call_email(call, lead)
+                _send_post_call_whatsapp(db, call, lead)
         except Exception as e:
-            logger.warning(f"[CALL] Post-call email failed: {e}")
+            logger.warning(f"[CALL] Post-call follow-up failed: {e}")
 
     logger.info(
         f"[CALL] Processed transcript for {call.id} | "

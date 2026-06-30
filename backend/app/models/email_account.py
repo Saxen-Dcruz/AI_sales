@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, ForeignKey, String, Text, JSON
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from app.database.core import Base
 from app.core.utils import new_uuid
@@ -21,6 +21,9 @@ class EmailAccount(Base):
     auto_send_enabled = Column(Boolean, default=True, nullable=False)
     scopes        = Column(JSON, nullable=True)
     added_by      = Column(String, nullable=True)
+    # Gmail Pub/Sub watch state (migration 025)
+    watch_history_id = Column(String, nullable=True)          # historyId from last users.watch()
+    watch_expiry     = Column(DateTime(timezone=True), nullable=True)  # watch expiry (7 days)
     created_at    = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at    = Column(String, default=lambda: datetime.now(timezone.utc).isoformat(),
                            onupdate=lambda: datetime.now(timezone.utc).isoformat())

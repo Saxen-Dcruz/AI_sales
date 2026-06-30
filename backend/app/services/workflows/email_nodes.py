@@ -529,6 +529,49 @@ def node_extract_gaps(state: dict, config: RunnableConfig) -> dict:
     return {"gaps": gaps or []}
 
 
+def _build_voice_cta(db, lead_id, account_id, sender_email: str) -> str:
+    """
+    Create a LiveKit voice room for this email lead and return a CTA footer block.
+    Non-fatal — if room creation fails, returns an office-phone-only block.
+    """
+    from app.core.config import settings as _cfg
+
+    join_url   = None
+    owner_id   = None
+
+    try:
+        from app.models.email_account import EmailAccount
+        from uuid import UUID
+        acct = db.query(EmailAccount).filter(EmailAccount.id == UUID(str(account_id))).first() if account_id else None
+        owner_id = acct.owner_id if acct else None
+    except Exception:
+        pass
+
+    try:
+        if owner_id:
+            from app.services.voice_room_service import create_room
+            _lead_id = UUID(str(lead_id)) if lead_id else None
+            session, join_url = create_room(
+                db,
+                channel_origin="gmail",
+                owner_id=owner_id,
+                lead_id=_lead_id,
+            )
+    except Exception as exc:
+        logger.warning(f"[EMAIL VOICE CTA] Room creation failed: {exc}")
+
+    voice_line = (
+        f"🎙️ Talk to our AI right now (no app needed):\n{join_url}\n\n"
+        if join_url else ""
+    )
+    return (
+        "\n\n---\n"
+        f"{voice_line}"
+        f"📅 Schedule a Google Meet with an expert: Reply 'MEET' or visit rdltech.in/schedule\n"
+        f"📞 Call us directly: {_cfg.COMPANY_PHONE}"
+    )
+
+
 def node_auto_send(state: dict, config: RunnableConfig) -> dict:
     """Create Gmail draft and send immediately — no gaps, full confidence."""
     db = _get_db(config)
@@ -546,17 +589,21 @@ def node_auto_send(state: dict, config: RunnableConfig) -> dict:
         db.flush()
         return {"action": "pending_human_draft_failed"}
 
+    # Append voice CTA to every auto-sent Sales reply
+    voice_cta = _build_voice_cta(db, state.get("lead_id"), state.get("account_id"), sender_email)
+    full_body  = draft_text + voice_cta
+
     try:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            body=full_body, thread_id=state.get("gmail_thread_id"),
             reply_to_message_id=state.get("rfc_message_id") or None,
             references=state.get("rfc_references") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"ai_draft": draft_text, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
+            {"ai_draft": full_body, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
              "tracking_token": draft.get("tracking_token")},
             synchronize_session=False,
         )
@@ -739,7 +786,10 @@ def node_defer_human(state: dict, config: RunnableConfig) -> dict:
 
 
 def node_archive(state: dict, config: RunnableConfig) -> dict:
-    """Archive Transactional/Promotional/Personal emails."""
+    """Archive Transactional/Promotional/Personal emails.
+    For Transactional messages with sales-relevant types (invoice, order, receipt)
+    we also auto-create or update a Deal in the CRM pipeline.
+    """
     db = _get_db(config)
     gmail_svc = _get_gmail_svc(config)
     label = EmailLabel(state["label"])
@@ -753,6 +803,26 @@ def node_archive(state: dict, config: RunnableConfig) -> dict:
     )
     db.flush()
     logger.info(f"[EMAIL WORKFLOW] {state['label']} email archived: {state['subject']}")
+
+    # Auto-create/update Deal from invoice or purchase document
+    if label == EmailLabel.TRANSACTIONAL:
+        ttype = state.get("transactional_type")
+        tdata = state.get("transactional_data") or {}
+        lead_id = state.get("lead_id")
+        if ttype and lead_id:
+            try:
+                from app.services.transaction_deal_service import process_transaction_for_deal
+                process_transaction_for_deal(
+                    db            = db,
+                    lead_id       = lead_id,
+                    transactional_type = ttype,
+                    transactional_data = tdata,
+                    owner_id      = None,   # owner_id filled from lead's owner in service
+                    source_channel = "email",
+                )
+            except Exception as exc:
+                logger.warning(f"[EMAIL WORKFLOW] transaction→deal failed: {exc}")
+
     return {"action": "archived"}
 
 

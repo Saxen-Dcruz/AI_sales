@@ -115,7 +115,24 @@ class Settings(BaseSettings):
     LIVEKIT_API_URL: str
     LIVEKIT_API_KEY: str
     LIVEKIT_API_SECRET: str
-    LIVEKIT_WS_URL: str 
+    LIVEKIT_WS_URL: str             # Internal (agent → LiveKit): ws://livekit:7880
+    # Public URL the browser client uses. In dev = ws://localhost:7880.
+    # In prod = wss://your-livekit-cloud-domain or your SFU public address.
+    LIVEKIT_PUBLIC_WS_URL: str = "ws://localhost:7880"
+    # For 500-1000 concurrent calls: point to LiveKit Cloud or a cluster.
+    # Each call uses ~150kbps audio; 1000 concurrent ≈ 150Mbps.
+    LIVEKIT_MAX_CONCURRENT_SESSIONS: int = 1000
+
+    # --- Voice Bridge ---
+    # Base URL used to build the browser call page link sent to customers.
+    # Dev: http://localhost:8001  Prod: https://your-domain.com
+    VOICE_BASE_URL: str = "http://localhost:8001"
+    # Short-lived customer token TTL (minutes). Refresh available via /token endpoint.
+    VOICE_TOKEN_TTL_MINUTES: int = 15
+    # Number of consecutive unanswered questions before escalation is offered.
+    VOICE_ESCALATION_THRESHOLD: int = 3
+    # Office phone shown as Option 2 (call us directly).
+    COMPANY_PHONE: str = "+91-80-12345678"
 
     # --- AI API Keys ---
     GOOGLE_API_KEY: str = ""
@@ -126,6 +143,7 @@ class Settings(BaseSettings):
     # --- Google OAuth (multi-account Gmail) ---
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    CALENDAR_TOKEN_PATH: str = "calendar_token.json"   # override in .env if mounted elsewhere
     # Override the redirect URI base for OAuth callbacks.
     # Must match an authorized redirect URI in Google Cloud Console.
     # Defaults to http://localhost:8001 (required — Google blocks private LAN IPs).
@@ -152,6 +170,21 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # Set True in production (HTTPS only). False allows cookies over HTTP in local dev.
     COOKIE_SECURE: bool = False
+
+    # --- Gmail Push Notifications (Google Cloud Pub/Sub) ---
+    # Full topic resource name: "projects/<PROJECT_ID>/topics/<TOPIC_NAME>"
+    # Leave empty to disable push notifications (manual sync only).
+    GMAIL_PUBSUB_TOPIC: str = ""
+    # The HTTPS URL of the Pub/Sub push subscription endpoint.
+    # Used to verify the OIDC token audience claim.
+    # Example: "https://118.139.165.99.nip.io:8443/api/v1/gmail/webhook"
+    # Leave empty to skip JWT verification (local dev only).
+    GMAIL_PUBSUB_AUDIENCE: str = ""
+
+    # --- WhatsApp Business Cloud API ---
+    # App Secret from Meta App Dashboard — used to verify webhook signature (X-Hub-Signature-256).
+    # Leave empty in dev (signature verification is skipped when not set).
+    WHATSAPP_APP_SECRET: str = ""
 
     # --- LangSmith Tracing ---
     LANGCHAIN_TRACING_V2: bool = False

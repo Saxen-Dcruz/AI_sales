@@ -456,6 +456,9 @@ export const ScheduleMeetingService = (data, sucess, error) =>
 export const CancelEventService = (id, sucess, error) =>
     _fetchService(`calendar/${id}`, "DELETE", null, sucess, error);
 
+export const RescheduleEventService = (id, data, sucess, error) =>
+    _fetchService(`calendar/${id}/reschedule`, "PATCH", data, sucess, error);
+
 export const GetBlockedTimesService = (sucess, error) =>
     _fetchService("calendar/blocked-times", "GET", null, sucess, error);
 
@@ -574,3 +577,87 @@ export const SaveScraperSessionService = (li_at, success, error) =>
     _fetchService("linkedin-accounts/scraper-session", "POST", { li_at }, success, error);
 export const ClearScraperSessionService = (success, error) =>
     _fetchService("linkedin-accounts/scraper-session", "DELETE", null, success, error);
+
+// ─── WhatsApp ─────────────────────────────────────────────────────────────────
+
+// Account management (Settings)
+export const GetWhatsAppAccountsService = (success, error) =>
+    _fetchService("settings/whatsapp-accounts", "GET", null, success, error);
+
+export const AddWhatsAppAccountService = (data, success, error) =>
+    _fetchService("settings/whatsapp-accounts", "POST", data, success, error);
+
+export const UpdateWhatsAppAccountService = (id, data, success, error) =>
+    _fetchService(`settings/whatsapp-accounts/${id}`, "PATCH", data, success, error);
+
+export const DeleteWhatsAppAccountService = (id, success, error) =>
+    _fetchService(`settings/whatsapp-accounts/${id}`, "DELETE", null, success, error);
+
+export const SetPrimaryWhatsAppAccountService = (id, success, error) =>
+    _fetchService(`settings/whatsapp-accounts/${id}/set-primary`, "POST", null, success, error);
+
+// Inbox
+export const GetWhatsAppMessagesService = (params, success, error) => {
+    const q = new URLSearchParams(params || {}).toString();
+    return _fetchService(`whatsapp/?${q}`, "GET", null, success, error);
+};
+
+export const GetWhatsAppMessageService = (id, success, error) =>
+    _fetchService(`whatsapp/${id}`, "GET", null, success, error);
+
+export const ApproveWhatsAppDraftService = (id, data, success, error) =>
+    _fetchService(`whatsapp/${id}/approve-draft`, "POST", data, success, error);
+
+export const DiscardWhatsAppDraftService = (id, success, error) =>
+    _fetchService(`whatsapp/${id}/discard-draft`, "POST", null, success, error);
+
+export const ResolveWhatsAppMessageService = (id, success, error) =>
+    _fetchService(`whatsapp/${id}/resolve`, "POST", null, success, error);
+
+export const ResolveWhatsAppGapService = (id, data, success, error) =>
+    _fetchService(`whatsapp/${id}/gaps/resolve`, "POST", data, success, error);
+
+export const GetWhatsAppGapsService = (success, error) =>
+    _fetchService("whatsapp/gaps", "GET", null, success, error);
+
+export const SendWhatsAppMessageService = (data, success, error) =>
+    _fetchService("whatsapp/send", "POST", data, success, error);
+
+export const GetWhatsAppAnalyticsService = (success, error) =>
+    _fetchService("whatsapp/analytics", "GET", null, success, error);
+
+// Conversation history per sender
+export const GetWhatsAppConversationService = (phoneNumber, params, success, error) => {
+    const q = new URLSearchParams(params || {}).toString()
+    return _fetchService(`whatsapp/conversations/${encodeURIComponent(phoneNumber)}?${q}`, "GET", null, success, error)
+}
+
+export const GetGmailConversationService = (senderEmail, params, success, error) => {
+    const q = new URLSearchParams(params || {}).toString()
+    return _fetchService(`gmail/conversations/${encodeURIComponent(senderEmail)}?${q}`, "GET", null, success, error)
+}
+
+// ─── Dashboard Intelligence ───────────────────────────────────────────────────
+
+export const GetDashboardSummaryService = (success, error) =>
+    _fetchService("dashboard/summary", "GET", null, success, error)
+
+export const GetCallIntelligenceService = (days = 30, success, error) =>
+    _fetchService(`dashboard/call-intelligence?days=${days}`, "GET", null, success, error)
+
+// ─── Voice Bridge ─────────────────────────────────────────────────────────────
+
+export const GetVoiceAnalyticsService = (success, error) =>
+    _fetchService("voice/analytics", "GET", null, success, error)
+
+export const CreateVoiceRoomService = (payload, success, error) =>
+    _fetchService("voice/rooms", "POST", payload, success, error)
+
+export const GetVoiceSessionService = (roomName, success, error) =>
+    _fetchService(`voice/rooms/${roomName}`, "GET", null, success, error)
+
+export const GetCompanySettingsService = (success, error) =>
+    _fetchService("settings/company", "GET", null, success, error)
+
+export const UpdateCompanySettingsService = (data, success, error) =>
+    _fetchService("settings/company", "PATCH", data, success, error)
