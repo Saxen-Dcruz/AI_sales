@@ -38,12 +38,18 @@ CREATE INDEX IF NOT EXISTS idx_wa_messages_wa_sent_id ON whatsapp_messages(wa_se
   WHERE wa_sent_message_id IS NOT NULL;
 
 -- ── whatsapp_templates ─────────────────────────────────────────────────────────
-CREATE TYPE IF NOT EXISTS watemplstatus AS ENUM (
-  'PENDING', 'APPROVED', 'REJECTED', 'PAUSED', 'DISABLED', 'IN_APPEAL'
-);
-CREATE TYPE IF NOT EXISTS watemplcategory AS ENUM (
-  'MARKETING', 'UTILITY', 'AUTHENTICATION'
-);
+DO $$ BEGIN
+    CREATE TYPE watemplstatus AS ENUM (
+      'PENDING', 'APPROVED', 'REJECTED', 'PAUSED', 'DISABLED', 'IN_APPEAL'
+    );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+DO $$ BEGIN
+    CREATE TYPE watemplcategory AS ENUM (
+      'MARKETING', 'UTILITY', 'AUTHENTICATION'
+    );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS whatsapp_templates (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,12 +1,18 @@
 -- WhatsApp inbound/outbound messages
 -- Rollback: DROP TABLE IF EXISTS whatsapp_messages;
 
-CREATE TYPE IF NOT EXISTS walabel AS ENUM (
-    'Sales','Support','Grievance','Transactional','Promotional','Personal','Unclassified'
-);
-CREATE TYPE IF NOT EXISTS wastatus AS ENUM (
-    'new','classified','draft_ready','pending_human','replied','archived','ignored'
-);
+DO $$ BEGIN
+    CREATE TYPE walabel AS ENUM (
+        'Sales','Support','Grievance','Transactional','Promotional','Personal','Unclassified'
+    );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+DO $$ BEGIN
+    CREATE TYPE wastatus AS ENUM (
+        'new','classified','draft_ready','pending_human','replied','archived','ignored'
+    );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS whatsapp_messages (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),

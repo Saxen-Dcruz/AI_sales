@@ -2,6 +2,25 @@
 # Contains all local dev overrides — ports, code mounts, env files, credentials.
 
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rdl_db
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=rdl_sales
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - rdl_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin -d rdl_sales" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     ports:
       - "6379:6379"
@@ -26,6 +45,9 @@ services:
     container_name: rdl_backend_dev
     ports:
       - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       # Local dev talks to the standalone rdl_db container directly over the
       # compose network (rdl_db is attached to ai_sales_rdl_network at startup).
@@ -60,3 +82,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+
+volumes:
+  postgres_data:

@@ -50,9 +50,8 @@ def auto_log_completed_meetings(db) -> int:
         if not existing:
             duration = int((event.end_time - event.start_time).total_seconds())
             call = Call(
-                owner_id=event.owner_id,
-                lead_id=event.lead_id,
                 owner_id=event.owner_id,          # inherit from the calendar event (fixes NOT NULL bug)
+                lead_id=event.lead_id,
                 direction=CallDirection.OUTBOUND,
                 status=CallStatus.COMPLETED,
                 livekit_room=event.google_event_id,
