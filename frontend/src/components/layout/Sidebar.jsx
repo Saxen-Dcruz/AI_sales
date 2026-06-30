@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
     AlertCircle,
-    BarChart2,
     Bot,
     BrainCircuit,
     Calendar,
@@ -40,7 +39,6 @@ const navSections = [
     title: 'Analytics',
     defaultOpen: true,
     items: [
-      { path: '/dashboard', icon: BarChart2, label: 'Pipeline' },
       { path: '/calls', icon: PhoneCall, label: 'Call Analytics' },
       { path: '/sales-analytics', icon: MailSearch, label: 'Sales Analytics' },
       { path: '/ai-analytics', icon: BrainCircuit, label: 'AI Analytics' },
