@@ -18,7 +18,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard, lead_gen, users
+from app.routers import product, usage, auth, leads, companies, deals, gmail, calendar, calls, linkedin, dashboard, lead_gen, users, whatsapp, voice
 from app.routers import settings as settings_router
 from app.routers import linkedin_accounts as linkedin_accounts_router
 
@@ -42,6 +42,10 @@ import app.models.email_sequence
 import app.models.linkedin
 import app.models.linkedin_b2b
 import app.models.lead_gen
+import app.models.whatsapp_account
+import app.models.whatsapp_message
+import app.models.whatsapp_template
+import app.models.voice_session
 
 
 # Rate Limiting
@@ -108,28 +112,153 @@ async def lifespan(app: FastAPI):
     # Start the background Redis listener
     redis_task = asyncio.create_task(global_redis_listener())
 
-    # Start Gmail inbox poller
-    from app.services.gmail_poller import start_poller
-    try:
-        start_poller()
-    except Exception as e:
-        logger.warning(f"Gmail poller failed to start: {e}")
-    
-    # Initialize Database Tables (Uncomment when models are ready)
+    # Initialize Database Tables
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("✅ PostgreSQL & pgvector tables verified and created.")
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
-        
+
+    # ── Gmail push notifications via Pub/Sub ──────────────────────────────────
+    # Register users.watch() for every active Gmail account so Google pushes
+    # new-email notifications to POST /api/v1/gmail/webhook instead of polling.
+    # Renewal loop runs every 6 hours to renew watches expiring within 25 hours.
+    from app.core.config import settings as _cfg
+    if _cfg.GMAIL_PUBSUB_TOPIC:
+        from app.database.core import SessionLocal
+        from app.services.gmail_webhook_service import register_all_watches, renew_expiring_watches
+
+        async def _watch_renewal_loop():
+            import asyncio as _asyncio
+            from app.database.core import SessionLocal as _SL
+            # Initial registration
+            with _SL() as db:
+                register_all_watches(db)
+            # Renew every 6 hours
+            while True:
+                await _asyncio.sleep(6 * 3600)
+                with _SL() as db:
+                    renew_expiring_watches(db)
+
+        watch_task = asyncio.create_task(_watch_renewal_loop())
+        logger.info(f"[GMAIL WEBHOOK] Pub/Sub mode active — topic={_cfg.GMAIL_PUBSUB_TOPIC}")
+    else:
+        watch_task = None
+        logger.info("[GMAIL WEBHOOK] GMAIL_PUBSUB_TOPIC not set — Gmail push notifications disabled")
+        logger.info("[GMAIL WEBHOOK] Use POST /gmail/sync to process emails manually")
+
+    # ── WhatsApp Phase 2B: 24h window re-engagement (every 30 min) ───────────
+    async def _wa_reengagement_loop():
+        import asyncio as _asyncio
+        from app.database.core import SessionLocal as _SL
+        from app.services.whatsapp_template_service import send_expiring_window_templates
+        while True:
+            await _asyncio.sleep(30 * 60)   # check every 30 minutes
+            with _SL() as db:
+                try:
+                    n = send_expiring_window_templates(db)
+                    if n:
+                        logger.info(f"[WA 24H] Sent {n} re-engagement template(s)")
+                except Exception as exc:
+                    logger.warning(f"[WA 24H] Re-engagement check failed: {exc}")
+
+    _wa_reeng_task = asyncio.create_task(_wa_reengagement_loop())
+    logger.info("[WA 24H] Re-engagement loop started (every 30 min)")
+
+    # ── Voice Bridge: session cleanup + Redis event listener ─────────────────
+    async def _voice_cleanup_loop():
+        import asyncio as _asyncio
+        from app.database.core import SessionLocal as _SL
+        from app.services.voice_room_service import expire_stale_sessions
+        while True:
+            await _asyncio.sleep(5 * 60)  # every 5 minutes
+            with _SL() as db:
+                try:
+                    n = expire_stale_sessions(db)
+                    if n:
+                        logger.info(f"[VOICE] Expired {n} stale pending sessions")
+                except Exception as exc:
+                    logger.warning(f"[VOICE] Cleanup loop error: {exc}")
+
+    async def _voice_redis_listener():
+        """Listens for voice escalation events published by the AI agent."""
+        import asyncio as _asyncio
+        import redis.asyncio as _redis
+        _r = _redis.from_url(f"redis://{REDIS_HOST}:{REDIS_PORT}/0", decode_responses=True)
+        pubsub = _r.pubsub()
+        await pubsub.subscribe("voice:escalate_request", "voice:unanswered")
+        logger.info("[VOICE REDIS] Subscribed to voice events")
+        try:
+            async for msg in pubsub.listen():
+                if msg["type"] != "message":
+                    continue
+                try:
+                    payload = json.loads(msg["data"])
+                    channel = msg["channel"]
+
+                    if channel == "voice:escalate_request":
+                        session_id = payload.get("session_id")
+                        if session_id:
+                            from app.database.core import SessionLocal as _SL
+                            from app.models.voice_session import VoiceSession as _VS
+                            from app.services.escalation_service import offer_escalation_options
+                            from app.models.voice_session import EscalationType
+                            with _SL() as db:
+                                s = db.query(_VS).filter(_VS.id == session_id).first()
+                                if s:
+                                    offer_escalation_options(db, s, escalation_type=EscalationType.GMEET)
+                                    logger.info(f"[VOICE REDIS] Escalated session {session_id}")
+
+                    elif channel == "voice:unanswered":
+                        session_id = payload.get("session_id")
+                        unanswered = int(payload.get("unanswered_count", 0))
+                        if session_id:
+                            from app.database.core import SessionLocal as _SL
+                            from app.models.voice_session import VoiceSession as _VS
+                            from app.services.escalation_service import check_and_auto_escalate
+                            with _SL() as db:
+                                s = db.query(_VS).filter(_VS.id == session_id).first()
+                                if s:
+                                    s.unanswered_count = unanswered
+                                    db.flush()
+                                    check_and_auto_escalate(db, s)
+
+                except Exception as exc:
+                    logger.warning(f"[VOICE REDIS] Event handling error: {exc}")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await _r.aclose()
+
+    _voice_cleanup_task = asyncio.create_task(_voice_cleanup_loop())
+    _voice_redis_task   = asyncio.create_task(_voice_redis_listener())
+    logger.info("[VOICE] Session cleanup loop + Redis listener started")
+
     yield
-    
+
     # --- SHUTDOWN ---
     logger.info("🛑 Shutting down AI Backend...")
-    
-    # Stop Gmail poller
-    from app.services.gmail_poller import stop_poller
-    stop_poller()
+
+    if watch_task:
+        watch_task.cancel()
+        try:
+            await watch_task
+        except asyncio.CancelledError:
+            pass
+
+    _wa_reeng_task.cancel()
+    try:
+        await _wa_reeng_task
+    except asyncio.CancelledError:
+        pass
+
+    _voice_cleanup_task.cancel()
+    _voice_redis_task.cancel()
+    for t in (_voice_cleanup_task, _voice_redis_task):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
     # Cancel Listener safely
     redis_task.cancel()
@@ -183,8 +312,9 @@ app.include_router(dashboard.router,  prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(lead_gen.router, prefix="/api/v1")
 app.include_router(linkedin_accounts_router.router, prefix="/api/v1")
+app.include_router(whatsapp.router, prefix="/api/v1")
+app.include_router(voice.router,   prefix="/api/v1")
 # app.include_router(agents.router, tags=["AI Agents"], prefix="/api/agents")
-# app.include_router(webhooks.router, tags=["LiveKit Voice"], prefix="/api/webhooks")
 
 # ─────────────────────────────────────────────────────────────
 # HEALTH CHECKS

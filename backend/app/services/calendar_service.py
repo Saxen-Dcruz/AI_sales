@@ -14,7 +14,8 @@ from app.services.gmail_service import send_email, get_gmail_service
 
 logger = logging.getLogger("rdl_app_logger")
 
-CALENDAR_TOKEN_PATH = Path("calendar_token.json")
+from app.core.config import settings as _cfg
+CALENDAR_TOKEN_PATH = Path(_cfg.CALENDAR_TOKEN_PATH)
 CALENDAR_ID = "primary"
 
 
@@ -50,9 +51,10 @@ def auto_log_completed_meetings(db) -> int:
             duration = int((event.end_time - event.start_time).total_seconds())
             call = Call(
                 lead_id=event.lead_id,
+                owner_id=event.owner_id,          # inherit from the calendar event (fixes NOT NULL bug)
                 direction=CallDirection.OUTBOUND,
                 status=CallStatus.COMPLETED,
-                livekit_room=event.google_event_id,   # reuse field as event reference
+                livekit_room=event.google_event_id,
                 started_at=event.start_time,
                 ended_at=event.end_time,
                 duration_seconds=duration,
@@ -457,6 +459,17 @@ def reschedule_event(
 
     db.commit()
     db.refresh(event)
+
+    # Send rescheduled invite email (Google Calendar also sends update automatically via sendUpdates='all')
+    if event.attendee_email:
+        _send_invite_email(
+            to=event.attendee_email,
+            title=f"[Rescheduled] {event.title}",
+            start_time=new_start_time,
+            end_time=new_end_time,
+            meet_link=event.meet_link,
+            description=event.description or "",
+        )
 
     logger.info(f"[CALENDAR] Rescheduled '{event.title}' → {new_start_time.isoformat()} | meet={event.meet_link}")
     return event

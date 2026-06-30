@@ -2,6 +2,11 @@
 .claude/
 CLAUDE.md
 
+# --- gstack (local skill pack — never commit) ---
+.gstack/
+.gstack-worktrees/
+.agents/skills/gstack*/
+
 # --- Project Specific ---
 .env.local
 .env.prod
@@ -51,6 +56,9 @@ backend/calendar_token.json
 *.pem
 *.key
 *.p12
-*.pfxwork/
+*.pfx
 frontend/.env
 backend/product_name
+
+# --- TLS / Self-signed certs (prod deployment) ---
+certs/

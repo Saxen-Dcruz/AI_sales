@@ -50,13 +50,18 @@ const STATUS_CONFIG = {
 }
 
 const TABS = [
-  { key: '',             label: 'Inbox',       icon: Mail,        businessOnly: true  },
-  { key: 'Sales',        label: 'Sales',       icon: Zap,         businessOnly: true  },
-  { key: 'Support',      label: 'Support',     icon: Users,       businessOnly: true  },
-  { key: 'Grievance',    label: 'Grievance',   icon: AlertCircle, businessOnly: true  },
-  { key: 'needs_human',  label: 'Needs Review',icon: AlertCircle, businessOnly: true  },
-  { key: 'draft_ready',  label: 'Drafts',      icon: Star,        businessOnly: true  },
-  { key: 'other',        label: 'Other',       icon: Archive,     businessOnly: false },
+  // Business pipeline labels
+  { key: '',               label: 'Inbox',          icon: Mail,        businessOnly: true,  color: '#6172f3' },
+  { key: 'Sales',          label: 'Sales',           icon: Zap,         businessOnly: true,  color: '#10b981' },
+  { key: 'Support',        label: 'Support',         icon: Users,       businessOnly: true,  color: '#3b82f6' },
+  { key: 'Grievance',      label: 'Grievance',       icon: AlertCircle, businessOnly: true,  color: '#ef4444' },
+  { key: 'needs_human',    label: 'Needs Review',    icon: AlertCircle, businessOnly: true,  color: '#f59e0b' },
+  { key: 'draft_ready',    label: 'Drafts',          icon: Star,        businessOnly: true,  color: '#f59e0b' },
+  // Non-business labels (individual)
+  { key: 'Transactional',  label: 'Transactional',   icon: Archive,     businessOnly: false, color: '#f97316' },
+  { key: 'Promotional',    label: 'Promotional',     icon: Tag,         businessOnly: false, color: '#8b5cf6' },
+  { key: 'Personal',       label: 'Personal',        icon: Users,       businessOnly: false, color: '#ec4899' },
+  { key: 'Unclassified',   label: 'Unclassified',    icon: Mail,        businessOnly: false, color: '#9ca3af' },
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -977,12 +982,17 @@ export default function GmailIntegration() {
     const params = { page, limit: PAGE_SIZE }
     if (activeTab === 'needs_human') params.needs_human = true
     else if (activeTab === 'draft_ready') params.status = 'draft_ready'
-    else if (activeTab === 'other') {
-      params.business_only = false
-    } else if (activeTab) {
-      params.label = activeTab
+    else {
+      const tabCfg = TABS.find(t => t.key === activeTab)
+      const isBusinessOnly = tabCfg ? tabCfg.businessOnly : true
+      params.business_only = isBusinessOnly
+      // For specific non-pipeline labels, pass the label filter explicitly
+      if (activeTab && activeTab !== 'other' && !isBusinessOnly) {
+        params.label = activeTab
+      } else if (activeTab && isBusinessOnly) {
+        params.label = activeTab
+      }
     }
-    if (activeTab !== 'other') params.business_only = true
     if (activeAccount) params.account_id = activeAccount
 
     GetGmailMessagesService(params,

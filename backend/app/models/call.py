@@ -67,6 +67,9 @@ class Call(Base):
     handled_by = Column(String, nullable=True)   # user email of the rep who took the call
     notes = Column(Text, nullable=True)
 
+    # Set when this call originated from a Voice Bridge session
+    voice_session_id = Column(PGUUID(as_uuid=True), ForeignKey("voice_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

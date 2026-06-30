@@ -8,22 +8,29 @@ import {
 import { HelpOutline, CheckCircle, Refresh as RefreshIcon } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { GetEmailGapsService, ResolveEmailGapService, GetCallGapsService, ResolveCallGapService } from '../services/ApiService'
+import {
+  GetEmailGapsService, ResolveEmailGapService,
+  GetCallGapsService,  ResolveCallGapService,
+  GetWhatsAppGapsService, ResolveWhatsAppGapService,
+} from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
+
+// ── Flatten helpers ────────────────────────────────────────────────────────────
 
 function flattenEmailGaps(emailItems) {
   const rows = []
   for (const email of emailItems) {
-    email.gaps.forEach((gap, idx) => {
+    ;(email.gaps || []).forEach((gap, idx) => {
       if (!gap.resolved) {
         rows.push({
-          email_id: email.email_id,
-          gap_index: idx,
-          question: gap.question,
-          topic: gap.topic,
+          email_id:    email.email_id,
+          gap_index:   idx,
+          question:    gap.question,
+          topic:       gap.topic,
           product_name: gap.product_name,
-          source: email.customer_email,
-          subject: email.subject,
+          product_id:  gap.product_id,
+          source:      email.customer_email,
+          subject:     email.subject,
           received_at: email.received_at,
           type: 'email',
         })
@@ -41,12 +48,13 @@ function flattenCallGaps(callItems) {
       const question = typeof gap === 'string' ? gap : gap.question
       if (!gap.resolved) {
         rows.push({
-          call_id: call.id,
-          gap_index: idx,
+          call_id:     call.id,
+          gap_index:   idx,
           question,
-          topic: typeof gap === 'object' ? gap.topic : 'general',
+          topic:       typeof gap === 'object' ? gap.topic        : 'general',
           product_name: typeof gap === 'object' ? gap.product_name : null,
-          source: call.phone_number || 'Unknown',
+          product_id:  typeof gap === 'object' ? gap.product_id   : null,
+          source:      call.phone_number || 'Unknown',
           type: 'call',
         })
       }
@@ -55,24 +63,52 @@ function flattenCallGaps(callItems) {
   return rows
 }
 
+function flattenWhatsAppGaps(waItems) {
+  const rows = []
+  for (const msg of waItems) {
+    ;(msg.gaps || []).forEach((gap, idx) => {
+      if (!gap.resolved) {
+        rows.push({
+          message_id:  msg.message_id,
+          gap_index:   idx,
+          question:    gap.question,
+          topic:       gap.topic,
+          product_name: gap.product_name,
+          product_id:  gap.product_id,
+          source:      msg.from_number,
+          body:        msg.body,
+          received_at: msg.received_at,
+          type: 'whatsapp',
+        })
+      }
+    })
+  }
+  return rows
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export default function GapsPage() {
   const navigate = useNavigate()
   const [tab, setTab] = useState(0)
-  const [emailGaps, setEmailGaps] = useState([])
-  const [callGaps, setCallGaps] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [emailGaps,    setEmailGaps]    = useState([])
+  const [callGaps,     setCallGaps]     = useState([])
+  const [whatsappGaps, setWhatsAppGaps] = useState([])
+  const [loading,      setLoading]      = useState(true)
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false)
-  const [selectedGap, setSelectedGap] = useState(null)
-  const [resolving, setResolving] = useState(false)
+  const [selectedGap,  setSelectedGap]  = useState(null)
+  const [resolving,    setResolving]    = useState(false)
 
   const fetchGaps = () => {
     setLoading(true)
     Promise.all([
-      new Promise(res => GetEmailGapsService(res, () => res(null))),
-      new Promise(res => GetCallGapsService(res, () => res(null))),
-    ]).then(([emailData, callData]) => {
+      new Promise(res => GetEmailGapsService(res,       () => res(null))),
+      new Promise(res => GetCallGapsService(res,        () => res(null))),
+      new Promise(res => GetWhatsAppGapsService(res,    () => res(null))),
+    ]).then(([emailData, callData, waData]) => {
       setEmailGaps(flattenEmailGaps(emailData?.items || []))
-      setCallGaps(flattenCallGaps(callData?.items || []))
+      setCallGaps(flattenCallGaps(callData?.items   || []))
+      setWhatsAppGaps(flattenWhatsAppGaps(waData?.items || []))
       setLoading(false)
     })
   }
@@ -93,9 +129,13 @@ export default function GapsPage() {
         setEmailGaps(prev => prev.filter(
           g => !(g.email_id === selectedGap.email_id && g.gap_index === selectedGap.gap_index)
         ))
-      } else {
+      } else if (selectedGap.type === 'call') {
         setCallGaps(prev => prev.filter(
           g => !(g.call_id === selectedGap.call_id && g.gap_index === selectedGap.gap_index)
+        ))
+      } else {
+        setWhatsAppGaps(prev => prev.filter(
+          g => !(g.message_id === selectedGap.message_id && g.gap_index === selectedGap.gap_index)
         ))
       }
       setResolveDialogOpen(false)
@@ -109,13 +149,18 @@ export default function GapsPage() {
 
     if (selectedGap.type === 'email') {
       ResolveEmailGapService(selectedGap.email_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
-    } else {
+    } else if (selectedGap.type === 'call') {
       ResolveCallGapService(selectedGap.call_id, selectedGap.gap_index, answer, category, productId, onSuccess, onError)
+    } else {
+      // WhatsApp gap — API expects {gap_index, answer}
+      ResolveWhatsAppGapService(selectedGap.message_id, { gap_index: selectedGap.gap_index, answer }, onSuccess, onError)
     }
   }
 
-  const rows = tab === 0 ? emailGaps : callGaps
-  const total = emailGaps.length + callGaps.length
+  const rows  = tab === 0 ? emailGaps : tab === 1 ? callGaps : whatsappGaps
+  const total = emailGaps.length + callGaps.length + whatsappGaps.length
+
+  const colSpan = tab === 0 ? 6 : tab === 2 ? 6 : 5
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -125,7 +170,7 @@ export default function GapsPage() {
           <Box>
             <Typography variant="h4" fontWeight={800} color="text.primary">Knowledge Gaps</Typography>
             <Typography variant="body2" color="text.secondary">
-              {total} unresolved — questions the AI couldn't answer
+              {total} unresolved — questions the AI couldn't answer across Email, WhatsApp, and Calls
             </Typography>
           </Box>
           <Tooltip title="Refresh">
@@ -136,9 +181,11 @@ export default function GapsPage() {
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
           <Tab label={`Email Gaps (${emailGaps.length})`} />
           <Tab label={`Call Gaps (${callGaps.length})`} />
+          <Tab label={`WhatsApp Gaps (${whatsappGaps.length})`} />
         </Tabs>
 
-        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 4, overflow: 'hidden' }}>
+        <TableContainer component={Paper} elevation={0}
+          sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 4, overflow: 'hidden' }}>
           {loading ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}><CircularProgress /></Box>
           ) : (
@@ -148,8 +195,14 @@ export default function GapsPage() {
                   <TableCell sx={{ fontWeight: 700 }}>Question</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Topic</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>{tab === 0 ? 'From' : 'Phone'}</TableCell>
-                  {tab === 0 && <TableCell sx={{ fontWeight: 700 }}>Subject</TableCell>}
+                  <TableCell sx={{ fontWeight: 700 }}>
+                    {tab === 0 ? 'From Email' : tab === 2 ? 'Phone Number' : 'Phone'}
+                  </TableCell>
+                  {(tab === 0 || tab === 2) && (
+                    <TableCell sx={{ fontWeight: 700 }}>
+                      {tab === 0 ? 'Subject' : 'Message Preview'}
+                    </TableCell>
+                  )}
                   <TableCell sx={{ fontWeight: 700 }} align="right">Action</TableCell>
                 </TableRow>
               </TableHead>
@@ -162,15 +215,11 @@ export default function GapsPage() {
                           <HelpOutline color="warning" sx={{ mt: 0.3, flexShrink: 0 }} fontSize="small" />
                           <Tooltip title={gap.question} placement="top-start">
                             <Typography
-                              variant="body2"
-                              fontWeight={500}
+                              variant="body2" fontWeight={500}
                               sx={{
-                                display: '-webkit-box',
-                                WebkitLineClamp: 3,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                lineHeight: 1.4,
+                                display: '-webkit-box', WebkitLineClamp: 3,
+                                WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                                textOverflow: 'ellipsis', lineHeight: 1.4,
                               }}
                             >
                               {gap.question}
@@ -182,79 +231,56 @@ export default function GapsPage() {
                         <Chip label={gap.topic || 'general'} size="small" variant="tonal" color="primary" />
                       </TableCell>
                       <TableCell>
-                        <Typography variant="caption" color="text.secondary">{gap.product_name || '—'}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {gap.product_name || '—'}
+                        </Typography>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 170, width: 170 }}>
                         <Tooltip title={gap.source || ''} placement="top-start">
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{
-                              display: 'block',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              maxWidth: '100%',
-                            }}
-                          >
+                          <Typography variant="caption" color="text.secondary"
+                            sx={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {gap.source}
                           </Typography>
                         </Tooltip>
                       </TableCell>
-                      {tab === 0 && (
+                      {(tab === 0 || tab === 2) && (
                         <TableCell sx={{ maxWidth: 160, width: 160 }}>
-                          <Tooltip title={gap.subject || ''} placement="top-start">
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{
-                                display: 'block',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                maxWidth: '100%',
-                              }}
-                            >
-                              {gap.subject}
+                          <Tooltip title={tab === 0 ? gap.subject : gap.body || ''} placement="top-start">
+                            <Typography variant="caption" color="text.secondary"
+                              sx={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {tab === 0 ? gap.subject : (gap.body || '').slice(0, 60)}
                             </Typography>
                           </Tooltip>
                         </TableCell>
                       )}
                       <TableCell align="right">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                          {/* Fill gap directly in product KB */}
                           {gap.product_id && (
-                            <Button
-                              variant="outlined"
-                              size="small"
-                              color="primary"
+                            <Button variant="outlined" size="small" color="primary"
                               onClick={() => navigate(`/knowledge-base/${gap.product_id}`)}
-                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                            >
+                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                               Fill in KB
                             </Button>
                           )}
-                          {/* Go to the email that has this gap */}
                           {tab === 0 && gap.email_id && (
-                            <Button
-                              variant="outlined"
-                              size="small"
-                              color="warning"
+                            <Button variant="outlined" size="small" color="warning"
                               onClick={() => navigate('/gmail', { state: { selectEmailId: gap.email_id } })}
-                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                            >
+                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                               Review Email
                             </Button>
                           )}
-                          {/* Resolve with a direct answer */}
-                          <Button
-                            variant="contained"
-                            size="small"
-                            color="success"
+                          {tab === 2 && gap.message_id && (
+                            <Button variant="outlined" size="small"
+                              sx={{ fontSize: '0.7rem', whiteSpace: 'nowrap', borderColor: '#25D366', color: '#25D366',
+                                '&:hover': { borderColor: '#128C7E', background: '#f0fdf4' } }}
+                              onClick={() => navigate('/whatsapp', { state: { selectMessageId: gap.message_id } })}>
+                              Review WA
+                            </Button>
+                          )}
+                          <Button variant="contained" size="small" color="success"
                             startIcon={<CheckCircle />}
                             onClick={() => openResolve(gap)}
-                            sx={{ fontSize: '0.7rem' }}
-                          >
+                            sx={{ fontSize: '0.7rem' }}>
                             Resolve
                           </Button>
                         </Box>
@@ -263,7 +289,7 @@ export default function GapsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={tab === 0 ? 6 : 5} align="center" sx={{ py: 8 }}>
+                    <TableCell colSpan={colSpan} align="center" sx={{ py: 8 }}>
                       <Typography variant="body2" color="text.secondary">No unresolved gaps. All clear!</Typography>
                     </TableCell>
                   </TableRow>

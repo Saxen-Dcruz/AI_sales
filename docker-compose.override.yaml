@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Auto-merged by Docker Compose on `docker compose up`.
 # Contains all local dev overrides — ports, code mounts, env files, credentials.
 
