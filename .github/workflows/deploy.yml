@@ -135,7 +135,10 @@ jobs:
           envs: IMAGE_TAG
           script: |
             set -euo pipefail
-            cd "${DEPLOY_DIR:-$HOME/AI_sales}"
+            DEPLOY_DIR="${DEPLOY_DIR:-/home/rdlai/AI_sales}"
+            cd "$DEPLOY_DIR"
+            # We SSH in as root but the repo lives in rdlai's home; tell git it's safe.
+            git config --global --add safe.directory "$DEPLOY_DIR"
             git fetch --quiet origin dev && git checkout dev && git pull --ff-only
             chmod +x deploy/*.sh
             ./deploy/deploy.sh "${IMAGE_TAG}"
