@@ -1,5 +1,7 @@
-# Auto-merged by Docker Compose on `docker compose up`.
-# Contains all local dev overrides — ports, code mounts, env files, credentials.
+# Local dev only — must be passed explicitly:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+# NOT auto-merged (renamed from docker-compose.override.yaml intentionally).
+# Prod uses docker-compose.prod.yaml instead — no DB container there.
 
 services:
   db:

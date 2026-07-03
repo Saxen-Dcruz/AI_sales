@@ -2,6 +2,9 @@ version: '3.8'
 
 # Production overlay — use with:
 #   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
+#
+# No DB container here by design — PostgreSQL runs natively on the host
+# with PgBouncer in front (port 6432). Backend connects via host.docker.internal:6432.
 
 services:
   backend:
