@@ -798,7 +798,7 @@ function initials(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?'
 }
 
-function CrmPanel({ email, onSelectEmail }) {
+function CrmPanel({ email, onSelectEmail, onClose }) {
   const [crm, setCrm] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingStatus, setSavingStatus] = useState(false)
@@ -843,9 +843,14 @@ function CrmPanel({ email, onSelectEmail }) {
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-gray-50/40 overflow-y-auto">
-      <div className="px-4 py-3 border-b border-gray-100">
+    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white h-full overflow-y-auto">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
         <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">CRM Record</p>
+        {onClose && (
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+            <X size={15} />
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -1261,6 +1266,7 @@ export default function GmailIntegration() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(null)
+  const [crmOpen, setCrmOpen] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
@@ -1559,7 +1565,7 @@ export default function GmailIntegration() {
                     <EmailRow
                       email={email}
                       selected={selected === email.id}
-                      onClick={() => setSelected(selected === email.id ? null : email.id)}
+                      onClick={() => { setCrmOpen(false); setSelected(selected === email.id ? null : email.id) }}
                       accountColorMap={accountColorMap}
                       acctOwnerMap={acctOwnerMap}
                     />
@@ -1593,12 +1599,42 @@ export default function GmailIntegration() {
         <div className="flex-1 min-w-0 flex">
           <AnimatePresence mode="wait">
             {selectedEmail ? (
-              <motion.div key={selectedEmail.id} className="h-full flex-1 min-w-0 flex"
+              <motion.div key={selectedEmail.id} className="relative h-full flex-1 min-w-0 flex"
                 initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
                 <div className="flex-1 min-w-0">
                   <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} acctOwnerMap={acctOwnerMap} />
                 </div>
-                <CrmPanel email={selectedEmail} onSelectEmail={(id) => setSelected(id)} />
+
+                {/* CRM toggle button — opens the record as a slide-in drawer */}
+                {!crmOpen && (
+                  <button
+                    onClick={() => setCrmOpen(true)}
+                    className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-200 shadow-sm text-xs font-semibold text-gray-600 hover:text-blue-600 hover:border-blue-300 transition-colors">
+                    <Users size={13} />
+                    CRM Record
+                  </button>
+                )}
+
+                {/* Slide-in CRM drawer (overlays on top, doesn't cramp the reply area) */}
+                <AnimatePresence>
+                  {crmOpen && (
+                    <>
+                      <motion.div
+                        className="absolute inset-0 z-30 bg-black/20"
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        onClick={() => setCrmOpen(false)} />
+                      <motion.div
+                        className="absolute top-0 right-0 z-40 h-full shadow-2xl"
+                        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+                        transition={{ type: 'tween', duration: 0.22 }}>
+                        <CrmPanel
+                          email={selectedEmail}
+                          onSelectEmail={(id) => { setSelected(id); setCrmOpen(false) }}
+                          onClose={() => setCrmOpen(false)} />
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
               </motion.div>
             ) : (
               <motion.div key="empty" className="flex-1 flex flex-col items-center justify-center h-full gap-4 text-center p-10"
