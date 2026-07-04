@@ -87,6 +87,10 @@ services:
       - LANGCHAIN_TRACING_V2=false
     volumes:
       - ./backend/linkedin_profile_context:/app/linkedin_profile_context
+      - ./backend/calendar_token.json:/app/calendar_token.json
+      - ./backend/gmail_token.json:/app/gmail_token.json
+      - ./backend/client_secrets.json:/app/client_secrets.json
+      - ./backend/service-account.json:/app/service-account.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

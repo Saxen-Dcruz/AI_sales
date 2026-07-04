@@ -101,6 +101,25 @@ def _resolve_owner_account(db: Session, owner_id: Optional[UUID]):
         return None
 
 
+def _calendar_service_for_owner(db: Session, owner_account) -> "object":
+    """
+    Use the owner's own connected Google account for Calendar operations when
+    possible, so the event/invite is organized by the rep who booked it rather
+    than the shared legacy account. Falls back to the shared calendar_token.json
+    when the owner has no connected account or hasn't granted Calendar scope yet.
+    """
+    if owner_account is not None:
+        try:
+            from app.services.email_account_service import get_calendar_service_for_account
+            return get_calendar_service_for_account(db, owner_account)
+        except Exception as e:
+            logger.warning(
+                f"[CALENDAR] Could not get Calendar service for owner account "
+                f"{owner_account.email_address}: {e} — falling back to shared calendar"
+            )
+    return get_calendar_service()
+
+
 def create_meeting(
     db: Session,
     attendee_email: str,
@@ -146,7 +165,7 @@ def create_meeting(
         },
     }
 
-    cal_svc = get_calendar_service()
+    cal_svc = _calendar_service_for_owner(db, owner_account)
     created = cal_svc.events().insert(
         calendarId=CALENDAR_ID,
         body=event_body,
@@ -255,7 +274,8 @@ def _send_invite_email(
 # ── Event management ──────────────────────────────────────────────────────────
 
 def cancel_event(db: Session, event: CalendarEvent) -> CalendarEvent:
-    cal_svc = get_calendar_service()
+    owner_account = _resolve_owner_account(db, event.owner_id)
+    cal_svc = _calendar_service_for_owner(db, owner_account)
     try:
         cal_svc.events().delete(
             calendarId=CALENDAR_ID,
@@ -473,7 +493,8 @@ def reschedule_event(
 
     new_end_time = new_start_time + timedelta(minutes=duration_minutes)
 
-    cal_svc = get_calendar_service()
+    owner_account = _resolve_owner_account(db, event.owner_id)
+    cal_svc = _calendar_service_for_owner(db, owner_account)
     updated = cal_svc.events().patch(
         calendarId=CALENDAR_ID,
         eventId=event.google_event_id,
