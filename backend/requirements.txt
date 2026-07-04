@@ -26,7 +26,7 @@ fastapi==0.135.1
 filelock==3.19.1
 flatbuffers==25.2.10
 frozenlist==1.7.0
-fsspec==2025.9.0
+fsspec==2026.6.0
 google-api-core==2.25.1
 google-auth==2.40.3
 google-cloud-speech==2.33.0
