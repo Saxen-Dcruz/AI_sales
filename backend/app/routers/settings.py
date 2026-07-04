@@ -146,8 +146,10 @@ def oauth_callback(
         # the workflow deduplicates on gmail_message_id.
         _trigger_batch_import(account.id)
 
+        from app.core.config import settings as cfg
+        frontend = cfg.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url=f"http://localhost:5173/settings?email_added={email_address}",
+            url=f"{frontend}/settings?email_added={email_address}",
             status_code=302,
         )
     except Exception as e:
@@ -155,8 +157,10 @@ def oauth_callback(
         logger.error(
             f"[OAUTH CALLBACK] Failed to exchange code: {e}\n{traceback.format_exc()}"
         )
+        from app.core.config import settings as cfg
+        frontend = cfg.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url="http://localhost:5173/settings?email_error=true",
+            url=f"{frontend}/settings?email_error=true",
             status_code=302,
         )
 

@@ -148,7 +148,10 @@ class Settings(BaseSettings):
     # Must match an authorized redirect URI in Google Cloud Console.
     # Defaults to http://localhost:8001 (required — Google blocks private LAN IPs).
     OAUTH_REDIRECT_BASE: str = ""
-    
+    # Base URL of the frontend app. After OAuth completes, the callback
+    # redirects the browser back here (e.g. http://192.168.1.104:5173).
+    FRONTEND_URL: str = "http://localhost:5173"
+
 
     # --- REDIS ---
     REDIS_HOST: str = "rdl_redis"

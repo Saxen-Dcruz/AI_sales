@@ -712,7 +712,7 @@ export default function AddProduct() {
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <TextField size="small" type="number" label="Buy Qty" value={tier.quantity} sx={{ width: 100 }}
                                     onChange={(e) => updateBulkTier(codeIndex, tierIndex, 'quantity', e.target.value)} />
-                                  <TextField size="small" type="number" label="Discount %" value={tier.discount_percent} sx={{ width: 120 }}
+                                  <TextField size="small" type="number" label="Discount" value={tier.discount_percent} sx={{ width: 120 }}
                                     onChange={(e) => updateBulkTier(codeIndex, tierIndex, 'discount_percent', e.target.value)}
                                     InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }} />
                                   {pc.bulk_pricing.length > 1 && (

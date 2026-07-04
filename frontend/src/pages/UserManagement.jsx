@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Shield, Plus, Pencil, Key, X, Check, Loader2, Mail } from 'lucide-react'
+import { Shield, Plus, Pencil, Key, X, Check, Loader2, Mail, Eye, EyeOff } from 'lucide-react'
 import ApplicationStore from '../utils/ApplicationStore'
 import {
   ListUsersService, CreateUserService, UpdateUserService,
@@ -38,6 +38,20 @@ function Field({ label, children }) {
 }
 
 const inputCls = "w-full text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400 transition-all"
+
+function PasswordInput({ value, onChange, placeholder }) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="relative">
+      <input type={show ? 'text' : 'password'} className={`${inputCls} pr-10`}
+        placeholder={placeholder} value={value} onChange={onChange} />
+      <button type="button" onClick={() => setShow(s => !s)} tabIndex={-1}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  )
+}
 
 export default function UserManagement() {
   if (!isSuperAdmin()) return <Navigate to="/dashboard" replace />
@@ -235,7 +249,7 @@ export default function UserManagement() {
                 value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
             </Field>
             <Field label="Password">
-              <input type="password" className={inputCls} placeholder="Min 6 characters"
+              <PasswordInput placeholder="Min 6 characters"
                 value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
             </Field>
             <Field label="Role">
@@ -274,7 +288,7 @@ export default function UserManagement() {
               </label>
             </Field>
             <Field label="Force new password (optional)">
-              <input type="password" className={inputCls} placeholder="Leave blank to keep current"
+              <PasswordInput placeholder="Leave blank to keep current"
                 value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
             </Field>
             <div className="flex gap-2 pt-2">
@@ -297,7 +311,7 @@ export default function UserManagement() {
         <Modal title={`Reset password — ${selected.email}`} onClose={closeModal}>
           <div className="space-y-4">
             <Field label="New password">
-              <input type="password" className={inputCls} placeholder="Min 6 characters"
+              <PasswordInput placeholder="Min 6 characters"
                 value={pwForm.password} onChange={e => setPwForm({ password: e.target.value })} />
             </Field>
             <div className="flex gap-2 pt-2">

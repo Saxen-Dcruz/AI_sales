@@ -123,7 +123,7 @@ def create_meeting(
 
     # Resolve the owner's connected email account for sending
     owner_account = _resolve_owner_account(db, owner_id)
-    sender_email = owner_account.email if owner_account else None
+    sender_email = owner_account.email_address if owner_account else None
 
     event_body = {
         "summary": title,

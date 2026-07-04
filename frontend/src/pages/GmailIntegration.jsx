@@ -6,6 +6,7 @@ import {
   Briefcase,
   Building2,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
   Clock,
   FileText,
@@ -26,7 +27,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
@@ -38,6 +39,79 @@ const ACCOUNT_COLORS = [
   { bg: 'bg-rose-100',   text: 'text-rose-700',   dot: 'bg-rose-500',   pill: 'bg-rose-100 text-rose-700 border-rose-200'   },
   { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-500',  pill: 'bg-amber-100 text-amber-700 border-amber-200'  },
 ]
+
+// ─── Account selector dropdown ───────────────────────────────────────────────
+function AccountDropdown({ accounts, activeAccount, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [open])
+
+  const current = accounts.find(a => a.id === activeAccount)
+  const currentIdx = accounts.findIndex(a => a.id === activeAccount)
+  const currentColor = currentIdx >= 0 ? ACCOUNT_COLORS[currentIdx % ACCOUNT_COLORS.length] : null
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border
+          ${activeAccount ? 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50' : 'bg-gray-800 text-white border-transparent shadow-sm'}`}>
+        {current ? (
+          <>
+            <span className={`w-2 h-2 rounded-full ${currentColor.dot}`}></span>
+            {current.email_address.split('@')[0]}
+            {current.is_primary && <span className="text-[8px] opacity-60">★</span>}
+          </>
+        ) : (
+          <>
+            <Inbox size={11} />
+            All accounts
+          </>
+        )}
+        <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute right-0 mt-1.5 w-52 z-50 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden py-1">
+            <button
+              onClick={() => { onSelect(''); setOpen(false) }}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors
+                ${!activeAccount ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <Inbox size={12} />
+              All accounts
+            </button>
+            {accounts.map((a, i) => {
+              const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
+              const isActive = activeAccount === a.id
+              return (
+                <button key={a.id}
+                  onClick={() => { onSelect(a.id); setOpen(false) }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors
+                    ${isActive ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color.dot}`}></span>
+                  <span className="truncate">{a.email_address}</span>
+                  {a.is_primary && <span className="text-[9px] opacity-60 ml-auto flex-shrink-0">★</span>}
+                </button>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -1429,31 +1503,13 @@ export default function GmailIntegration() {
             </span>
           )}
 
-          {/* Account selector pills — shown when multiple accounts */}
+          {/* Account selector dropdown — shown when multiple accounts */}
           {accounts.length > 1 && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => { setActiveAccount(''); setPage(1); setSelected(null) }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all
-                  ${!activeAccount ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                <Inbox size={11} />
-                All
-              </button>
-              {accounts.map((a, i) => {
-                const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
-                const isActive = activeAccount === a.id
-                return (
-                  <button key={a.id}
-                    onClick={() => { setActiveAccount(a.id); setPage(1); setSelected(null) }}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border
-                      ${isActive ? `${color.bg} ${color.text} border-transparent shadow-sm` : 'bg-white text-gray-600 hover:bg-gray-50 border-gray-200'}`}>
-                    <span className={`w-2 h-2 rounded-full ${color.dot}`}></span>
-                    {a.email_address.split('@')[0]}
-                    {a.is_primary && <span className="text-[8px] opacity-60">★</span>}
-                  </button>
-                )
-              })}
-            </div>
+            <AccountDropdown
+              accounts={accounts}
+              activeAccount={activeAccount}
+              onSelect={(id) => { setActiveAccount(id); setPage(1); setSelected(null) }}
+            />
           )}
 
           <button onClick={fetchEmails}
