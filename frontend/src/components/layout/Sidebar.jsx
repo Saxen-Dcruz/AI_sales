@@ -1,28 +1,22 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
     AlertCircle,
-    BarChart2,
     Bot,
     BrainCircuit,
     Calendar,
     ChevronDown,
     ChevronRight,
-    Inbox,
     LayoutDashboard,
-    Linkedin,
     Mail,
     MailSearch,
-    Megaphone,
     MessageCircle,
     MessageSquare,
     Mic,
     Package,
     PhoneCall,
     PlusSquare,
-    Search,
     Settings,
     Target,
-    UserCheck,
     X,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -42,16 +36,11 @@ const navSections = [
     title: 'Analytics',
     defaultOpen: true,
     items: [
-      { path: '/dashboard', icon: BarChart2, label: 'Pipeline' },
       { path: '/calls',              icon: PhoneCall,      label: 'Call Analytics'     },
       { path: '/voice-analytics',    icon: Mic,            label: 'Voice Analytics'    },
       { path: '/gmail-analytics',    icon: MailSearch,     label: 'Email Analytics'    },
-      { path: '/sales-analytics',    icon: MailSearch,     label: 'Sales Analytics'    },
       { path: '/whatsapp-analytics', icon: MessageCircle,  label: 'WhatsApp Analytics' },
       { path: '/ai-analytics',       icon: BrainCircuit,   label: 'AI Analytics'       },
-      { path: '/linkedin', icon: Linkedin, label: 'LinkedIn Analytics' },
-      { path: '/linkedin-integration', icon: Linkedin, label: 'LinkedIn Pipeline' },
-      { path: '/users', icon: UserCheck, label: 'Team Analytics' },
     ],
   },
   {
@@ -82,16 +71,6 @@ const navSections = [
     items: [
       { path: '/products', icon: Package, label: 'Products' },
       { path: '/add-product', icon: PlusSquare, label: 'Add Product' },
-    ],
-  },
-  {
-    key: 'lead-gen',
-    title: 'Lead Generation',
-    defaultOpen: true,
-    items: [
-      { path: '/lead-discovery', icon: Search, label: 'Lead Discovery' },
-      { path: '/campaigns', icon: Megaphone, label: 'Campaigns' },
-      { path: '/outreach-queue', icon: Inbox, label: 'Outreach Queue' },
     ],
   },
   {
