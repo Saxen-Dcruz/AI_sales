@@ -170,8 +170,9 @@ def exchange_code_and_save(
     """Exchange OAuth authorization code for credentials, fetch email, store in DB.
 
     `owner_id` must be the UUID of the app user who connected this Gmail account.
-    Required when owner_id is enforced NOT NULL.  Each user may connect at most one
-    Gmail account; a second attempt raises ValueError.
+    Required when owner_id is enforced NOT NULL. Each regular user may connect at
+    most one Gmail account (a second attempt raises ValueError); super-admins are
+    exempt and may connect any number.
     """
     flow = _get_flow(redirect_uri)
     # Retrieve PKCE code_verifier from Redis
@@ -210,14 +211,18 @@ def exchange_code_and_save(
         logger.info(f"[EMAIL ACCOUNTS] Token refreshed for {email_address}")
         return existing
 
-    # 1-account-per-user cap: regular users may not connect more than one account
+    # 1-account-per-user cap: regular users may not connect more than one account.
+    # Super-admins are exempt — they can connect and manage every account.
     if owner_id is not None:
-        owns = db.query(EmailAccount).filter(EmailAccount.owner_id == owner_id).count()
-        if owns >= 1:
-            raise ValueError(
-                f"Each user may connect at most one Gmail account. "
-                f"Remove your existing account first."
-            )
+        from app.models.user import User
+        owner = db.query(User).filter(User.id == owner_id).first()
+        if not (owner and owner.is_superuser):
+            owns = db.query(EmailAccount).filter(EmailAccount.owner_id == owner_id).count()
+            if owns >= 1:
+                raise ValueError(
+                    f"Each user may connect at most one Gmail account. "
+                    f"Remove your existing account first."
+                )
 
     is_first = db.query(EmailAccount).count() == 0
     account = EmailAccount(

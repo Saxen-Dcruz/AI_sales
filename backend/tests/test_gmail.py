@@ -2264,7 +2264,7 @@ def test_fetch_new_message_ids_pagination():
     svc = MagicMock()
     svc.users.return_value.history.return_value.list.side_effect = _list
 
-    ids = _fetch_new_message_ids(svc, "9999")
+    ids, _latest_history_id = _fetch_new_message_ids(svc, "9999")
     assert "m1" in ids
     assert "m2" in ids
 

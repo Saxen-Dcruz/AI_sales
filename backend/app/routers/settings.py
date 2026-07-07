@@ -103,17 +103,17 @@ def get_auth_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return Google OAuth consent URL. Frontend redirects user to this URL."""
-    existing = (
-        db.query(EmailAccount)
-        .filter(EmailAccount.owner_id == current_user.id)
-        .count()
-    )
-    if existing >= 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You already have a Gmail account connected. Remove it before adding a new one.",
-        )
+    """
+    Return Google OAuth consent URL. Frontend redirects user to this URL.
+
+    Also used to re-consent an already-connected account (e.g. to pick up
+    Calendar scopes added after the account first connected) — the callback's
+    exchange_code_and_save refreshes the existing row by email match rather
+    than creating a duplicate, so re-auth is safe to allow here. The 1-account
+    cap for regular users is enforced in exchange_code_and_save against the
+    *email actually returned by Google*, which correctly distinguishes
+    "re-auth of my existing account" from "connecting a different account".
+    """
     url = svc.get_auth_url(redirect_uri=_callback_uri(request), owner_id=current_user.id)
     return OAuthUrlResponse(url=url)
 

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, MarkEmailReadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
 
 // ─── Account color palette — cycles through these for each connected account ─
@@ -189,9 +189,9 @@ function EmailRow({ email, selected, onClick, accountColorMap = {}, acctOwnerMap
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const statusCfg = STATUS_CONFIG[email.status] || STATUS_CONFIG.classified
   const StatusIcon = statusCfg.icon
-  // "Unread" = anything still needing human attention (not auto-replied/archived/ignored).
-  // Mirrors the backend's unread_priority ordering so the bold cue lines up with the sort.
-  const isUnread = ['new', 'draft_ready', 'pending_human'].includes(email.status)
+  // "Unread" = a human hasn't opened this email yet in the dashboard. Independent of
+  // `status` (AI pipeline progress) — the row un-bolds as soon as it's viewed.
+  const isUnread = !email.is_read
   const isGrievance = email.label === 'Grievance'
   const unresolvedGaps = (email.followup_gaps || []).filter(g => !(typeof g === 'object' ? g.resolved : false)).length
   const acctColor = email.account_email ? accountColorMap[email.account_email] : null
@@ -631,8 +631,10 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                           )}
                         </div>
                       </div>
-                      {/* Fill / collapse button — only when draft exists */}
-                      {!resolved && email.status === 'draft_ready' && (
+                      {/* Fill / collapse button — the backend always accepts a gap answer
+                          (it embeds it into the knowledge base regardless of email status;
+                          draft regeneration is simply skipped when there's no draft to redo) */}
+                      {!resolved && (
                         <button
                           onClick={() => setActiveGapIndex(isOpen ? null : i)}
                           className={`flex-shrink-0 text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all
@@ -663,10 +665,12 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                               () => {
                                 setGapResolving(false)
                                 setActiveGapIndex(null)
-                                if (isLastGap) {
-                                  // All gaps filled — backend regenerates draft (RAG + LLM).
-                                  // Poll every 2s until the email's draft_id or status changes,
-                                  // so we never show a stale or broken state.
+                                if (isLastGap && email.gmail_draft_id) {
+                                  // All gaps filled and a draft still exists — backend regenerates
+                                  // it (RAG + LLM). Poll every 2s until the draft_id or status
+                                  // changes, so we never show a stale or broken state.
+                                  // (If the draft was discarded there's nothing to regenerate —
+                                  // just refresh immediately, see the else branch below.)
                                   setRegenerating(true)
                                   let attempts = 0
                                   const poll = () => {
@@ -1362,7 +1366,11 @@ export default function GmailIntegration() {
     const emailId = location.state?.selectEmailId
     if (!emailId) return
     GetEmailByIdService(emailId,
-      (data) => { setDirectEmail(data); setSelected(data.id) },
+      (data) => {
+        setDirectEmail(data)
+        setSelected(data.id)
+        if (!data.is_read) MarkEmailReadService(data.id, () => {}, () => {})
+      },
       () => { }
     )
   }, [location.state])
@@ -1447,6 +1455,65 @@ export default function GmailIntegration() {
   useEffect(() => { fetchGlobalCounts() }, [fetchGlobalCounts])
   useEffect(() => { setPage(1); setSelected(null) }, [activeTab])
   useEffect(() => { setPage(1); setSelected(null) }, [activeAccount])
+
+  // Keep latest fetchers in refs so the socket effect below (mount-only) always
+  // calls the current versions without needing to reconnect when filters change.
+  const fetchEmailsRef = useRef(fetchEmails)
+  const fetchGlobalCountsRef = useRef(fetchGlobalCounts)
+  useEffect(() => { fetchEmailsRef.current = fetchEmails }, [fetchEmails])
+  useEffect(() => { fetchGlobalCountsRef.current = fetchGlobalCounts }, [fetchGlobalCounts])
+
+  // Live updates — the backend pushes a message here the moment the Gmail Pub/Sub
+  // webhook processes a new email, so the inbox refreshes instantly instead of
+  // waiting for the user to manually sync or reload.
+  useEffect(() => {
+    const { accessToken } = ApplicationStore().getStorage('userDetails') || {}
+    if (!accessToken) return
+
+    let socket
+    let reconnectTimer
+    let closedByEffect = false
+    const wsBase = (import.meta.env.VITE_API_URL || '').replace(/^http/, 'ws')
+
+    const connect = () => {
+      socket = new WebSocket(`${wsBase}gmail/ws?token=${encodeURIComponent(accessToken)}`)
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'new_email') {
+            // New mail sorts to the top of page 1 (backend orders unread-first, newest-first) —
+            // reset there so it's visible even if the user had paged forward.
+            setPage(1)
+            fetchEmailsRef.current()
+            fetchGlobalCountsRef.current()
+          }
+        } catch {
+          // ignore malformed frames
+        }
+      }
+      socket.onclose = () => {
+        if (!closedByEffect) reconnectTimer = setTimeout(connect, 5000)
+      }
+      socket.onerror = () => socket.close()
+    }
+    connect()
+
+    return () => {
+      closedByEffect = true
+      clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [])
+
+  const openEmail = (email) => {
+    setCrmOpen(false)
+    setSelected(selected === email.id ? null : email.id)
+    if (!email.is_read) {
+      // Optimistic — un-bold immediately rather than waiting on the round trip.
+      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
+      MarkEmailReadService(email.id, () => {}, () => {})
+    }
+  }
 
   const handleSync = () => {
     setSyncing(true)
@@ -1621,7 +1688,7 @@ export default function GmailIntegration() {
                     <EmailRow
                       email={email}
                       selected={selected === email.id}
-                      onClick={() => { setCrmOpen(false); setSelected(selected === email.id ? null : email.id) }}
+                      onClick={() => openEmail(email)}
                       accountColorMap={accountColorMap}
                       acctOwnerMap={acctOwnerMap}
                     />

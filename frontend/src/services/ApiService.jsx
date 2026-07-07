@@ -223,6 +223,12 @@ export const UpdateProductKnowledgeService = (productId, entryId, data, sucess, 
 export const DeleteProductKnowledgeService = (productId, entryId, sucess, error) =>
     _fetchService(`products/${productId}/knowledge/${entryId}`, "DELETE", null, sucess, error);
 
+export const UpdateProductChunkService = (productId, chunkId, data, sucess, error) =>
+    _fetchService(`products/${productId}/chunks/${chunkId}`, "PATCH", data, sucess, error);
+
+export const DeleteProductChunkService = (productId, chunkId, sucess, error) =>
+    _fetchService(`products/${productId}/chunks/${chunkId}`, "DELETE", null, sucess, error);
+
 // ─── Leads ───────────────────────────────────────────────────────────────────
 
 export const GetAllLeadsService = (params, sucess, error) => {
@@ -388,6 +394,9 @@ export const DiscardDraftService = (emailId, sucess, error) =>
 
 export const ResolveEmailService = (emailId, data, sucess, error) =>
     _fetchService(`gmail/${emailId}/resolve`, "POST", data, sucess, error);
+
+export const MarkEmailReadService = (emailId, sucess, error) =>
+    _fetchService(`gmail/${emailId}/read`, "POST", {}, sucess, error);
 
 export const GenerateDraftService = (data, sucess, error) =>
     _fetchService("gmail/generate-draft", "POST", data, sucess, error);

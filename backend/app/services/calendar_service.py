@@ -103,21 +103,17 @@ def _resolve_owner_account(db: Session, owner_id: Optional[UUID]):
 
 def _calendar_service_for_owner(db: Session, owner_account) -> "object":
     """
-    Use the owner's own connected Google account for Calendar operations when
-    possible, so the event/invite is organized by the rep who booked it rather
-    than the shared legacy account. Falls back to the shared calendar_token.json
-    when the owner has no connected account or hasn't granted Calendar scope yet.
+    Use the owner's own connected Google account for Calendar operations — the event/
+    invite must be organized by the rep who actually owns it, never by an unrelated
+    account. Raises when the owner has no connected account or hasn't granted Calendar
+    scope yet; callers must catch this and flag the meeting for a human to schedule
+    manually instead of silently falling back to the shared legacy calendar_token.json
+    (which belongs to a specific developer's personal Google account, not any rep).
     """
-    if owner_account is not None:
-        try:
-            from app.services.email_account_service import get_calendar_service_for_account
-            return get_calendar_service_for_account(db, owner_account)
-        except Exception as e:
-            logger.warning(
-                f"[CALENDAR] Could not get Calendar service for owner account "
-                f"{owner_account.email_address}: {e} — falling back to shared calendar"
-            )
-    return get_calendar_service()
+    if owner_account is None:
+        raise ValueError("No connected Google account for this owner — cannot schedule a Calendar event on their behalf.")
+    from app.services.email_account_service import get_calendar_service_for_account
+    return get_calendar_service_for_account(db, owner_account)
 
 
 def create_meeting(
@@ -275,8 +271,8 @@ def _send_invite_email(
 
 def cancel_event(db: Session, event: CalendarEvent) -> CalendarEvent:
     owner_account = _resolve_owner_account(db, event.owner_id)
-    cal_svc = _calendar_service_for_owner(db, owner_account)
     try:
+        cal_svc = _calendar_service_for_owner(db, owner_account)
         cal_svc.events().delete(
             calendarId=CALENDAR_ID,
             id=event.google_event_id,

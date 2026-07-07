@@ -1,11 +1,12 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 logger = logging.getLogger("rdl_app_logger")
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,13 @@ from app.services.workflows.email_workflow import run_email_workflow
 from app.services.workflows.email_nodes import generate_sales_draft as _gen_draft
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
+
+# Dedicated pool for Gmail Pub/Sub processing — kept separate from Starlette's shared
+# threadpool (which is also where every plain `def` route, including login and the
+# health check, runs). A backlog of webhook deliveries can hold threads for minutes
+# at a time (Gmail API + LLM calls per message); on the shared pool that starves out
+# unrelated sync endpoints across the whole app.
+_webhook_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gmail-webhook")
 
 
 def _check_email_access(db: Session, email: Email, user: User) -> None:
@@ -1020,6 +1028,24 @@ def get_email(
     return email
 
 
+@router.post("/{email_id}/read", response_model=EmailOut)
+def mark_email_read(
+    email_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark an email as opened/viewed by a human, independent of its workflow status."""
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
+    if not email.is_read:
+        email.is_read = True
+        db.commit()
+        db.refresh(email)
+    return email
+
+
 @router.get("/{email_id}/crm", response_model=EmailCrmContext)
 def get_email_crm_context(
     email_id: UUID,
@@ -1363,6 +1389,7 @@ async def gmail_pubsub_webhook(
     Pub/Sub sends an OIDC Bearer token in the Authorization header for verification.
     The payload identifies the mailbox + historyId; we fetch new messages via history API.
     """
+    import asyncio
     from app.services.gmail_webhook_service import verify_pubsub_token, process_pubsub_notification
     from app.core.config import settings as _cfg
 
@@ -1377,5 +1404,45 @@ async def gmail_pubsub_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    processed = process_pubsub_notification(db, payload)
+    # Offloaded to a dedicated worker pool (not Starlette's shared threadpool, which
+    # every plain sync route including login also relies on) — this can process
+    # dozens of messages (Gmail API + LLM calls) and previously blocked the event
+    # loop, or starved other sync endpoints, for as long as it took.
+    loop = asyncio.get_running_loop()
+    processed = await loop.run_in_executor(_webhook_executor, process_pubsub_notification, db, payload)
     return {"status": "ok", "processed": processed}
+
+
+# ── Live updates (WebSocket) ───────────────────────────────────────────────────
+# Frontend connects here to receive a push the moment the webhook above processes
+# a new message, instead of polling GET /gmail/ on an interval.
+
+@router.websocket("/ws")
+async def gmail_live_updates(websocket: WebSocket, db: Session = Depends(get_db)):
+    from app.core.socket_manager import manager
+    from app.services.auth_service import decode_token
+
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            raise ValueError("not an access token")
+        user = db.query(User).filter(User.email == payload["sub"]).first()
+        if not user or not user.is_active:
+            raise ValueError("inactive or unknown user")
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
+    await manager.connect(user.id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # client sends nothing meaningful; just keeps the socket alive
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(user.id, websocket)

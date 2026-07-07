@@ -9,7 +9,7 @@ from app.database.core import get_db
 from app.models.product import Product
 from app.models.user import User
 from app.schema.product import ProductCreate, ProductResponse, ProductUpdate
-from app.schema.product_knowledge import KnowledgeEntryCreate, KnowledgeEntryListResponse, KnowledgeEntryOut, KnowledgeEntryUpdate
+from app.schema.product_knowledge import ChunkUpdate, KnowledgeEntryCreate, KnowledgeEntryListResponse, KnowledgeEntryOut, KnowledgeEntryUpdate
 from app.services import product_service
 from app.services import product_knowledge_service
 
@@ -331,4 +331,32 @@ def get_product_embeddings(
         "total_chunks": len(chunks),
         "chunks": chunks,
     }
+
+
+@router.patch("/{product_id}/chunks/{chunk_id}", summary="Edit a RAG chunk's text and re-embed it")
+def update_chunk(
+    product_id: UUID,
+    chunk_id: str,
+    payload: ChunkUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    try:
+        product_knowledge_service.update_chunk(db, chunk_id, payload.content)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"chunk_id": chunk_id, "document": payload.content}
+
+
+@router.delete("/{product_id}/chunks/{chunk_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chunk(
+    product_id: UUID,
+    chunk_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    try:
+        product_knowledge_service.delete_chunk(db, chunk_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 

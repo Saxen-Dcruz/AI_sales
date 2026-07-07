@@ -69,6 +69,10 @@ class Email(Base):
     resolved_by = Column(String, nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Whether a human has opened this email in the dashboard — independent of
+    # `status`, which only reflects AI pipeline progress, not human viewing.
+    is_read = Column(Boolean, default=False, nullable=False)
+
     # Open tracking: tracking_token is embedded in a 1×1 pixel in outbound emails.
     # opened_at and open_count are updated by the unauthenticated /gmail/track/open/ endpoint
     # whenever the recipient's mail client loads the pixel.

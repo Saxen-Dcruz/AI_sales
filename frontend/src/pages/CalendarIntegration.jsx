@@ -460,6 +460,7 @@ export default function CalendarIntegration() {
     start_time: '', duration_minutes: 30,
   })
   const [schedulingMeeting, setSchedulingMeeting] = useState(false)
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
   const fetchEvents = () => {
     setLoading(true)
@@ -813,6 +814,9 @@ export default function CalendarIntegration() {
                   placeholder="customer@example.com"
                   className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400"
                 />
+                {meetingForm.attendee_email && !EMAIL_RE.test(meetingForm.attendee_email.trim()) && (
+                  <p className="text-[10px] text-red-500 mt-1">Enter a valid email address</p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600">Meeting Title *</label>
@@ -864,11 +868,14 @@ export default function CalendarIntegration() {
                 Cancel
               </button>
               <button
-                disabled={schedulingMeeting || !meetingForm.attendee_email || !meetingForm.title || !meetingForm.start_time}
+                disabled={
+                  schedulingMeeting || !meetingForm.attendee_email || !meetingForm.title ||
+                  !meetingForm.start_time || !EMAIL_RE.test(meetingForm.attendee_email.trim())
+                }
                 onClick={() => {
                   setSchedulingMeeting(true)
                   ScheduleMeetingService({
-                    attendee_email: meetingForm.attendee_email,
+                    attendee_email: meetingForm.attendee_email.trim(),
                     title: meetingForm.title,
                     description: meetingForm.description,
                     start_time: new Date(meetingForm.start_time).toISOString(),

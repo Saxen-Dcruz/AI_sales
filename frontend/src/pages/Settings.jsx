@@ -9,6 +9,7 @@ import {
 import {
   GetEmailAccountsService, GetEmailAccountAuthUrlService,
   UpdateEmailAccountService, SetPrimaryEmailAccountService, DeleteEmailAccountService,
+  GetCurrentUserService,
 } from '../services/ApiService'
 
 // ─── Static settings sections (unchanged) ────────────────────────────────────
@@ -68,6 +69,7 @@ function AccountBadge({ is_primary, is_active }) {
 function EmailAccountsSection() {
   const location = useLocation()
   const [accounts, setAccounts] = useState([])
+  const [me, setMe] = useState(null)
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(false)
   const [toast, setToast] = useState(null)
@@ -88,13 +90,20 @@ function EmailAccountsSection() {
 
   useEffect(() => {
     fetchAccounts()
+    GetCurrentUserService((data) => setMe(data), () => {})
     const params = new URLSearchParams(location.search)
     if (params.get('email_added')) showToast(`✓ ${params.get('email_added')} connected successfully`)
     if (params.get('email_error')) showToast('Failed to connect account — please try again', 'error')
   }, [location.search])
 
   const handleAddAccount = () => {
-    if (accounts.length >= 1) {
+    // Super-admins can connect any number of accounts; regular users are capped at
+    // one of THEIR OWN (mirrors the backend rule in exchange_code_and_save). A
+    // super-admin sees every account in the system here, so counting the whole
+    // list — instead of just the ones they themselves own — would wrongly block
+    // them from adding a second account the moment any other user has one.
+    const ownAccounts = me ? accounts.filter(a => a.owner_id === me.id) : []
+    if (!me?.is_superuser && ownAccounts.length >= 1) {
       showToast('You already have a Gmail account connected. Remove it before adding a new one.', 'error')
       return
     }
@@ -112,6 +121,18 @@ function EmailAccountsSection() {
     UpdateEmailAccountService(acct.id, { is_active: !acct.is_active },
       () => { fetchAccounts(); setActing(null); showToast(`${acct.email_address} ${acct.is_active ? 'deactivated — polling stopped' : 'activated — polling resumed'}`) },
       () => { setActing(null); showToast('Update failed', 'error') }
+    )
+  }
+
+  // Re-run the OAuth consent flow for an already-connected account so it can
+  // pick up scopes (e.g. Calendar) granted after the account first connected.
+  // The callback matches on email address and refreshes the existing row
+  // rather than creating a duplicate, so this is safe to call anytime.
+  const handleReconnect = (acct) => {
+    setActing(acct.id + '_reconnect')
+    GetEmailAccountAuthUrlService(
+      (data) => { window.location.href = data.url },
+      (_status, msg) => { setActing(null); showToast(msg || 'Could not get auth URL', 'error') }
     )
   }
 
@@ -213,10 +234,24 @@ function EmailAccountsSection() {
                 {acct.display_name && acct.display_name !== acct.email_address && (
                   <p className="text-[11px] text-gray-400 mt-0.5">{acct.display_name}</p>
                 )}
+                {!(acct.scopes || []).includes('https://www.googleapis.com/auth/calendar.events') && (
+                  <p className="text-[11px] text-amber-600 mt-0.5">
+                    No Calendar access — meetings for this rep's leads are skipped and flagged for manual scheduling. Reconnect to fix.
+                  </p>
+                )}
               </div>
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Reconnect (refresh token/scopes) */}
+                <button
+                  onClick={() => handleReconnect(acct)}
+                  disabled={!!acting}
+                  title="Reconnect — refreshes token and picks up newly added scopes (e.g. Calendar)"
+                  className="p-1.5 rounded-lg text-indigo-400 hover:bg-indigo-50 transition-all disabled:opacity-50">
+                  {acting === acct.id + '_reconnect' ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                </button>
+
                 {/* Auto-send toggle */}
                 <button
                   onClick={() => {

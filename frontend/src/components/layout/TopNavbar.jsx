@@ -3,6 +3,7 @@ import { Bell, CheckCircle2, ChevronDown, LogOut, Menu, Settings as SettingsIcon
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import ApplicationStore from '../../utils/ApplicationStore'
+import { GetCurrentUserService, LogoutService } from '../../services/ApiService'
 
 const pageTitles = {
   '/dashboard':      { title: 'Dashboard',          sub: 'Pipeline overview & key metrics' },
@@ -31,13 +32,30 @@ const dummyNotifications = [
 
 export default function TopNavbar({ onMenuClick, sidebarOpen }) {
   const location = useLocation()
-  const storage = ApplicationStore().getStorage("userDetails") || {};
-  const userDetails = storage.userDetails || {};
+  const cachedDetails = (ApplicationStore().getStorage("userDetails") || {}).userDetails || {};
+  const [userDetails, setUserDetails] = useState(cachedDetails)
   const email = userDetails.email || "admin@RDL Sales .io";
   const name = email.split('@')[0];
   const initials = name.substring(0, 2).toUpperCase();
   const isSuperAdmin = userDetails.userRole === "Admin";
   const navigate = useNavigate()
+
+  // The cached profile snapshot (sessionStorage) is written once at login and can drift
+  // from the actual session — e.g. logging in as a different account in another tab
+  // shares the same auth cookie but not this tab's cached display. Refresh against the
+  // live session on mount so the badge/role shown here can never lie about who — and
+  // what permissions — the current requests are actually running as.
+  useEffect(() => {
+    GetCurrentUserService(
+      (data) => {
+        const fresh = { ...cachedDetails, id: data.id, email: data.email, userRole: data.is_superuser ? "Admin" : "User" }
+        setUserDetails(fresh)
+        const existing = ApplicationStore().getStorage("userDetails") || {}
+        ApplicationStore().setStorage("userDetails", { ...existing, userDetails: fresh })
+      },
+      () => {}
+    )
+  }, [])
   const page = pageTitles[location.pathname] || { title: location.pathname.replace('/', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Dashboard', sub: '' }
 
   const [showNotifications, setShowNotifications] = useState(false)
@@ -81,7 +99,10 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
   }
 
   const handleSignOut = () => {
-    navigate('/login')
+    const goToLogin = () => { ApplicationStore().clearStorage(); navigate('/login') }
+    // Revoke the refresh token and clear auth cookies server-side — without this the
+    // access/refresh token cookies stay valid and this browser remains signed in.
+    LogoutService(null, goToLogin, goToLogin)
   }
 
   return (

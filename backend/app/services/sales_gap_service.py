@@ -228,14 +228,24 @@ _STOP_WORDS = {
 }
 
 
+def _singularize(word: str) -> str:
+    """Strip a simple trailing plural 's' (sensors -> sensor). Applied identically to both
+    product names and customer text, so it only affects matching consistency, never
+    customer-facing output — safe even for acronyms like 'gprs' -> 'gpr'."""
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _product_keywords(name: str) -> list[str]:
     """
     Extract meaningful tokens from a product name or query text.
     Minimum length is 2 so short but meaningful identifiers like '4g', 'ai',
-    'dc', 'ac' are kept. Common stop words are excluded.
+    'dc', 'ac' are kept. Common stop words are excluded. Plurals are singularized
+    so "sensors" still matches a catalog entry named "... Sensor".
     """
     return [
-        w for w in re.split(r"\W+", name.lower())
+        _singularize(w) for w in re.split(r"\W+", name.lower())
         if len(w) >= 2 and w not in _STOP_WORDS
     ]
 
@@ -252,9 +262,13 @@ def _llm_identify_product(
         from langchain_core.messages import HumanMessage, SystemMessage
         from app.core.config import settings
 
+        # Same length-4 floor as Phase 1 — excludes overly generic/short catalog entries
+        # (e.g. a product literally named "RDL") that would otherwise spuriously match
+        # almost any customer email just because the company name appears in it.
+        eligible = [p for p in products if len(p.name) >= 4]
         catalog_lines = "\n".join(
             f"- {p.name} (Order Code: {p.order_code or 'N/A'})"
-            for p in products[:60]
+            for p in eligible[:60]
         )
         from google.api_core.exceptions import PermissionDenied, ResourceExhausted
         _base = dict(temperature=0, max_output_tokens=80, max_retries=0)
@@ -295,6 +309,53 @@ def _llm_identify_product(
     return None, None
 
 
+def _phase1_matches(products: list, text: str) -> list:
+    """Exact phrase / order-code substring matches, deduplicated by name (longest name first)."""
+    text_lower = text.lower()
+    # Strip markdown/punctuation for cleaner matching. `+` collapses runs of
+    # whitespace/punctuation (e.g. a hard line-wrap "\r\n" inside a product name) into a
+    # single space, so exact-phrase matching isn't broken by email line-wrapping.
+    text_clean = re.sub(r"[^a-z0-9]+", " ", text_lower)
+    # Alphanumeric-only version for order-code matching (handles "RDL 891" → "rdl891")
+    text_alphanum = re.sub(r"[^a-z0-9]", "", text_lower)
+
+    matches = []
+    for p in sorted(products, key=lambda x: -len(x.name)):
+        if len(p.name) < 4:
+            continue
+        name_clean = re.sub(r"[^a-z0-9]+", " ", p.name.lower())
+        # Order code must have ≥3 alphanumeric chars to be valid for matching
+        # (guards against placeholder values like "-" matching bullet points)
+        code_alphanum = re.sub(r"[^a-z0-9]", "", (p.order_code or "").lower())
+        code_match = len(code_alphanum) >= 3 and code_alphanum in text_alphanum
+        if name_clean in text_clean or p.name.lower() in text_lower or code_match:
+            matches.append(p)
+
+    seen_names: set[str] = set()
+    unique = []
+    for p in matches:
+        if p.name not in seen_names:
+            seen_names.add(p.name)
+            unique.append(p)
+    return unique
+
+
+def match_exact_product(db: Session, text: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Cheap, LLM-free Phase-1 exact-match check (no keyword/LLM fallback).
+
+    Used by the email workflow to check whether the *current* message explicitly names a
+    product before falling back to thread-level product context — an explicit mention
+    always overrides an inherited one.
+    """
+    from app.models.product import Product
+    products = db.query(Product).filter(Product.is_active == True).all()
+    unique = _phase1_matches(products, text)
+    if not unique:
+        return None, None
+    return str(unique[0].id), unique[0].name
+
+
 def detect_product(
     db: Session, text: str
 ) -> tuple[Optional[str], Optional[str], str]:
@@ -313,43 +374,16 @@ def detect_product(
     """
     from app.models.product import Product
     products = db.query(Product).filter(Product.is_active == True).all()
-    text_lower = text.lower()
-    # Strip markdown/punctuation for cleaner Phase 1 matching
-    text_clean = re.sub(r"[^a-z0-9 ]", " ", text_lower)
-    # Alphanumeric-only version for order-code matching (handles "RDL 891" → "rdl891")
-    text_alphanum = re.sub(r"[^a-z0-9]", "", text_lower)
 
     # ── Phase 1: exact phrase / order-code match (HIGH confidence) ───────────
-    # Check multiple matches — if >1 distinct product names match, return the
-    # first but flag as multi-product so the caller can widen the RAG filter.
-    phase1_matches = []
-    for p in sorted(products, key=lambda x: -len(x.name)):
-        if len(p.name) < 4:
-            continue
-        name_clean = re.sub(r"[^a-z0-9 ]", " ", p.name.lower())
-        # Order code must have ≥3 alphanumeric chars to be valid for matching
-        # (guards against placeholder values like "-" matching bullet points)
-        code_alphanum = re.sub(r"[^a-z0-9]", "", (p.order_code or "").lower())
-        code_match = len(code_alphanum) >= 3 and code_alphanum in text_alphanum
-        if name_clean in text_clean or p.name.lower() in text_lower or code_match:
-            phase1_matches.append(p)
-
-    if phase1_matches:
-        # Deduplicate by name (RDL838 and RDL891 share the same name)
-        seen_names: set[str] = set()
-        unique = []
-        for p in phase1_matches:
-            if p.name not in seen_names:
-                seen_names.add(p.name)
-                unique.append(p)
-
+    unique = _phase1_matches(products, text)
+    if unique:
         if len(unique) == 1:
             logger.info(f"[PRODUCT DETECT] Exact match: {unique[0].name!r}")
-            return str(unique[0].id), unique[0].name, "high"
-
-        # Multiple distinct products — return first but log the ambiguity
-        names = [p.name for p in unique]
-        logger.info(f"[PRODUCT DETECT] Multi-product match: {names} — returning first")
+        else:
+            # Multiple distinct products matched — return first but log the ambiguity
+            # so the caller can widen the RAG filter if needed.
+            logger.info(f"[PRODUCT DETECT] Multi-product match: {[p.name for p in unique]} — returning first")
         return str(unique[0].id), unique[0].name, "high"
 
     # ── Phase 2: keyword overlap (LOW confidence) ─────────────────────────────

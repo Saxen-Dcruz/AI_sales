@@ -14,6 +14,10 @@ class KnowledgeEntryUpdate(BaseModel):
     content: Optional[str] = None
 
 
+class ChunkUpdate(BaseModel):
+    content: str
+
+
 class KnowledgeEntryOut(BaseModel):
     id: UUID
     product_id: UUID

@@ -179,6 +179,33 @@ def update_coverage_score(db: Session, product_id_str: str) -> None:
         logger.warning(f"[KNOWLEDGE] Coverage score update failed: {e}")
 
 
+def get_chunk(db: Session, chunk_id: str) -> dict:
+    from sqlalchemy import text
+    row = db.execute(text(
+        "SELECT cmetadata, document FROM langchain_pg_embedding WHERE id = :id"
+    ), {"id": chunk_id}).fetchone()
+    if not row:
+        raise ValueError("Chunk not found")
+    return {"metadata": row.cmetadata or {}, "document": row.document}
+
+
+def update_chunk(db: Session, chunk_id: str, content: str) -> None:
+    existing = get_chunk(db, chunk_id)
+    doc = Document(page_content=content, metadata=existing["metadata"])
+    vs = _get_vectorstore()
+    vs.delete(ids=[chunk_id])
+    vs.add_documents([doc], ids=[chunk_id])
+    logger.info(f"[KNOWLEDGE] Re-embedded chunk {chunk_id}")
+    _flush_rag_cache()
+
+
+def delete_chunk(db: Session, chunk_id: str) -> None:
+    get_chunk(db, chunk_id)  # raises ValueError if missing
+    _get_vectorstore().delete(ids=[chunk_id])
+    logger.info(f"[KNOWLEDGE] Deleted chunk {chunk_id}")
+    _flush_rag_cache()
+
+
 def list_entries(db: Session, product_id: UUID) -> list[ProductKnowledge]:
     return (
         db.query(ProductKnowledge)

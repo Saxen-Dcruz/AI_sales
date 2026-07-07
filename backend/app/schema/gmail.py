@@ -39,6 +39,7 @@ class EmailOut(BaseModel):
     detected_product_id: Optional[str] = None
     detected_product_name: Optional[str] = None
     needs_human: bool
+    is_read: bool = False
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
     account_id: Optional[UUID] = None
