@@ -243,6 +243,21 @@ def exchange_code_and_save(
     return account
 
 
+def _restore_status_after_unarchive(email) -> "EmailStatus":
+    """Best-effort status to restore an ARCHIVED email to, since the pre-archive
+    status wasn't preserved. Inferred from signals still on the row:
+    tracked/opened → it was sent (REPLIED); has an undelivered AI draft →
+    DRAFT_READY; flagged for a human → PENDING_HUMAN; otherwise NEW."""
+    from app.models.communication import EmailStatus
+    if email.opened_at or email.open_count:
+        return EmailStatus.REPLIED
+    if email.ai_draft:
+        return EmailStatus.DRAFT_READY
+    if email.needs_human:
+        return EmailStatus.PENDING_HUMAN
+    return EmailStatus.NEW
+
+
 def _relink_orphaned_emails(db: Session, account: "EmailAccount") -> int:
     """
     Re-link emails that have account_email matching this account but account_id=NULL.
@@ -250,13 +265,15 @@ def _relink_orphaned_emails(db: Session, account: "EmailAccount") -> int:
     Also un-archives emails that were archived during the delete if the account is re-added.
     """
     from app.models.communication import Email, EmailStatus
-    updated = db.query(Email).filter(
+    matches = db.query(Email).filter(
         Email.account_email == account.email_address,
         Email.account_id.is_(None),
-    ).update(
-        {"account_id": account.id},
-        synchronize_session=False,
-    )
+    ).all()
+    for email in matches:
+        email.account_id = account.id
+        if email.status == EmailStatus.ARCHIVED:
+            email.status = _restore_status_after_unarchive(email)
+    updated = len(matches)
     if updated:
         logger.info(f"[EMAIL ACCOUNTS] Re-linked {updated} orphaned emails to {account.email_address}")
         db.commit()

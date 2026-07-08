@@ -349,10 +349,14 @@ def list_rag_gaps(
     else:
         _allowed_accts = None
 
+    # No status filter beyond excluding IGNORED (non-sales housekeeping state):
+    # an unresolved gap is still a real knowledge gap regardless of what later
+    # happened to the email it was found on (e.g. archived), so status isn't a
+    # reliable signal for whether the gap still needs filling.
     q = db.query(Email).filter(
         Email.label == EmailLabel.SALES,
         Email.followup_gaps.isnot(None),
-        Email.status.in_([EmailStatus.DRAFT_READY, EmailStatus.REPLIED]),
+        Email.status != EmailStatus.IGNORED,
     )
     if _allowed_accts is not None:
         q = q.filter(Email.account_id.in_(_allowed_accts))
