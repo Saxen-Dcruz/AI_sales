@@ -246,13 +246,14 @@ def exchange_code_and_save(
 def _restore_status_after_unarchive(email) -> "EmailStatus":
     """Best-effort status to restore an ARCHIVED email to, since the pre-archive
     status wasn't preserved. Inferred from signals still on the row:
-    tracked/opened → it was sent (REPLIED); has an undelivered AI draft →
-    DRAFT_READY; flagged for a human → PENDING_HUMAN; otherwise NEW."""
+    tracked/opened → it was sent (REPLIED); flagged for a human →
+    PENDING_HUMAN; otherwise NEW — deliberately not DRAFT_READY even if an
+    AI draft is present, so a batch of stale reconnected drafts doesn't flood
+    the pending-approval queue. The email (and any unresolved knowledge gap
+    on it) is still visible/unarchived; a rep can act on it manually."""
     from app.models.communication import EmailStatus
     if email.opened_at or email.open_count:
         return EmailStatus.REPLIED
-    if email.ai_draft:
-        return EmailStatus.DRAFT_READY
     if email.needs_human:
         return EmailStatus.PENDING_HUMAN
     return EmailStatus.NEW
