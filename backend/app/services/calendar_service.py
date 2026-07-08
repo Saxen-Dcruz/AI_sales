@@ -127,12 +127,14 @@ def create_meeting(
     trigger: EventTrigger = EventTrigger.MANUAL,
     lead_id: Optional[UUID] = None,
     deal_id: Optional[UUID] = None,
-    send_invite_email: bool = True,
+    send_invite_email: bool = False,
     gmail_svc=None,
 ) -> CalendarEvent:
     """
     Create a Google Calendar event with a GMeet link.
-    Persists to DB, optionally sends an email invite to the attendee.
+    Google sends the attendee its own invite email (sendUpdates="all" below); the
+    optional send_invite_email flag additionally sends our own "Meeting Confirmed"
+    email and should stay off by default to avoid double-emailing the attendee.
     """
     end_time = start_time + timedelta(minutes=duration_minutes)
 

@@ -56,7 +56,6 @@ def _create_expert_gmeet(db: Session, session: VoiceSession) -> Optional[str]:
             owner_id     = session.owner_id,
             duration_minutes = 30,
             lead_id      = session.lead_id,
-            send_invite_email = True,
         )
         return event.meet_link
     except Exception as exc:
