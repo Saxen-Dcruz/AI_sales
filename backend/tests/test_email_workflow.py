@@ -1422,6 +1422,7 @@ def test_full_graph_low_confidence_sends_clarification(db):
     assert result is not None
     assert result.status == EmailStatus.REPLIED
     assert result.ai_draft is not None
+    _delete_rows(db, email_ids=[result.id])
 
 
 # ── Edge cases: full graph — has gaps → hold draft ────────────────────────────
@@ -1473,6 +1474,7 @@ def test_full_graph_with_gaps_holds_draft(db):
     assert result.status == EmailStatus.DRAFT_READY
     assert result.needs_human is True
     assert result.followup_gaps is not None and len(result.followup_gaps) > 0
+    _delete_rows(db, email_ids=[result.id])
 
 
 # ── Edge cases: node_try_schedule_meeting ─────────────────────────────────────
