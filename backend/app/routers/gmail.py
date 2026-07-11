@@ -1413,7 +1413,7 @@ async def gmail_pubsub_webhook(
     # dozens of messages (Gmail API + LLM calls) and previously blocked the event
     # loop, or starved other sync endpoints, for as long as it took.
     loop = asyncio.get_running_loop()
-    processed = await loop.run_in_executor(_webhook_executor, process_pubsub_notification, db, payload, loop)
+    processed = await loop.run_in_executor(_webhook_executor, process_pubsub_notification, db, payload)
     return {"status": "ok", "processed": processed}
 
 

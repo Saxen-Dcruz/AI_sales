@@ -149,6 +149,36 @@ async def lifespan(app: FastAPI):
         logger.info("[GMAIL WEBHOOK] GMAIL_PUBSUB_TOPIC not set — Gmail push notifications disabled")
         logger.info("[GMAIL WEBHOOK] Use POST /gmail/sync to process emails manually")
 
+    # This process runs with WEB_CONCURRENCY>1 uvicorn workers (see Dockerfile), each
+    # with its own in-memory ConnectionManager (app/core/socket_manager.py). The webhook
+    # request that processes a new email can land on a different worker than the one
+    # holding the owner's live WebSocket — so the "new_email" event is published to Redis
+    # (see _notify_owner_async in gmail_webhook_service.py) and every worker subscribes
+    # here, delivering it locally if it happens to hold that owner's connection.
+    async def _gmail_redis_listener():
+        import redis.asyncio as _redis
+        from app.services.gmail_webhook_service import GMAIL_NEW_EMAIL_CHANNEL
+        from app.core.socket_manager import manager as _socket_manager
+        _r = _redis.from_url(f"redis://{REDIS_HOST}:{REDIS_PORT}/0", decode_responses=True)
+        pubsub = _r.pubsub()
+        await pubsub.subscribe(GMAIL_NEW_EMAIL_CHANNEL)
+        logger.info(f"[GMAIL WEBHOOK] Subscribed to '{GMAIL_NEW_EMAIL_CHANNEL}'")
+        try:
+            async for msg in pubsub.listen():
+                if msg["type"] != "message":
+                    continue
+                try:
+                    payload = json.loads(msg["data"])
+                    await _socket_manager.notify_user(payload["owner_id"], payload["message"])
+                except Exception as exc:
+                    logger.warning(f"[GMAIL WEBHOOK] Redis event handling error: {exc}")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await _r.aclose()
+
+    gmail_redis_task = asyncio.create_task(_gmail_redis_listener())
+
     # ── WhatsApp Phase 2B: 24h window re-engagement (every 30 min) ───────────
     async def _wa_reengagement_loop():
         import asyncio as _asyncio
@@ -247,6 +277,12 @@ async def lifespan(app: FastAPI):
             await watch_task
         except asyncio.CancelledError:
             pass
+
+    gmail_redis_task.cancel()
+    try:
+        await gmail_redis_task
+    except asyncio.CancelledError:
+        pass
 
     _wa_reeng_task.cancel()
     try:

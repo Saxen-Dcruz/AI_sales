@@ -246,33 +246,38 @@ def verify_pubsub_token(auth_header: str, expected_audience: str) -> bool:
         return False
 
 
-def _notify_owner_async(owner_id, message: dict, loop=None) -> None:
-    """Fire-and-forget push to the account owner's open WebSocket(s), if any.
-    process_pubsub_notification runs on a _webhook_executor worker thread (see
-    app/routers/gmail.py), not the asyncio event loop thread, so
-    asyncio.get_running_loop() raises here — the caller must pass the loop it
-    captured back on the event-loop thread so we can schedule onto it via
-    run_coroutine_threadsafe instead.
+GMAIL_NEW_EMAIL_CHANNEL = "gmail:new_email"
+
+
+def _notify_owner_async(owner_id, message: dict) -> None:
+    """Fan out a "new_email" event to every worker process via Redis pub/sub.
+
+    This runs on a _webhook_executor worker thread (see app/routers/gmail.py),
+    and the backend runs with multiple uvicorn worker *processes*
+    (WEB_CONCURRENCY, see Dockerfile) — the owner's live WebSocket connection
+    lives in the in-memory ConnectionManager of whichever process accepted it,
+    which is very likely a different process than the one handling this
+    webhook request. Publishing over Redis (instead of calling
+    manager.notify_user directly) lets every process's own subscriber loop
+    (see _gmail_redis_listener in app/main.py) deliver it locally to whichever
+    one actually holds the connection.
     """
-    import asyncio
-    from app.core.socket_manager import manager
+    import json
+    from app.core.redis import get_sync_redis
     try:
-        if loop is not None:
-            asyncio.run_coroutine_threadsafe(manager.notify_user(owner_id, message), loop)
-        else:
-            asyncio.get_running_loop().create_task(manager.notify_user(owner_id, message))
-    except RuntimeError:
-        pass  # no running loop (e.g. tests, manual scripts) — skip silently
+        get_sync_redis().publish(
+            GMAIL_NEW_EMAIL_CHANNEL,
+            json.dumps({"owner_id": str(owner_id), "message": message}),
+        )
+    except Exception:
+        logger.warning("[GMAIL WEBHOOK] Failed to publish new_email event", exc_info=True)
 
 
-def process_pubsub_notification(db: Session, payload: dict, loop=None) -> int:
+def process_pubsub_notification(db: Session, payload: dict) -> int:
     """
     Handle one Pub/Sub push payload — decode it, fetch new messages via history API,
     run each through the email workflow.
     Returns the number of new messages processed.
-
-    `loop`: the asyncio event loop captured on the webhook route before this was
-    handed off to a worker thread — see _notify_owner_async.
     """
     from app.services.gmail_service import get_gmail_service
     from app.services.email_account_service import get_gmail_service_for_account
@@ -378,7 +383,7 @@ def process_pubsub_notification(db: Session, payload: dict, loop=None) -> int:
                 "type": "new_email",
                 "account": account.email_address,
                 "count": processed,
-            }, loop)
+            })
 
         logger.info(f"[GMAIL WEBHOOK] {email_address}: {processed}/{len(message_ids)} messages processed")
         return processed

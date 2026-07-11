@@ -2270,57 +2270,43 @@ def test_fetch_new_message_ids_pagination():
     assert "m2" in ids
 
 
-# ── _notify_owner_async: must cross from the webhook worker thread ────────────
+# ── _notify_owner_async: must fan out across worker processes ─────────────────
 #
-# process_pubsub_notification runs on _webhook_executor (a plain ThreadPoolExecutor,
-# see app/routers/gmail.py), not the asyncio event loop thread. asyncio.get_running_loop()
-# raises RuntimeError on a worker thread, so without the loop being threaded through
-# and scheduled via run_coroutine_threadsafe, the "new_email" push was silently
-# dropped by the blanket `except RuntimeError: pass` — the email would land in the
-# DB correctly but the frontend would never see it without a manual refresh.
+# The backend runs with WEB_CONCURRENCY>1 uvicorn worker *processes* (see
+# Dockerfile), each with its own in-memory ConnectionManager. A webhook request
+# can land on a different process than the one holding the owner's live
+# WebSocket, so calling manager.notify_user() directly in-process only reaches
+# a live connection about half the time. Publishing over Redis instead lets
+# every process's listener (_gmail_redis_listener in app/main.py) deliver it
+# locally if it happens to hold that owner's connection.
 
-def test_notify_owner_async_delivers_across_threads():
-    import asyncio
-    import threading
-    from unittest.mock import AsyncMock
-    from app.services.gmail_webhook_service import _notify_owner_async
-    from app.core.socket_manager import manager
+def test_notify_owner_async_publishes_to_redis():
+    from unittest.mock import MagicMock
+    import json as _j
+    from app.services.gmail_webhook_service import _notify_owner_async, GMAIL_NEW_EMAIL_CHANNEL
 
-    async def _runner():
-        loop = asyncio.get_running_loop()
-        with patch.object(manager, "notify_user", AsyncMock()) as mock_notify:
-            def _from_worker_thread():
-                _notify_owner_async("owner-1", {"type": "new_email"}, loop)
-            t = threading.Thread(target=_from_worker_thread)
-            t.start()
-            t.join(timeout=5)
-            # run_coroutine_threadsafe just schedules the coroutine onto this
-            # loop — give it a turn to actually execute.
-            await asyncio.sleep(0.05)
-        mock_notify.assert_awaited_once_with("owner-1", {"type": "new_email"})
+    fake_redis = MagicMock()
+    with patch("app.core.redis.get_sync_redis", return_value=fake_redis):
+        _notify_owner_async("owner-1", {"type": "new_email", "account": "a@b.com", "count": 1})
 
-    asyncio.run(_runner())
+    fake_redis.publish.assert_called_once()
+    channel, raw = fake_redis.publish.call_args[0]
+    assert channel == GMAIL_NEW_EMAIL_CHANNEL
+    assert _j.loads(raw) == {
+        "owner_id": "owner-1",
+        "message": {"type": "new_email", "account": "a@b.com", "count": 1},
+    }
 
 
-def test_notify_owner_async_no_loop_from_worker_thread_is_silent():
-    """Without a loop, calling off the event loop thread must not raise —
-    this is the pre-fix behavior (silently dropped), kept safe as a fallback
-    for callers with no captured loop (e.g. tests, manual scripts)."""
-    import threading
+def test_notify_owner_async_redis_failure_is_silent():
+    """A Redis outage must not blow up email processing — the push is best-effort."""
+    from unittest.mock import MagicMock
     from app.services.gmail_webhook_service import _notify_owner_async
 
-    errors = []
-
-    def _from_worker_thread():
-        try:
-            _notify_owner_async("owner-1", {"type": "new_email"})
-        except Exception as e:
-            errors.append(e)
-
-    t = threading.Thread(target=_from_worker_thread)
-    t.start()
-    t.join(timeout=5)
-    assert errors == []
+    fake_redis = MagicMock()
+    fake_redis.publish.side_effect = ConnectionError("redis down")
+    with patch("app.core.redis.get_sync_redis", return_value=fake_redis):
+        _notify_owner_async("owner-1", {"type": "new_email"})  # must not raise
 
 
 def test_verify_pubsub_token_no_audience():
