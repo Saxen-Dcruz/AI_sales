@@ -1,5 +1,5 @@
 # --- STAGE 1: Local Development ---
-FROM node:20-alpine AS development
+FROM node:26-alpine AS development
 WORKDIR /app
 # Install dependencies
 COPY package*.json ./
@@ -10,7 +10,7 @@ COPY . .
 CMD ["npm", "run", "dev"]
 
 # --- STAGE 2: Production Build ---
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
