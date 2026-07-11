@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import {
-  ResponsiveContainer, AreaChart, Area, LineChart, Line,
+  ResponsiveContainer, AreaChart, Area,
   XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar
 } from 'recharts'
 

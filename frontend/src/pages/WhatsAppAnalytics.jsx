@@ -7,13 +7,12 @@ import {
 import {
   MessageCircle, TrendingUp, ShieldAlert, Zap, Clock,
   Users, CheckCircle, AlertCircle, BarChart2,
-  RefreshCw, Package, ChevronRight
+  RefreshCw, Package, BrainCircuit
 } from 'lucide-react'
 import { GetWhatsAppAnalyticsService, GetWhatsAppConversationService } from '../services/ApiService'
 
 // ── Color palettes ─────────────────────────────────────────────────────────────
 const WA_GREEN   = '#25D366'
-const WA_DARK    = '#128C7E'
 
 const LABEL_COLORS = {
   Sales:         '#25D366',
@@ -51,10 +50,11 @@ const TOOLTIP_STYLE = {
 }
 
 const TABS = [
-  { key: 'overview',   label: 'Overview',   icon: BarChart2  },
-  { key: 'pipeline',   label: 'Pipeline',   icon: TrendingUp },
-  { key: 'customers',  label: 'Customers',  icon: Users      },
-  { key: 'products',   label: 'Products',   icon: Package    },
+  { key: 'overview',   label: 'Overview',   icon: BarChart2   },
+  { key: 'pipeline',   label: 'Pipeline',   icon: TrendingUp  },
+  { key: 'customers',  label: 'Customers',  icon: Users       },
+  { key: 'products',   label: 'Products',   icon: Package     },
+  { key: 'knowledge',  label: 'Knowledge',  icon: BrainCircuit},
 ]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -261,9 +261,6 @@ function TabPipeline({ data, loading }) {
         .sort((a, b) => b.value - a.value)
     : []
 
-  const slaTotal  = (data?.sla_breaches || 0)
-  const autoTotal = data?.total_sales || 0
-
   return (
     <div className="space-y-4">
       {/* KPI strip */}
@@ -388,7 +385,7 @@ function TabKnowledge({ data, loading }) {
                 <p className="text-xs font-medium text-red-700">Unresolved Gaps</p>
                 <p className="text-2xl font-bold text-red-800">{fmt(unresolvedEst)}</p>
                 <p className="text-xs text-red-600">
-                  Go to WhatsApp Inbox → filter "Draft Ready" to fill these in
+                  Go to WhatsApp Inbox → filter &quot;Draft Ready&quot; to fill these in
                 </p>
               </div>
             </div>
@@ -454,7 +451,7 @@ function TabCustomers({ data, loading }) {
             <p className="text-sm">No inbound messages yet</p>
           </div>
         )}
-        {senders.map((s, i) => (
+        {senders.map((s) => (
           <button
             key={s.from_number}
             onClick={() => setSelectedPhone(s.from_number)}
@@ -704,6 +701,7 @@ export default function WhatsAppAnalytics() {
               {activeTab === 'pipeline'  && <TabPipeline  data={data} loading={isLoading} />}
               {activeTab === 'customers' && <TabCustomers data={data} loading={isLoading} />}
               {activeTab === 'products'  && <TabProducts  data={data} loading={isLoading} />}
+              {activeTab === 'knowledge' && <TabKnowledge data={data} loading={isLoading} />}
             </>
           )}
         </div>

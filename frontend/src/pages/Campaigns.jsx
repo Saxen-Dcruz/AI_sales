@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Megaphone, Plus, Edit2, Trash2, Play, Pause, Users,
-  Send, MessageSquare, CheckCircle, X, Zap, Target, ToggleLeft, ToggleRight
+  Send, MessageSquare, X, Zap, ToggleLeft, ToggleRight
 } from 'lucide-react'
 import {
   GetCampaignsService, CreateCampaignService, UpdateCampaignService,
@@ -217,7 +217,7 @@ export default function Campaigns() {
                       { icon: Users, label: 'Contacts', val: c.contact_count, color: '#6172f3' },
                       { icon: Send, label: 'Sent', val: c.sent_count, color: '#10b981' },
                       { icon: MessageSquare, label: 'Replied', val: c.replied_count, color: '#f59e0b' },
-                    ].map(({ icon: Icon, label, val, color }) => (
+                    ].map(({ label, val, color }) => (
                       <div key={label} className="text-center p-2 rounded-xl bg-gray-50">
                         <p className="text-lg font-black" style={{ color }}>{val}</p>
                         <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide">{label}</p>

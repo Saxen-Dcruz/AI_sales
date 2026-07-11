@@ -2,13 +2,12 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
   Mic, Radio, ThumbsUp, AlertCircle, Clock, HelpCircle,
-  TrendingUp, Target, MessageCircle, Mail, Phone,
-  ArrowUpRight, CheckCircle, XCircle, BarChart2,
+  Phone,
+  CheckCircle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
   CartesianGrid, Cell, PieChart, Pie, Legend, LineChart, Line,
-  RadialBarChart, RadialBar, FunnelChart, Funnel, LabelList,
 } from 'recharts'
 import { GetVoiceAnalyticsService, GetCallIntelligenceService } from '../services/ApiService'
 
@@ -120,7 +119,6 @@ export default function VoiceAnalytics() {
   const vp   = intel?.voice_vs_phone ?? {}
   const qi   = intel?.voice_quality ?? {}
 
-  const funnelMax = cf.total_calls || 1
   const funnelSteps = [
     { label: 'Total calls received', value: cf.total_calls, pct: 100, color: FUNNEL_COLORS[0] },
     { label: 'Calls with transcript', value: cf.with_transcript, pct: cf.total_calls ? cf.with_transcript / cf.total_calls * 100 : 0, sub: `${cf.transcript_rate ?? 0}%`, color: FUNNEL_COLORS[1] },

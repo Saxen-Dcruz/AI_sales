@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, ChevronRight, RefreshCw, ExternalLink,
   Video, Calendar, Clock, User, Zap, Brain, MousePointer, Shield, X,
-  CheckCircle, AlertCircle, CalendarDays, Briefcase, Tag, Link as LinkIcon,
-  Plus, Copy
+  CheckCircle, AlertCircle, CalendarDays, Briefcase, Tag,
+  Plus
 } from 'lucide-react'
 import {
   GetCalendarEventsService,

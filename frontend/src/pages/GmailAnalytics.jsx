@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, AlertCircle, BarChart2, Building2, CheckCircle, ChevronDown, ChevronRight, ChevronUp,
   Clock, DollarSign, Filter, Inbox, Mail, MailOpen, Package, RefreshCw,
-  Search, Shield, ShieldAlert, ShoppingCart, TrendingUp, Users, X, Zap,
+  Search, Shield, ShieldAlert, TrendingUp, Users, X, Zap,
   Kanban, Briefcase, Target, UserCheck,
 } from 'lucide-react'
 import {
@@ -1260,6 +1260,9 @@ export default function GmailAnalytics({ hideHeader = false }) {
     GetGmailAnalyticsService(s, acc || null, res => { setData(res); setLoading(false) }, () => setLoading(false))
   }
 
+  // `load` is redefined every render (not memoized) — including it here would
+  // re-run this on every render instead of only when since/activeAccount change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(since, activeAccount) }, [since, activeAccount])
 
   return (

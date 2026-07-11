@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Linkedin, UserPlus, Send, CheckCircle, MessageSquare,
   RefreshCw, Filter, ChevronDown, Search, Zap, Play,
-  Building2, MapPin, Tag, X, Clock, Users,
+  Building2, MapPin, Tag, X, Users,
 } from 'lucide-react'
 import {
   GetLinkedInOutreachService, GetLinkedInBudgetService,

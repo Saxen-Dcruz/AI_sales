@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Bell, Shield, Cpu, Key, Save, Mail, Plus,
-  CheckCircle, Trash2, Star, AlertCircle, RefreshCw, ToggleLeft, ToggleRight,
+  Bell, Cpu, Key, Save, Mail, Plus,
+  Trash2, Star, AlertCircle, RefreshCw, ToggleLeft, ToggleRight,
   Download
 } from 'lucide-react'
 import {
@@ -236,7 +236,7 @@ function EmailAccountsSection() {
                 )}
                 {!(acct.scopes || []).includes('https://www.googleapis.com/auth/calendar.events') && (
                   <p className="text-[11px] text-amber-600 mt-0.5">
-                    No Calendar access — meetings for this rep's leads are skipped and flagged for manual scheduling. Reconnect to fix.
+                    No Calendar access — meetings for this rep&apos;s leads are skipped and flagged for manual scheduling. Reconnect to fix.
                   </p>
                 )}
               </div>

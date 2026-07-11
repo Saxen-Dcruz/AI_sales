@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Container,
   Paper,
@@ -238,7 +238,10 @@ export default function AddProduct() {
       }
       hasLoadedRef.current = true
     }
-  }, [id, isEdit])
+    // applyProductData is redefined every render (not memoized) — including it here
+    // would re-run this load-on-mount effect every render instead of only on id/isEdit change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, isEdit, draftKey, navigate])
 
   const handleRestoreDraft = () => {
     if (pendingDraft) applyDraftData(pendingDraft)
@@ -1037,7 +1040,7 @@ export default function AddProduct() {
           <DialogTitle sx={{ fontWeight: 800 }}>Restore Unsaved Draft?</DialogTitle>
           <DialogContent>
             <Typography variant="body2" color="text.secondary">
-              We found a draft you didn't finish saving. Do you want to restore it into this form, or discard it permanently?
+              We found a draft you didn&apos;t finish saving. Do you want to restore it into this form, or discard it permanently?
             </Typography>
           </DialogContent>
           <DialogActions>

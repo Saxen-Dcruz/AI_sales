@@ -12,7 +12,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   AddProductKnowledgeService,
   DeleteProductChunkService,
-  DeleteProductKnowledgeService,
   GetProductEmbeddingsService,
   GetProductKnowledgeService,
   ShowOneProductService,
@@ -21,14 +20,6 @@ import {
 } from '../services/ApiService'
 
 const CATEGORIES = ['description', 'features', 'specification', 'product_knowledge', 'general']
-
-const CAT_COLOR = {
-  general: 'bg-gray-100 text-gray-600',
-  warranty: 'bg-blue-50 text-blue-700',
-  pricing: 'bg-emerald-50 text-emerald-700',
-  compatibility: 'bg-purple-50 text-purple-700',
-  technical: 'bg-amber-50 text-amber-700',
-}
 
 function EntryDialog({ open, entry, productId, onClose, onSaved }) {
   const isEdit = Boolean(entry)
@@ -272,15 +263,10 @@ export default function KnowledgeBase() {
     )
   }
 
+  // fetchAll is redefined every render (not memoized) — including it here would
+  // re-run this on every render instead of only when the product id changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll() }, [id])
-
-  const handleDelete = (entryId, content) => {
-    if (!window.confirm(`Delete this entry?\n\n"${content.slice(0, 80)}..."`)) return
-    DeleteProductKnowledgeService(id, entryId,
-      () => setEntries(prev => prev.filter(e => e.id !== entryId)),
-      (_s, err) => alert('Delete failed: ' + err)
-    )
-  }
 
   const handleEditChunk = (chunk) => {
     setEditingChunk(chunk)
@@ -301,7 +287,6 @@ export default function KnowledgeBase() {
   }
 
   const openAdd = () => { setEditingEntry(null); setDialogOpen(true) }
-  const openEdit = (entry) => { setEditingEntry(entry); setDialogOpen(true) }
   const onSaved = () => { setDialogOpen(false); fetchAll() }
 
   if (loading && !product) {

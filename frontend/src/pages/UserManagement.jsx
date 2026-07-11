@@ -4,7 +4,6 @@ import { Shield, Plus, Pencil, Key, X, Check, Loader2, Mail, Eye, EyeOff } from 
 import ApplicationStore from '../utils/ApplicationStore'
 import {
   ListUsersService, CreateUserService, UpdateUserService,
-  DeleteUserService,
 } from '../services/ApiService'
 
 function isSuperAdmin() {
@@ -54,8 +53,6 @@ function PasswordInput({ value, onChange, placeholder }) {
 }
 
 export default function UserManagement() {
-  if (!isSuperAdmin()) return <Navigate to="/dashboard" replace />
-
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null) // 'create' | 'edit' | 'password' | null
@@ -80,6 +77,8 @@ export default function UserManagement() {
   }
 
   useEffect(() => { fetchUsers() }, [])
+
+  if (!isSuperAdmin()) return <Navigate to="/dashboard" replace />
 
   const openCreate = () => {
     setForm({ email: '', password: '', is_superuser: false })

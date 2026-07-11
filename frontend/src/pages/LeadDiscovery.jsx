@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Search, Building2, Users, Globe, MapPin, Briefcase, Star,
-  ChevronRight, Plus, Filter, RefreshCw, Zap, CheckCircle,
-  ExternalLink, Tag, X, Target, Linkedin, Loader2,
+  Search, Building2, Users, Globe, MapPin, Briefcase,
+  ChevronRight, Plus, RefreshCw, Zap, CheckCircle,
+  ExternalLink, Tag, X, Linkedin, Loader2,
 } from 'lucide-react'
 import {
   RunDiscoverySearchService, GetProspectCompaniesService,
@@ -119,7 +119,7 @@ function ModalLoadingView({ keyword }) {
       <div className="text-center">
         <p className="text-white font-black text-base">Bot is scraping LinkedIn…</p>
         <p className="text-white/60 text-xs mt-1">
-          Searching for <span className="text-white font-semibold">"{keyword}"</span>
+          Searching for <span className="text-white font-semibold">&quot;{keyword}&quot;</span>
         </p>
       </div>
 
@@ -346,7 +346,7 @@ function ScrapingBanner({ keyword, elapsed, newCount, onDismiss }) {
               Scraping LinkedIn{dots}
             </p>
             <p className="text-white/70 text-sm mt-1">
-              Searching for <span className="text-white font-bold">"{keyword}"</span>
+              Searching for <span className="text-white font-bold">&quot;{keyword}&quot;</span>
             </p>
           </div>
 
@@ -551,6 +551,11 @@ export default function LeadDiscovery() {
       clearInterval(timerRef.current)
       clearInterval(pollRef.current)
     }
+    // Deliberately scoped to scraping?.startedAt only — loadContacts/stopScraping
+    // are recreated every render and `scraping` itself is updated by this same
+    // effect's poll (newCount), so depending on any of them would tear down and
+    // restart the 1s/15s intervals on every tick instead of once per scrape.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scraping?.startedAt])
 
   const stopScraping = () => {
@@ -677,7 +682,7 @@ export default function LeadDiscovery() {
           {lastSearch && (
             <div className="mt-3 p-3 bg-emerald-50 rounded-xl flex items-center gap-3 text-xs text-emerald-700">
               <CheckCircle size={14} />
-              Found {lastSearch.companies_found} companies and {lastSearch.contacts_found} contacts for "{lastSearch.search_query}"
+              Found {lastSearch.companies_found} companies and {lastSearch.contacts_found} contacts for &quot;{lastSearch.search_query}&quot;
             </div>
           )}
         </div>

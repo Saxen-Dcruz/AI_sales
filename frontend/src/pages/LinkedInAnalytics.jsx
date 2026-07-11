@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
-  CartesianGrid, FunnelChart, Funnel, LabelList, Cell,
+  CartesianGrid, Cell,
 } from 'recharts'
 import { GetLinkedInStatsService, GetLinkedInBudgetService } from '../services/ApiService'
 

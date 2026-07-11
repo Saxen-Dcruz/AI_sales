@@ -30,7 +30,7 @@ const dummyNotifications = [
   { id: 3, title: 'Weekly report ready', time: '2h ago', unread: false },
 ]
 
-export default function TopNavbar({ onMenuClick, sidebarOpen }) {
+export default function TopNavbar({ onMenuClick }) {
   const location = useLocation()
   const cachedDetails = (ApplicationStore().getStorage("userDetails") || {}).userDetails || {};
   const [userDetails, setUserDetails] = useState(cachedDetails)
@@ -55,6 +55,9 @@ export default function TopNavbar({ onMenuClick, sidebarOpen }) {
       },
       () => {}
     )
+    // cachedDetails is recomputed fresh every render (new object each time) — adding it
+    // here would re-run this on every render instead of once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const page = pageTitles[location.pathname] || { title: location.pathname.replace('/', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Dashboard', sub: '' }
 

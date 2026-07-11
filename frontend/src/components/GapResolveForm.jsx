@@ -56,7 +56,7 @@ export default function GapResolveForm({ gap, onResolve, onCancel, loading = fal
     setCategory(gap?.topic || 'general')
     setCustomCategory('')
     setAnswer('')
-  }, [gap?.question])
+  }, [gap?.question, gap?.product_id, gap?.topic])
 
   const effectiveCategory = category === '__other__' ? customCategory.trim() : category
   const canSubmit = answer.trim() && effectiveCategory && (category !== '__other__' || customCategory.trim())

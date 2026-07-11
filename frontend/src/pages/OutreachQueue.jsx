@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, CheckCircle, X, MessageSquare, Zap, RefreshCw,
-  ChevronDown, Filter, ThumbsUp, ThumbsDown, Eye, Edit3,
-  Building2, User, Clock, CornerDownRight, Inbox,
+  ChevronDown, Filter, ThumbsUp, ThumbsDown, Edit3,
+  Building2, User, CornerDownRight, Inbox,
 } from 'lucide-react'
 import {
   GetOutreachQueueService, ApproveOutreachService, SendOutreachService,

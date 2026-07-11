@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Target, Phone, Mail, BrainCircuit, TrendingUp,
-  ArrowUpRight, CheckCircle, AlertCircle, Clock,
-  Layers, Star, Zap, Users, Mic, MessageCircle,
+  ArrowUpRight, AlertCircle,
+  Layers, Mic,
   Activity, Radio, ThumbsUp, HelpCircle,
 } from 'lucide-react'
 import {

@@ -123,7 +123,7 @@ function CoverageBar({ score }) {
   )
 }
 
-function ProductCard({ product, onEdit, onKb, onToggle, onDelete, onView, onCopy }) {
+function ProductCard({ product, onToggle, onDelete, onView, onCopy }) {
   const isActive = product.status === 'Active'
   return (
     <motion.div

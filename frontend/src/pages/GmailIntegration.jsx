@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, MarkEmailReadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, MarkEmailReadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
 
 // ─── Account color palette — cycles through these for each connected account ─
@@ -328,12 +328,11 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
       (data) => setThreadMessages(data?.items || [email]),
       () => setThreadMessages([email])
     )
+    // Deliberately scoped to id/thread_id, not the whole `email` object — other
+    // fields on it change often (status, is_read, ...) without the thread needing
+    // a refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email.gmail_thread_id, email.id])
-
-  // The latest message in the thread — that's the one we act on (approve/send/etc)
-  const latestMessage = threadMessages.length > 1
-    ? threadMessages[threadMessages.length - 1]
-    : email
 
   // Reset draft body when the email changes (e.g. after gap-fill regeneration loads a new draft)
   useEffect(() => {
@@ -568,7 +567,7 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
               rows={10}
             />
             {editDraftBody !== email.ai_draft && (
-              <p className="text-[10px] text-gray-500 mt-1.5 italic">You've edited the draft — your changes will be sent on approve.</p>
+              <p className="text-[10px] text-gray-500 mt-1.5 italic">You&apos;ve edited the draft — your changes will be sent on approve.</p>
             )}
           </div>
         )}
@@ -626,7 +625,7 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                           )}
                           {resolved && gapObj.answer && (
                             <span className="text-[10px] text-emerald-600 italic truncate max-w-[200px]">
-                              "{gapObj.answer}"
+                              &quot;{gapObj.answer}&quot;
                             </span>
                           )}
                         </div>
@@ -1397,7 +1396,7 @@ export default function GmailIntegration() {
         (users) => {
           const ownerMap = {}
           ;(users || []).forEach(u => {
-            ;(u.gmail_accounts || []).forEach(a => {
+            (u.gmail_accounts || []).forEach(a => {
               ownerMap[a.email_address] = u.email
             })
           })
@@ -1411,7 +1410,6 @@ export default function GmailIntegration() {
   // Fetch global counts (needs_human + draft_ready) independently of current tab
   // so the badges are always accurate regardless of what tab is active.
   const fetchGlobalCounts = useCallback(() => {
-    const acctParam = activeAccount ? `&account_id=${activeAccount}` : ''
     GetGmailMessagesService({ needs_human: true, limit: 1, business_only: true, ...(activeAccount ? { account_id: activeAccount } : {}) },
       (d) => setGlobalNeedsReview(d?.total || 0), () => {})
     GetGmailMessagesService({ status: 'draft_ready', limit: 1, business_only: true, ...(activeAccount ? { account_id: activeAccount } : {}) },
@@ -1420,7 +1418,6 @@ export default function GmailIntegration() {
 
   const fetchEmails = useCallback(() => {
     setLoading(true)
-    const tab = TABS.find(t => t.key === activeTab) || TABS[0]
     const params = { page, limit: PAGE_SIZE }
     if (activeTab === 'needs_human') params.needs_human = true
     else if (activeTab === 'draft_ready') params.status = 'draft_ready'
@@ -1449,7 +1446,7 @@ export default function GmailIntegration() {
       },
       () => setLoading(false)
     )
-  }, [page, activeTab, activeAccount, filterDateFrom, filterDateTo, filterStatus])
+  }, [page, activeTab, activeAccount, filterDateFrom, filterDateTo, filterStatus, fetchGlobalCounts])
 
   useEffect(() => { fetchEmails() }, [fetchEmails])
   useEffect(() => { fetchGlobalCounts() }, [fetchGlobalCounts])

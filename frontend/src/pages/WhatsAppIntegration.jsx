@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  AlertCircle, Archive, CheckCircle, ChevronRight,
+  AlertCircle, Archive, CheckCircle,
   MessageCircle, MessageSquare, Phone, RefreshCw,
-  Search, Send, Tag, Users, X, Zap, Plus, Trash2,
-  ToggleLeft, ToggleRight, Settings
+  Search, Send, Tag, X, Zap, Plus, Trash2,
+  ToggleLeft, ToggleRight,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   GetWhatsAppMessagesService, GetWhatsAppMessageService,
   ApproveWhatsAppDraftService, DiscardWhatsAppDraftService,
   ResolveWhatsAppMessageService, ResolveWhatsAppGapService,
-  GetWhatsAppGapsService, SendWhatsAppMessageService,
+  SendWhatsAppMessageService,
   GetWhatsAppAnalyticsService, GetWhatsAppAccountsService,
   AddWhatsAppAccountService, UpdateWhatsAppAccountService,
   DeleteWhatsAppAccountService, SetPrimaryWhatsAppAccountService,
@@ -83,7 +83,6 @@ export default function WhatsAppIntegration() {
   const [composeOpen, setComposeOpen] = useState(false)
   const [composeData, setComposeData] = useState({ account_id: '', to_number: '', body: '' })
   const [draftEdit, setDraftEdit]     = useState('')
-  const [settingsTab, setSettingsTab] = useState('accounts')  // only 'accounts' for now
 
   const showToast = (msg, type = 'success') => setToast({ msg, type })
 
@@ -222,7 +221,7 @@ export default function WhatsAppIntegration() {
 
   useEffect(() => {
     if (msg) setDraftEdit(msg.ai_draft || '')
-  }, [msg?.id])
+  }, [msg])
 
   // ── Add account form state ────────────────────────────────────────────────────
 
@@ -683,7 +682,7 @@ export default function WhatsAppIntegration() {
               <div className="text-center py-12 text-gray-400">
                 <MessageCircle size={40} className="mx-auto mb-3 opacity-20" />
                 <p className="text-sm">No WhatsApp accounts connected</p>
-                <p className="text-xs mt-1">Click "Connect Account" to add your first WhatsApp Business number</p>
+                <p className="text-xs mt-1">Click &quot;Connect Account&quot; to add your first WhatsApp Business number</p>
               </div>
             )}
             {(accountsData?.items || []).map(acct => (
@@ -827,7 +826,7 @@ export default function WhatsAppIntegration() {
 
 // ── Gap Item Component ─────────────────────────────────────────────────────────
 
-function GapItem({ gap, index, onResolve, isPending }) {
+function GapItem({ gap, onResolve, isPending }) {
   const [answer, setAnswer] = useState('')
   if (gap.resolved) {
     return (

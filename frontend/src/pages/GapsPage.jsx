@@ -20,7 +20,7 @@ import GapResolveForm from '../components/GapResolveForm'
 function flattenEmailGaps(emailItems) {
   const rows = []
   for (const email of emailItems) {
-    ;(email.gaps || []).forEach((gap, idx) => {
+    (email.gaps || []).forEach((gap, idx) => {
       if (!gap.resolved) {
         rows.push({
           email_id:    email.email_id,
@@ -66,7 +66,7 @@ function flattenCallGaps(callItems) {
 function flattenWhatsAppGaps(waItems) {
   const rows = []
   for (const msg of waItems) {
-    ;(msg.gaps || []).forEach((gap, idx) => {
+    (msg.gaps || []).forEach((gap, idx) => {
       if (!gap.resolved) {
         rows.push({
           message_id:  msg.message_id,
@@ -170,7 +170,7 @@ export default function GapsPage() {
           <Box>
             <Typography variant="h4" fontWeight={800} color="text.primary">Knowledge Gaps</Typography>
             <Typography variant="body2" color="text.secondary">
-              {total} unresolved — questions the AI couldn't answer across Email, WhatsApp, and Calls
+              {total} unresolved — questions the AI couldn&apos;t answer across Email, WhatsApp, and Calls
             </Typography>
           </Box>
           <Tooltip title="Refresh">
