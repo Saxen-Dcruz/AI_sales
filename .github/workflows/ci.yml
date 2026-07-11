@@ -47,6 +47,56 @@ jobs:
         env:
           VITE_API_URL: https://example.invalid/api/v1/
 
+  backend-tests:
+    name: Backend · tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rdl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rdl_test
+      JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+      LIVEKIT_API_URL: http://localhost:7880
+      LIVEKIT_API_KEY: ci-dummy-key
+      LIVEKIT_API_SECRET: ci-dummy-secret
+      LIVEKIT_WS_URL: ws://localhost:7880
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install --default-timeout=1000 -r requirements.txt
+
+      # test_rag_eval.py and tests/load/ are standalone scripts meant to be run
+      # manually against real Gemini/LiveKit credentials (see their own docstrings)
+      # — they're not part of the regression gate and would just fail on missing keys.
+      - name: Run backend test suite
+        run: pytest tests/ --ignore=tests/test_rag_eval.py --ignore=tests/load -v
+
   build-images:
     name: Build image · ${{ matrix.service }}
     runs-on: ubuntu-latest

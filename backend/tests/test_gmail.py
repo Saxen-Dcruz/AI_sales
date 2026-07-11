@@ -2279,3 +2279,79 @@ def test_verify_pubsub_token_missing_header():
     """Missing Authorization header should fail when audience is configured."""
     from app.services.gmail_webhook_service import verify_pubsub_token
     assert verify_pubsub_token("", "https://example.com/webhook") is False
+
+
+# ── register_watch: stop()-then-retry on conflicting watch ────────────────────
+
+class _FakeHttpResp:
+    def __init__(self, status: int):
+        self.status = status
+        self.reason = "Bad Request"
+
+
+def test_register_watch_stops_and_retries_on_conflict():
+    """
+    Gmail rejects watch() with "Only one user push notification client allowed"
+    whenever it thinks a watch is already active on the mailbox — which happens
+    here every time we've lost track of watch_history_id (e.g. an earlier watch()
+    call also failed and was never persisted) and retry watch() without ever
+    calling stop() first. Without this fallback the account can never self-heal:
+    every future notification hits this same error and silently drops the email
+    instead of ever reaching history.list().
+    """
+    from googleapiclient.errors import HttpError
+    from app.services.gmail_webhook_service import register_watch
+
+    conflict = HttpError(
+        _FakeHttpResp(400),
+        b'{"error": {"message": "Only one user push notification client allowed '
+        b'per developer (call /stop then try again)"}}',
+    )
+
+    svc = MagicMock()
+    svc.users.return_value.watch.return_value.execute.side_effect = [
+        conflict,
+        {"historyId": "42", "expiration": "1999999999000"},
+    ]
+
+    account = MagicMock()
+    account.email_address = "watch-conflict@example.com"
+    db = MagicMock()
+
+    with (
+        patch("app.services.email_account_service.get_gmail_service_for_account", return_value=svc),
+        patch("app.services.gmail_service.ensure_labels_exist"),
+    ):
+        ok = register_watch(db, account, "projects/test/topics/gmail-push")
+
+    assert ok is True
+    svc.users.return_value.stop.assert_called_once_with(userId="me")
+    assert svc.users.return_value.watch.return_value.execute.call_count == 2
+    assert account.watch_history_id == "42"
+    db.commit.assert_called_once()
+
+
+def test_register_watch_other_http_error_does_not_call_stop():
+    """A conflict-unrelated HttpError (e.g. bad credentials) must not trigger
+    stop()+retry — only the specific 'already has an active watch' error should."""
+    from googleapiclient.errors import HttpError
+    from app.services.gmail_webhook_service import register_watch
+
+    auth_error = HttpError(_FakeHttpResp(401), b'{"error": {"message": "Invalid Credentials"}}')
+
+    svc = MagicMock()
+    svc.users.return_value.watch.return_value.execute.side_effect = auth_error
+
+    account = MagicMock()
+    account.email_address = "bad-token@example.com"
+    db = MagicMock()
+
+    with (
+        patch("app.services.email_account_service.get_gmail_service_for_account", return_value=svc),
+        patch("app.services.gmail_service.ensure_labels_exist"),
+    ):
+        ok = register_watch(db, account, "projects/test/topics/gmail-push")
+
+    assert ok is False
+    svc.users.return_value.stop.assert_not_called()
+    db.commit.assert_not_called()

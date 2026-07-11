@@ -86,6 +86,7 @@ def register_watch(db: Session, account: EmailAccount, topic_name: str) -> bool:
     Register a Gmail push notification watch for `account`.
     Returns True on success, False on failure (token expired, API error, etc.).
     """
+    from googleapiclient.errors import HttpError
     from app.services.email_account_service import get_gmail_service_for_account
     from app.services.gmail_service import ensure_labels_exist
 
@@ -93,14 +94,38 @@ def register_watch(db: Session, account: EmailAccount, topic_name: str) -> bool:
         svc = get_gmail_service_for_account(db, account)
         ensure_labels_exist(svc, account_key=account.email_address)
 
-        result = svc.users().watch(
-            userId="me",
-            body={
-                "topicName": topic_name,
-                "labelIds": ["INBOX"],
-                "labelFilterBehavior": "INCLUDE",
-            },
-        ).execute()
+        try:
+            result = svc.users().watch(
+                userId="me",
+                body={
+                    "topicName": topic_name,
+                    "labelIds": ["INBOX"],
+                    "labelFilterBehavior": "INCLUDE",
+                },
+            ).execute()
+        except HttpError as e:
+            # Gmail thinks a watch is already active on this mailbox — which happens
+            # whenever we lose track of watch_history_id (e.g. it was never persisted
+            # because an earlier registration attempt also failed) and retry watch()
+            # without ever having called stop(). Gmail refuses a second concurrent
+            # watch outright, so we must explicitly stop the old one before retrying,
+            # or this account can never self-heal and silently stops receiving
+            # notifications for good.
+            if b"Only one user push notification client allowed" not in (e.content or b""):
+                raise
+            logger.warning(
+                f"[GMAIL WEBHOOK] {account.email_address} already has an active watch — "
+                "calling stop() and retrying"
+            )
+            svc.users().stop(userId="me").execute()
+            result = svc.users().watch(
+                userId="me",
+                body={
+                    "topicName": topic_name,
+                    "labelIds": ["INBOX"],
+                    "labelFilterBehavior": "INCLUDE",
+                },
+            ).execute()
 
         history_id  = str(result.get("historyId", ""))
         expiry_ms   = int(result.get("expiration", 0))
