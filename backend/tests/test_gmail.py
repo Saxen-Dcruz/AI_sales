@@ -213,6 +213,29 @@ def test_list_emails_pagination_respects_limit(client, auth_headers):
     assert body["page"] == 1
 
 
+# A thread the AI auto-replied to (no knowledge gaps) flips straight to REPLIED,
+# which isn't an "unread" status — so without also checking is_read, it sorts
+# behind every older thread still awaiting human review (there can be hundreds
+# on a busy account) and never surfaces on page 1, even though nobody in the
+# dashboard has actually seen it yet (is_read=False).
+def test_list_emails_unread_replied_thread_outranks_older_pending_one(client, auth_headers):
+    from datetime import timedelta
+    older_pending = _insert_email(
+        status=EmailStatus.PENDING_HUMAN,
+        is_read=False,
+        received_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    newer_auto_replied = _insert_email(
+        status=EmailStatus.REPLIED,
+        is_read=False,
+        received_at=datetime.now(timezone.utc),
+    )
+    resp = client.get(f"{BASE}/?limit=50", headers=auth_headers)
+    assert resp.status_code == 200
+    ids = [item["id"] for item in resp.json()["items"]]
+    assert ids.index(str(newer_auto_replied)) < ids.index(str(older_pending))
+
+
 def test_list_emails_page_beyond_total(client, auth_headers):
     resp = client.get(f"{BASE}/?page=9999&limit=100", headers=auth_headers)
     assert resp.status_code == 200

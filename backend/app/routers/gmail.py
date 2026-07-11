@@ -222,15 +222,24 @@ def list_emails(
     ).label("rn")
     sub = q.add_columns(rn).subquery()
 
-    # "Unread" = the latest message in the thread still needs human attention
-    # (new arrival, draft awaiting approval, or pending human reply). These sort
-    # to the top; within each group, ordering is reverse-chronological.
+    # "Unread" = the latest message in the thread either still needs human attention
+    # (new arrival, draft awaiting approval, or pending human reply) OR simply hasn't
+    # been opened in the dashboard yet (is_read=False) — e.g. a Sales email the AI
+    # auto-replied to with no gaps flips straight to REPLIED, which isn't in
+    # unread_statuses, so without the is_read check it would sort behind every
+    # older pending thread (there can be hundreds) and never surface on page 1
+    # despite being brand new. These sort to the top; within each group, ordering
+    # is reverse-chronological.
     unread_statuses = (
         EmailStatus.NEW.value,
         EmailStatus.DRAFT_READY.value,
         EmailStatus.PENDING_HUMAN.value,
     )
-    unread_priority = case((sub.c.status.in_(unread_statuses), 1), else_=0)
+    unread_priority = case(
+        (sub.c.status.in_(unread_statuses), 1),
+        (sub.c.is_read.is_(False), 1),
+        else_=0,
+    )
 
     latest_only = db.query(sub).filter(sub.c.rn == 1)
     total = latest_only.count()
