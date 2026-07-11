@@ -14,7 +14,8 @@ from app.services.gmail_service import send_email, get_gmail_service
 
 logger = logging.getLogger("rdl_app_logger")
 
-CALENDAR_TOKEN_PATH = Path("calendar_token.json")
+from app.core.config import settings as _cfg
+CALENDAR_TOKEN_PATH = Path(_cfg.CALENDAR_TOKEN_PATH)
 CALENDAR_ID = "primary"
 
 
@@ -49,11 +50,11 @@ def auto_log_completed_meetings(db) -> int:
         if not existing:
             duration = int((event.end_time - event.start_time).total_seconds())
             call = Call(
-                owner_id=event.owner_id,
+                owner_id=event.owner_id,          # inherit from the calendar event (fixes NOT NULL bug)
                 lead_id=event.lead_id,
                 direction=CallDirection.OUTBOUND,
                 status=CallStatus.COMPLETED,
-                livekit_room=event.google_event_id,   # reuse field as event reference
+                livekit_room=event.google_event_id,
                 started_at=event.start_time,
                 ended_at=event.end_time,
                 duration_seconds=duration,
@@ -85,6 +86,36 @@ def get_calendar_service():
 
 # ── Event creation ────────────────────────────────────────────────────────────
 
+def _resolve_owner_account(db: Session, owner_id: Optional[UUID]):
+    """Return the first active EmailAccount belonging to owner_id, or None."""
+    if not owner_id:
+        return None
+    try:
+        from app.models.email_account import EmailAccount as _EA
+        return (
+            db.query(_EA)
+            .filter(_EA.owner_id == owner_id, _EA.is_active == True)
+            .first()
+        )
+    except Exception:
+        return None
+
+
+def _calendar_service_for_owner(db: Session, owner_account) -> "object":
+    """
+    Use the owner's own connected Google account for Calendar operations — the event/
+    invite must be organized by the rep who actually owns it, never by an unrelated
+    account. Raises when the owner has no connected account or hasn't granted Calendar
+    scope yet; callers must catch this and flag the meeting for a human to schedule
+    manually instead of silently falling back to the shared legacy calendar_token.json
+    (which belongs to a specific developer's personal Google account, not any rep).
+    """
+    if owner_account is None:
+        raise ValueError("No connected Google account for this owner — cannot schedule a Calendar event on their behalf.")
+    from app.services.email_account_service import get_calendar_service_for_account
+    return get_calendar_service_for_account(db, owner_account)
+
+
 def create_meeting(
     db: Session,
     attendee_email: str,
@@ -104,6 +135,10 @@ def create_meeting(
     Persists to DB, optionally sends an email invite to the attendee.
     """
     end_time = start_time + timedelta(minutes=duration_minutes)
+
+    # Resolve the owner's connected email account for sending
+    owner_account = _resolve_owner_account(db, owner_id)
+    sender_email = owner_account.email_address if owner_account else None
 
     event_body = {
         "summary": title,
@@ -126,7 +161,7 @@ def create_meeting(
         },
     }
 
-    cal_svc = get_calendar_service()
+    cal_svc = _calendar_service_for_owner(db, owner_account)
     created = cal_svc.events().insert(
         calendarId=CALENDAR_ID,
         body=event_body,
@@ -158,7 +193,18 @@ def create_meeting(
     db.flush()
 
     if send_invite_email:
-        _send_invite_email(attendee_email, title, start_time, end_time, meet_link, description, gmail_svc=gmail_svc)
+        # Use owner's Gmail account if available; fall back to legacy token
+        resolved_svc = gmail_svc
+        if resolved_svc is None and owner_account is not None:
+            try:
+                from app.services.email_account_service import get_gmail_service_for_account
+                resolved_svc = get_gmail_service_for_account(db, owner_account)
+            except Exception as e:
+                logger.warning(f"[CALENDAR] Could not get Gmail service for owner account: {e}")
+        _send_invite_email(
+            attendee_email, title, start_time, end_time, meet_link, description,
+            gmail_svc=resolved_svc, sender_email=sender_email,
+        )
         event_row.invite_email_sent = True
 
     db.commit()
@@ -184,6 +230,7 @@ def _send_invite_email(
     meet_link: Optional[str],
     description: str,
     gmail_svc=None,
+    sender_email: Optional[str] = None,
 ) -> None:
     try:
         from zoneinfo import ZoneInfo
@@ -204,6 +251,7 @@ def _send_invite_email(
         )
         if meet_link:
             body += f"Join     : {meet_link}\n"
+        signature_line = sender_email if sender_email else "sales@rdltech.in"
         body += (
             f"\nA Google Calendar invite has been sent to this email address. "
             f"Please accept the invite to add this meeting to your calendar.\n\n"
@@ -211,10 +259,10 @@ def _send_invite_email(
             f"Looking forward to speaking with you.\n\n"
             f"Best regards,\n"
             f"RDL Technologies Sales Team\n"
-            f"developer20@rdltech.in"
+            f"{signature_line}"
         )
         send_email(gmail_svc, to=to, subject=f"Meeting Confirmed: {title}", body=body)
-        logger.info(f"[CALENDAR] Invite email sent to {to}")
+        logger.info(f"[CALENDAR] Invite email sent to {to} from {signature_line}")
     except Exception as e:
         logger.error(f"[CALENDAR] Failed to send invite email to {to}: {e}")
 
@@ -222,8 +270,9 @@ def _send_invite_email(
 # ── Event management ──────────────────────────────────────────────────────────
 
 def cancel_event(db: Session, event: CalendarEvent) -> CalendarEvent:
-    cal_svc = get_calendar_service()
+    owner_account = _resolve_owner_account(db, event.owner_id)
     try:
+        cal_svc = _calendar_service_for_owner(db, owner_account)
         cal_svc.events().delete(
             calendarId=CALENDAR_ID,
             id=event.google_event_id,
@@ -440,7 +489,8 @@ def reschedule_event(
 
     new_end_time = new_start_time + timedelta(minutes=duration_minutes)
 
-    cal_svc = get_calendar_service()
+    owner_account = _resolve_owner_account(db, event.owner_id)
+    cal_svc = _calendar_service_for_owner(db, owner_account)
     updated = cal_svc.events().patch(
         calendarId=CALENDAR_ID,
         eventId=event.google_event_id,
@@ -461,6 +511,17 @@ def reschedule_event(
 
     db.commit()
     db.refresh(event)
+
+    # Send rescheduled invite email (Google Calendar also sends update automatically via sendUpdates='all')
+    if event.attendee_email:
+        _send_invite_email(
+            to=event.attendee_email,
+            title=f"[Rescheduled] {event.title}",
+            start_time=new_start_time,
+            end_time=new_end_time,
+            meet_link=event.meet_link,
+            description=event.description or "",
+        )
 
     logger.info(f"[CALENDAR] Rescheduled '{event.title}' → {new_start_time.isoformat()} | meet={event.meet_link}")
     return event

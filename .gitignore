@@ -1,6 +1,20 @@
 # --- Claude Config (local only) ---
 .claude/
 CLAUDE.md
+.mcp.json
+.jcodemunch.jsonc
+
+# --- Node ---
+node_modules/
+dist/
+
+# --- Root environment file (contains live secrets — never commit) ---
+.env
+
+# --- gstack (local skill pack — never commit) ---
+.gstack/
+.gstack-worktrees/
+.agents/skills/gstack*/
 
 # --- Project Specific ---
 .env.local
@@ -52,6 +66,9 @@ backend/calendar_token.json
 *.pem
 *.key
 *.p12
-*.pfxwork/
+*.pfx
 frontend/.env
 backend/product_name
+
+# --- TLS / Self-signed certs (prod deployment) ---
+certs/

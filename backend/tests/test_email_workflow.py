@@ -410,6 +410,223 @@ def test_node_detect_product_no_match(db):
     assert result["product_id"] is None
 
 
+def _seed_thread_product(db, thread_id: str, product_id: str, product_name: str, account_id=None) -> str:
+    """Insert a prior Email row that already confirmed `product_name` in `thread_id`."""
+    from app.database.core import SessionLocal
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}", gmail_thread_id=thread_id,
+            direction="inbound", sender="d@x.com", recipients=[],
+            subject="RDL Products", body_text=f"tell me about the {product_name}",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.REPLIED,
+            detected_product_id=product_id, detected_product_name=product_name,
+            account_id=account_id,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        return str(row.id)
+
+
+def test_node_detect_product_vague_followup_inherits_thread_context(db):
+    """A vague follow-up ('what's the price?') inherits the product confirmed earlier in the thread."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_id = f"test-thread-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    result = node_detect_product(
+        {"gmail_thread_id": thread_id, "subject": "Re: RDL Products", "effective_body": "what's the price?"},
+        _make_config(db),
+    )
+    assert result["product_confidence"] == "high"
+    assert result["product_name"] == "8 Channel Temperature Data Logger"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_node_detect_product_distinct_noun_does_not_inherit_thread_context(db):
+    """'the sensor' names a different, unmatched noun — must NOT silently inherit the old product."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_id = f"test-thread-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    with patch("app.services.workflows.email_nodes.detect_product",
+               return_value=(None, None, "none")) as mock_detect:
+        result = node_detect_product(
+            {"gmail_thread_id": thread_id, "subject": "Re: RDL Products",
+             "effective_body": "ok thanks now can u give me the info about the sensor"},
+            _make_config(db),
+        )
+    mock_detect.assert_called_once()
+    assert result["product_name"] != "8 Channel Temperature Data Logger"
+    assert result["product_confidence"] == "none"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_node_detect_product_distinct_topic_with_generic_word_does_not_inherit(db):
+    """A message naming a different product AND containing a generic word ('price') must
+    not be masked into blind inheritance just because 'price' is present somewhere."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_id = f"test-thread-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    result = node_detect_product(
+        {"gmail_thread_id": thread_id, "subject": "Re: RDL Products",
+         "effective_body": "ok now can u give me the info and the price about the biometric plc"},
+        _make_config(db),
+    )
+    assert result["product_name"] != "8 Channel Temperature Data Logger"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_find_similar_products_matches_plural_query_to_singular_catalog_name(db):
+    """'sensors' (plural) must still match catalog entries named '... Sensor' (singular)."""
+    from app.services.sales_gap_service import find_similar_products
+    results = find_similar_products(db, "can u give the list of all the sensors in the rdl", limit=6)
+    assert results
+    assert any("sensor" in r["name"].lower() for r in results)
+
+
+def test_detect_product_ignores_generic_short_catalog_entries(db):
+    """The LLM fallback must not match an overly generic/short entry like a product
+    literally named 'RDL' just because the company name appears in the query."""
+    from app.services.sales_gap_service import detect_product
+    product_id, product_name, confidence = detect_product(
+        db, "can u give the list of all the sensors in the rdl"
+    )
+    assert product_name != "RDL"
+
+
+def test_node_detect_product_explicit_mention_overrides_thread_context(db):
+    """A different product explicitly named in the new message wins over the inherited one."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_id = f"test-thread-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    result = node_detect_product(
+        {"gmail_thread_id": thread_id, "subject": "Re: RDL Products",
+         "effective_body": "actually tell me about the Industrial Data Logger 4G LTE instead"},
+        _make_config(db),
+    )
+    assert result["product_confidence"] == "high"
+    assert result["product_name"] == "Industrial Data Logger 4G LTE"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_node_detect_product_reset_phrase_clears_thread_context(db):
+    """'forget that / start over' drops the inherited product and forces fresh detection."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_id = f"test-thread-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    with patch("app.services.workflows.email_nodes.detect_product",
+               return_value=(None, None, "none")) as mock_detect:
+        result = node_detect_product(
+            {"gmail_thread_id": thread_id, "subject": "Re: RDL Products",
+             "effective_body": "forget that, start over"},
+            _make_config(db),
+        )
+    mock_detect.assert_called_once()
+    assert result["product_confidence"] == "none"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_node_detect_product_new_thread_does_not_inherit_other_threads_product(db):
+    """A different Gmail thread must never inherit a product confirmed in another thread,
+    even if that other thread's context is still within the 5-day window."""
+    from app.services.workflows.email_nodes import node_detect_product
+    thread_a = f"test-thread-a-{uuid.uuid4().hex[:8]}"
+    thread_b = f"test-thread-b-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_a, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger"
+    )
+
+    with patch("app.services.workflows.email_nodes.detect_product",
+               return_value=(None, None, "none")) as mock_detect:
+        result = node_detect_product(
+            {"gmail_thread_id": thread_b, "subject": "Different inquiry", "effective_body": "what is the price?"},
+            _make_config(db),
+        )
+    # Brand-new thread, no history of its own — must fall through to fresh detection
+    # rather than picking up thread_a's product just because a vague follow-up matched.
+    mock_detect.assert_called_once()
+    assert result["product_name"] != "8 Channel Temperature Data Logger"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+def test_node_detect_product_does_not_leak_across_accounts(db):
+    """Two different mailboxes must never share thread-level product context, even in the
+    (practically impossible) case of a colliding gmail_thread_id string."""
+    from app.services.workflows.email_nodes import node_detect_product
+    from app.database.core import SessionLocal
+    from app.models.email_account import EmailAccount
+
+    with SessionLocal() as s:
+        account = s.query(EmailAccount).first()
+    if not account:
+        return  # no EmailAccount fixture available in this environment — nothing to assert
+
+    thread_id = f"test-thread-shared-{uuid.uuid4().hex[:8]}"
+    prior_id = _seed_thread_product(
+        db, thread_id, "019eb443-a3dc-75f3-a387-a413afe00c17", "8 Channel Temperature Data Logger",
+        account_id=account.id,
+    )
+
+    other_account_id = str(uuid.uuid4())
+    with patch("app.services.workflows.email_nodes.detect_product",
+               return_value=(None, None, "none")):
+        result_other = node_detect_product(
+            {"gmail_thread_id": thread_id, "subject": "Re: RDL Products", "effective_body": "what is the price?"},
+            _make_config(db, account_id=other_account_id),
+        )
+    assert result_other["product_name"] != "8 Channel Temperature Data Logger"
+
+    result_same = node_detect_product(
+        {"gmail_thread_id": thread_id, "subject": "Re: RDL Products", "effective_body": "what is the price?"},
+        _make_config(db, account_id=str(account.id)),
+    )
+    assert result_same["product_name"] == "8 Channel Temperature Data Logger"
+    assert result_same["product_confidence"] == "high"
+
+    _delete_rows(db, email_ids=[prior_id])
+
+
+# ── Node: fetch_rag ───────────────────────────────────────────────────────────
+
+def test_node_fetch_rag_anchors_query_on_product_name(db):
+    """A vague follow-up's RAG query is anchored on the resolved product name."""
+    from app.services.workflows.email_nodes import node_fetch_rag
+    with patch("app.services.workflows.email_nodes.fetch_rag_context", return_value="ctx") as mock_fetch:
+        node_fetch_rag(
+            {"effective_body": "what's the price?", "product_name": "8 Channel Temperature Data Logger"},
+            _make_config(db),
+        )
+    query = mock_fetch.call_args.args[0]
+    assert "8 Channel Temperature Data Logger" in query
+    assert "what's the price?" in query
+
+
+def test_node_fetch_rag_no_product_name_uses_body_only(db):
+    from app.services.workflows.email_nodes import node_fetch_rag
+    with patch("app.services.workflows.email_nodes.fetch_rag_context", return_value="ctx") as mock_fetch:
+        node_fetch_rag({"effective_body": "hello there"}, _make_config(db))
+    mock_fetch.assert_called_once_with("hello there")
+
+
 # ── Node: extract_gaps ────────────────────────────────────────────────────────
 
 def test_node_extract_gaps_finds_gaps(db):
@@ -943,6 +1160,114 @@ def test_node_send_clarification_with_no_similar_products(db):
     _delete_rows(db, email_ids=[email_id])
 
 
+def test_node_send_clarification_draft_mode_holds_without_sending(db):
+    """When the account's draft mode (auto_send_enabled=False) is on, hold the clarification as a draft."""
+    from app.services.workflows.email_nodes import node_send_clarification
+    from app.database.core import SessionLocal
+
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}",
+            direction="inbound", sender="x@x.com", recipients=[],
+            subject="Vague query", body_text="I need something",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
+
+    with patch("app.services.workflows.email_nodes.find_similar_products", return_value=[]), \
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_cl2"}), \
+         patch("app.services.workflows.email_nodes.gmail_service.send_draft") as mock_send:
+        result = node_send_clarification(
+            {"email_id": email_id, "auto_send_enabled": False, "subject": "Vague query",
+             "effective_body": "I need something",
+             "sender_email": "x@x.com", "gmail_thread_id": None,
+             "product_name": None, "product_confidence": "none"},
+            _make_config(db),
+        )
+    assert result["action"] == "clarification_draft_held"
+    mock_send.assert_not_called()
+
+    db.commit()
+    with SessionLocal() as s:
+        updated = s.query(Email).filter(Email.id == uuid.UUID(email_id)).first()
+        assert updated.status == EmailStatus.DRAFT_READY
+        assert updated.needs_human is True
+        assert updated.gmail_draft_id == "draft_cl2"
+        s.delete(updated); s.commit()
+
+
+def test_node_send_clarification_general_company_inquiry_sends_overview(db):
+    """A general 'what does RDL sell / who are you' question gets the company overview, not the plain reply."""
+    from app.services.workflows.email_nodes import node_send_clarification
+    from app.database.core import SessionLocal
+
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}",
+            direction="inbound", sender="d@x.com", recipients=[],
+            subject="Products", body_text="what does rdl do, product list please",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
+
+    with patch("app.services.workflows.email_nodes.find_similar_products", return_value=[]), \
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_cl3"}) as mock_draft, \
+         patch("app.services.workflows.email_nodes.gmail_service.send_draft"):
+        result = node_send_clarification(
+            {"email_id": email_id, "subject": "Products",
+             "effective_body": "what does rdl do, product list please",
+             "sender_email": "d@x.com", "gmail_thread_id": None,
+             "product_name": None, "product_confidence": "none"},
+            _make_config(db),
+        )
+    assert result["action"] == "clarification_sent"
+    sent_body = mock_draft.call_args.kwargs["body"]
+    assert "Industrial IoT" in sent_body
+    assert "Development Boards" in sent_body
+
+    _delete_rows(db, email_ids=[email_id])
+
+
+def test_node_send_clarification_vague_product_query_skips_overview(db):
+    """A vague but product-specific-sounding query stays with the plain 'specify product' reply."""
+    from app.services.workflows.email_nodes import node_send_clarification
+    from app.database.core import SessionLocal
+
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}",
+            direction="inbound", sender="x@x.com", recipients=[],
+            subject="Need a sensor", body_text="I need something for measuring temperature outdoors",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
+
+    with patch("app.services.workflows.email_nodes.find_similar_products", return_value=[]), \
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_cl4"}) as mock_draft, \
+         patch("app.services.workflows.email_nodes.gmail_service.send_draft"):
+        result = node_send_clarification(
+            {"email_id": email_id, "subject": "Need a sensor",
+             "effective_body": "I need something for measuring temperature outdoors",
+             "sender_email": "x@x.com", "gmail_thread_id": None,
+             "product_name": None, "product_confidence": "none"},
+            _make_config(db),
+        )
+    assert result["action"] == "clarification_sent"
+    sent_body = mock_draft.call_args.kwargs["body"]
+    assert "Industrial IoT" not in sent_body
+
+    _delete_rows(db, email_ids=[email_id])
+
+
 # ── Edge cases: resume_after_gaps_resolved ────────────────────────────────────
 
 def test_resume_regenerates_draft_when_all_gaps_resolved(db):
@@ -1163,75 +1488,99 @@ def test_node_try_schedule_meeting_skips_without_keywords(db):
 
 
 def test_node_try_schedule_meeting_proposes_slots_without_specific_time(db):
+    """No auto-booking — always propose our team's free slots and flag for a human to confirm."""
     from app.services.workflows.email_nodes import node_try_schedule_meeting
+    from app.database.core import SessionLocal
+
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}",
+            direction="inbound", sender="g@x.com", recipients=[],
+            subject="Meeting", body_text="i want to schedule a meeting",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
+
     free = [
         datetime(2026, 6, 10, 4, 30, tzinfo=timezone.utc),
         datetime(2026, 6, 11, 5, 0, tzinfo=timezone.utc),
         datetime(2026, 6, 12, 6, 0, tzinfo=timezone.utc),
     ]
     with patch("app.services.calendar_service.find_free_slots", return_value=free), \
-         patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_sched1"}) as mock_draft, \
+         patch("app.services.workflows.email_nodes.gmail_service.send_draft") as mock_send:
         result = node_try_schedule_meeting(
-            {"effective_body": "i want to schedule a meeting to know more about RDL891",
+            {"email_id": email_id,
+             "effective_body": "i want to schedule a meeting to know more about RDL891",
              "subject": "Meeting", "sender_raw": "Gulf Ishaara <g@x.com>",
              "sender_email": "g@x.com", "product_name": "Industrial Data Logger 4G LTE",
-             "gmail_thread_id": "t1", "rfc_message_id": None, "lead_id": None},
+             "gmail_thread_id": "t1", "rfc_message_id": None},
             _make_config(db),
         )
-    # No specific time → proposes free slots via a follow-up email
     assert result == {"action": "meeting_slots_proposed"}
+    mock_draft.assert_called_once()
     mock_send.assert_called_once()
-    sent_body = mock_send.call_args.kwargs["body"]
-    assert "available times" in sent_body.lower()
+    assert mock_send.call_args.args[-1] == "draft_sched1"
+    sent_body = mock_draft.call_args.kwargs["body"]
+    assert "sales team" in sent_body.lower()
     assert "IST" in sent_body  # slots rendered
+
+    db.commit()
+    with SessionLocal() as s:
+        updated = s.query(Email).filter(Email.id == uuid.UUID(email_id)).first()
+        assert updated.needs_human is True
+        s.delete(updated); s.commit()
+
+
+def test_node_try_schedule_meeting_draft_mode_holds_without_sending(db):
+    """When the account's draft mode (auto_send_enabled=False) is on, don't auto-send the slot proposal."""
+    from app.services.workflows.email_nodes import node_try_schedule_meeting
+    from app.database.core import SessionLocal
+
+    with SessionLocal() as s:
+        row = Email(
+            gmail_message_id=f"test_{uuid.uuid4().hex}",
+            direction="inbound", sender="x@x.com", recipients=[],
+            subject="Meeting", body_text="can we set up a call?",
+            received_at=datetime.now(timezone.utc),
+            label=EmailLabel.SALES, status=EmailStatus.CLASSIFIED,
+        )
+        s.add(row); s.commit(); s.refresh(row)
+        email_id = str(row.id)
+
+    free = [datetime(2026, 6, 10, 4, 30, tzinfo=timezone.utc)]
+    with patch("app.services.calendar_service.find_free_slots", return_value=free), \
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft",
+               return_value={"id": "draft_sched2"}), \
+         patch("app.services.workflows.email_nodes.gmail_service.send_draft") as mock_send:
+        result = node_try_schedule_meeting(
+            {"email_id": email_id, "auto_send_enabled": False,
+             "effective_body": "can we set up a call?", "subject": "Meeting",
+             "sender_raw": "X <x@x.com>", "sender_email": "x@x.com",
+             "product_name": None, "gmail_thread_id": "t1", "rfc_message_id": None},
+            _make_config(db),
+        )
+    assert result == {"action": "meeting_slots_proposed"}
+    mock_send.assert_not_called()
+
+    _delete_rows(db, email_ids=[email_id])
 
 
 def test_node_try_schedule_meeting_no_slots_available(db):
     from app.services.workflows.email_nodes import node_try_schedule_meeting
     with patch("app.services.calendar_service.find_free_slots", return_value=[]), \
-         patch("app.services.workflows.email_nodes.gmail_service.send_email") as mock_send:
+         patch("app.services.workflows.email_nodes.gmail_service.create_draft") as mock_draft:
         result = node_try_schedule_meeting(
             {"effective_body": "can we schedule a meeting?", "subject": "Meeting",
              "sender_raw": "X <x@x.com>", "sender_email": "x@x.com",
-             "product_name": None, "gmail_thread_id": "t1", "rfc_message_id": None,
-             "lead_id": None},
+             "product_name": None, "gmail_thread_id": "t1", "rfc_message_id": None},
             _make_config(db),
         )
     assert result == {}
-    mock_send.assert_not_called()
-
-
-def test_node_try_schedule_meeting_schedules_with_specific_time(db):
-    from app.services.workflows.email_nodes import node_try_schedule_meeting
-    from app.models.email_account import EmailAccount as _EAModel
-    from app.models.user import User as _User
-    # Use an existing user as owner so FK constraint is satisfied
-    acc_id = uuid.uuid4()
-    from app.database.core import SessionLocal
-    with SessionLocal() as s:
-        owner = s.query(_User).first()
-        assert owner, "Need at least one user in DB for this test"
-        fake_owner = owner.id
-        s.add(_EAModel(
-            id=acc_id,
-            email_address=f"sched_{acc_id.hex[:6]}@rdltest.com",
-            token_data="x",
-            owner_id=fake_owner,
-        ))
-        s.commit()
-    with patch("app.services.workflows.email_nodes._parse_requested_time",
-               return_value=datetime(2026, 6, 10, 10, 0, tzinfo=timezone.utc)), \
-         patch("app.services.calendar_service.create_meeting", return_value=MagicMock(meet_link="https://meet.google.com/abc")), \
-         patch("app.services.calendar_service.get_calendar_service", return_value=MagicMock()), \
-         patch("app.services.calendar_service._is_slot_free", return_value=True):
-        cfg = _make_config(db, account_id=str(acc_id))
-        result = node_try_schedule_meeting(
-            {"effective_body": "Can we schedule a meeting at 10am on June 10?",
-             "subject": "Meeting request", "sender_email": "x@x.com",
-             "product_name": None, "lead_id": None},
-            cfg,
-        )
-    assert result == {"action": "meeting_scheduled"}
+    mock_draft.assert_not_called()
 
 
 # ── Edge cases: node_update_lead_score ───────────────────────────────────────

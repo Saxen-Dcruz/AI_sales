@@ -1,0 +1,77 @@
+name: CI
+
+# Validation only — runs on PRs into dev and on feature/hotfix branch pushes.
+# Nothing is published here; image publishing + deploy lives in deploy.yml.
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches:
+      - 'feature/**'
+      - 'hotfix/**'
+      - backend-dev
+      - frontend-dev
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-lint-build:
+    name: Frontend · lint & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (placeholder API URL — real URL is baked at deploy time)
+        run: npm run build
+        env:
+          VITE_API_URL: https://example.invalid/api/v1/
+
+  build-images:
+    name: Build image · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+          - service: frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Validate the Dockerfile + dependency install without publishing anything.
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: production
+          push: false
+          load: false
+          build-args: |
+            VITE_API_URL=https://example.invalid/api/v1/
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

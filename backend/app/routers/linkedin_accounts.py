@@ -52,14 +52,16 @@ def oauth_callback(
         from app.services.linkedin_oauth_service import exchange_code_and_save
         account = exchange_code_and_save(db=db, code=code, redirect_uri=_callback_uri(request))
         name = account.name or account.email or "account"
+        frontend = settings.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url=f"http://localhost:5173/settings?linkedin_added={name}",
+            url=f"{frontend}/settings?linkedin_added={name}",
             status_code=302,
         )
     except Exception as e:
         logger.error(f"[LI OAUTH CALLBACK] Failed: {e}\n{traceback.format_exc()}")
+        frontend = settings.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url="http://localhost:5173/settings?linkedin_error=1",
+            url=f"{frontend}/settings?linkedin_error=1",
             status_code=302,
         )
 

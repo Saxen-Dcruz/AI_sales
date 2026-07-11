@@ -5,6 +5,7 @@ from uuid import UUID
 
 class EmailAccountOut(BaseModel):
     id:                UUID
+    owner_id:          Optional[UUID]
     email_address:     str
     display_name:      Optional[str]
     is_active:         bool

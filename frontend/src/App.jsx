@@ -15,6 +15,8 @@ import KnowledgeBase from './pages/KnowledgeBase'
 import AIAnalytics from './pages/AIAnalytics'
 import GapsPage from './pages/GapsPage'
 import GmailIntegration from './pages/GmailIntegration'
+import WhatsAppIntegration from './pages/WhatsAppIntegration'
+import WhatsAppAnalytics from './pages/WhatsAppAnalytics'
 import CalendarIntegration from './pages/CalendarIntegration'
 import EmbeddingsPage from './pages/EmbeddingsPage'
 import GmailAnalytics from './pages/GmailAnalytics'
@@ -24,6 +26,7 @@ import LeadDiscovery from './pages/LeadDiscovery'
 import Campaigns from './pages/Campaigns'
 import OutreachQueue from './pages/OutreachQueue'
 import UserManagement from './pages/UserManagement'
+import VoiceAnalytics from './pages/VoiceAnalytics'
 
 export default function App() {
   return (
@@ -43,6 +46,8 @@ export default function App() {
           <Route path="ai-analytics" element={<AIAnalytics />} />
           <Route path="gaps" element={<GapsPage />} />
           <Route path="gmail" element={<GmailIntegration />} />
+          <Route path="whatsapp" element={<WhatsAppIntegration />} />
+          <Route path="whatsapp-analytics" element={<WhatsAppAnalytics />} />
           <Route path="calendar" element={<CalendarIntegration />} />
           <Route path="products" element={<Products />} />
           <Route path="add-product" element={<AddProduct />} />
@@ -57,6 +62,7 @@ export default function App() {
           <Route path="outreach-queue" element={<OutreachQueue />} />
           <Route path="settings" element={<Settings />} />
           <Route path="user-management" element={<UserManagement />} />
+          <Route path="voice-analytics" element={<VoiceAnalytics />} />
         </Route>
       </Routes>
     </Router>

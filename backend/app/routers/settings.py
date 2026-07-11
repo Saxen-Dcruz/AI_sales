@@ -1,9 +1,10 @@
 """
-Settings router — email account management (multi-Gmail support).
+Settings router — Gmail + WhatsApp account management.
 All endpoints require authentication.
 """
 import logging
 import threading
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -16,8 +17,13 @@ from app.api.dependencies import get_current_user
 from app.database.core import get_db
 from app.models.email_account import EmailAccount
 from app.models.user import User
+from app.models.whatsapp_account import WhatsAppAccount
 from app.schema.settings import (
     EmailAccountListResponse, EmailAccountOut, EmailAccountUpdate, OAuthUrlResponse
+)
+from app.schema.whatsapp import (
+    WhatsAppAccountCreate, WhatsAppAccountListResponse,
+    WhatsAppAccountOut, WhatsAppAccountUpdate,
 )
 from app.services import email_account_service as svc
 
@@ -97,17 +103,17 @@ def get_auth_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return Google OAuth consent URL. Frontend redirects user to this URL."""
-    existing = (
-        db.query(EmailAccount)
-        .filter(EmailAccount.owner_id == current_user.id)
-        .count()
-    )
-    if existing >= 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You already have a Gmail account connected. Remove it before adding a new one.",
-        )
+    """
+    Return Google OAuth consent URL. Frontend redirects user to this URL.
+
+    Also used to re-consent an already-connected account (e.g. to pick up
+    Calendar scopes added after the account first connected) — the callback's
+    exchange_code_and_save refreshes the existing row by email match rather
+    than creating a duplicate, so re-auth is safe to allow here. The 1-account
+    cap for regular users is enforced in exchange_code_and_save against the
+    *email actually returned by Google*, which correctly distinguishes
+    "re-auth of my existing account" from "connecting a different account".
+    """
     url = svc.get_auth_url(redirect_uri=_callback_uri(request), owner_id=current_user.id)
     return OAuthUrlResponse(url=url)
 
@@ -140,8 +146,10 @@ def oauth_callback(
         # the workflow deduplicates on gmail_message_id.
         _trigger_batch_import(account.id)
 
+        from app.core.config import settings as cfg
+        frontend = cfg.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url=f"http://localhost:5173/settings?email_added={email_address}",
+            url=f"{frontend}/settings?email_added={email_address}",
             status_code=302,
         )
     except Exception as e:
@@ -149,8 +157,10 @@ def oauth_callback(
         logger.error(
             f"[OAUTH CALLBACK] Failed to exchange code: {e}\n{traceback.format_exc()}"
         )
+        from app.core.config import settings as cfg
+        frontend = cfg.FRONTEND_URL.rstrip("/")
         return RedirectResponse(
-            url="http://localhost:5173/settings?email_error=true",
+            url=f"{frontend}/settings?email_error=true",
             status_code=302,
         )
 
@@ -211,3 +221,178 @@ def sync_account_history(
         raise HTTPException(status_code=404, detail="Email account not found")
     _trigger_batch_import(account_id, days=days)
     return {"status": "started", "account_id": str(account_id), "days": days}
+
+
+# ── WhatsApp account management ────────────────────────────────────────────────
+
+@router.get("/whatsapp-accounts", response_model=WhatsAppAccountListResponse)
+def list_whatsapp_accounts(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    owner_filter = None if current_user.is_superuser else current_user.id
+    accounts = db.query(WhatsAppAccount)
+    if owner_filter:
+        accounts = accounts.filter(WhatsAppAccount.owner_id == owner_filter)
+    accounts = accounts.order_by(WhatsAppAccount.is_primary.desc(), WhatsAppAccount.created_at).all()
+    return WhatsAppAccountListResponse(items=accounts, total=len(accounts))
+
+
+@router.post("/whatsapp-accounts", response_model=WhatsAppAccountOut, status_code=201)
+def add_whatsapp_account(
+    payload:      WhatsAppAccountCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    # One WhatsApp account per regular user
+    if not current_user.is_superuser:
+        existing_count = db.query(WhatsAppAccount).filter(
+            WhatsAppAccount.owner_id == current_user.id
+        ).count()
+        if existing_count >= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You already have a WhatsApp account connected. Remove it before adding a new one.",
+            )
+
+    # Validate no duplicate phone_number_id
+    if db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.phone_number_id == payload.phone_number_id
+    ).first():
+        raise HTTPException(status_code=400, detail="This Phone Number ID is already registered.")
+
+    account = WhatsAppAccount(
+        owner_id        = current_user.id,
+        phone_number_id = payload.phone_number_id,
+        waba_id         = payload.waba_id,
+        access_token    = payload.access_token,
+        verify_token    = payload.verify_token,
+        display_phone   = payload.display_phone,
+        display_name    = payload.display_name,
+        auto_send       = payload.auto_send,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    logger.info(f"[WA SETTINGS] Account added: {account.display_phone} for user {current_user.email}")
+    return account
+
+
+@router.patch("/whatsapp-accounts/{account_id}", response_model=WhatsAppAccountOut)
+def update_whatsapp_account(
+    account_id:   UUID,
+    payload:      WhatsAppAccountUpdate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    account = db.query(WhatsAppAccount).filter(WhatsAppAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+    if not current_user.is_superuser and account.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(account, field, value)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.delete("/whatsapp-accounts/{account_id}", status_code=204)
+def delete_whatsapp_account(
+    account_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    account = db.query(WhatsAppAccount).filter(WhatsAppAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+    if not current_user.is_superuser and account.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+    db.delete(account)
+    db.commit()
+
+
+@router.post("/whatsapp-accounts/{account_id}/set-primary", response_model=WhatsAppAccountOut)
+def set_primary_whatsapp_account(
+    account_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    account = db.query(WhatsAppAccount).filter(WhatsAppAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+    if not current_user.is_superuser and account.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="WhatsApp account not found")
+
+    # Clear other primaries for this user
+    db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.owner_id == account.owner_id,
+        WhatsAppAccount.id != account_id,
+    ).update({"is_primary": False})
+    account.is_primary = True
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+# ── Company / Voice Settings ──────────────────────────────────────────────────
+# Allows operators to update the company phone number shown to customers
+# during AI voice escalations and in email/WhatsApp CTAs.
+
+from pydantic import BaseModel as _BM
+
+class CompanySettingsOut(_BM):
+    company_phone: str
+    voice_base_url: str
+    voice_token_ttl_minutes: int
+    voice_escalation_threshold: int
+
+class CompanySettingsUpdate(_BM):
+    company_phone: Optional[str] = None
+
+
+@router.get("/company", response_model=CompanySettingsOut, summary="Get company / voice settings")
+def get_company_settings(_: User = Depends(get_current_user)):
+    from app.core.config import settings as _cfg
+    return CompanySettingsOut(
+        company_phone                = _cfg.COMPANY_PHONE,
+        voice_base_url               = _cfg.VOICE_BASE_URL,
+        voice_token_ttl_minutes      = _cfg.VOICE_TOKEN_TTL_MINUTES,
+        voice_escalation_threshold   = _cfg.VOICE_ESCALATION_THRESHOLD,
+    )
+
+
+@router.patch("/company", response_model=CompanySettingsOut, summary="Update company phone number")
+def update_company_settings(
+    payload: CompanySettingsUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update runtime company settings (phone number).
+    Writes to the environment so the change is active immediately;
+    does NOT persist across container restarts — add the env var to .env.local for permanence.
+    Super-admin only.
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Super-admin only")
+
+    import os
+    from app.core import config as _config_module
+
+    if payload.company_phone:
+        # Validate format — must start with + or be numeric
+        phone = payload.company_phone.strip()
+        if not (phone.startswith("+") or phone.replace("-", "").replace(" ", "").isdigit()):
+            raise HTTPException(status_code=422, detail="Invalid phone number format")
+        os.environ["COMPANY_PHONE"] = phone
+        _config_module.settings.COMPANY_PHONE = phone  # type: ignore[attr-defined]
+        logger.info(f"[SETTINGS] Company phone updated to {phone} by {current_user.email}")
+
+    from app.core.config import settings as _cfg
+    return CompanySettingsOut(
+        company_phone                = _cfg.COMPANY_PHONE,
+        voice_base_url               = _cfg.VOICE_BASE_URL,
+        voice_token_ttl_minutes      = _cfg.VOICE_TOKEN_TTL_MINUTES,
+        voice_escalation_threshold   = _cfg.VOICE_ESCALATION_THRESHOLD,
+    )

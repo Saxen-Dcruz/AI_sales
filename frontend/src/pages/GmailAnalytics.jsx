@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, AlertCircle, BarChart2, Building2, CheckCircle, ChevronDown, ChevronRight, ChevronUp,
@@ -12,7 +13,7 @@ import {
   LineChart, Line, AreaChart, Area
 } from 'recharts'
 import {
-  GetGmailAnalyticsService, GetEmailAccountsService,
+  GetGmailAnalyticsService, GetEmailAccountsService, GetGmailConversationService,
   GetAllDealsService, GetDealAnalyticsService,
   GetAllLeadsService, GetLeadClassificationSummaryService,
   GetContactMessagesService,
@@ -40,8 +41,9 @@ const TIME_RANGES = [
 ]
 const TABS = [
   { key: 'overview',   label: 'Overview',   icon: BarChart2 },
-  { key: 'pipeline',   label: 'Pipeline',   icon: Activity },
-  { key: 'products',   label: 'Products',   icon: Package },
+  { key: 'pipeline',   label: 'Pipeline',   icon: Activity  },
+  { key: 'customers',  label: 'Customers',  icon: Users     },
+  { key: 'products',   label: 'Products',   icon: Package   },
   { key: 'resolution', label: 'Resolution', icon: CheckCircle },
   { key: 'salescrm',   label: 'Sales CRM',  icon: Kanban },
 ]
@@ -445,7 +447,7 @@ function TabOverview({ data, loading }) {
         <KpiCard icon={Zap}         label="Auto-Sent Rate"    value={loading ? '—' : `${data?.auto_sent_rate_pct ?? 0}%`}         color="#10b981" loading={loading} sub="No human touch needed" />
         <KpiCard icon={Clock}       label="Avg Reply Time"    value={loading ? '—' : `${data?.avg_reply_minutes ?? 0}m`}           color="#f59e0b" loading={loading} sub="Sales emails only" />
         <KpiCard icon={ShieldAlert} label="SLA Compliance"    value={loading ? '—' : (() => { const t=(data?.sla_met??0)+(data?.sla_breached??0); return t ? `${Math.round((data?.sla_met??0)/t*100)}%` : '—' })()} color="#6172f3" loading={loading} sub={`${data?.sla_met??0} met · ${data?.sla_breached??0} breached`} />
-        <KpiCard icon={TrendingUp}  label="Conversion Rate"   value={loading ? '—' : `${data?.conversion_rate_pct ?? 0}%`}        color="#8b5cf6" loading={loading} sub="Sales → replied" />
+        <KpiCard icon={TrendingUp}  label="Sales Reply Rate"   value={loading ? '—' : `${data?.conversion_rate_pct ?? 0}%`}        color="#8b5cf6" loading={loading} sub="Sales emails that got a reply" />
         <KpiCard icon={BarChart2}   label="Email Open Rate"   value={loading ? '—' : `${data?.open_rate_pct ?? 0}%`}              color="#0ea5e9" loading={loading} sub={`${data?.opened_count ?? 0} opens tracked`} />
       </div>
     </div>
@@ -647,7 +649,7 @@ function ProductIntelligence({ data, loading }) {
       {loading ? <EmptyState text="Loading…" /> : noData ? (
         <div className="h-40 flex flex-col items-center justify-center gap-2 text-gray-300">
           <Package size={28} />
-          <p className="text-xs text-gray-400">No product data yet</p>
+          <p className="text-xs text-gray-400">No product data yet — products are detected automatically as emails are processed</p>
         </div>
       ) : (
         <AnimatePresence mode="wait">
@@ -772,15 +774,120 @@ function ProductIntelligence({ data, loading }) {
   )
 }
 
+// ── Customers tab ─────────────────────────────────────────────────────────────
+
+function TabCustomers({ data, loading }) {
+  const [selectedSender, setSelectedSender] = useState(null)
+  const senders = data?.top_senders || []
+
+  const { data: convData, isLoading: convLoading } = useQuery({
+    queryKey: ['gmail-conversation', selectedSender],
+    queryFn: () => new Promise((res, rej) =>
+      GetGmailConversationService(selectedSender, { limit: 30 }, res, (_, e) => rej(e))
+    ),
+    enabled: !!selectedSender,
+  })
+
+  const LABEL_BADGE = {
+    Sales: 'bg-indigo-100 text-indigo-700', Support: 'bg-blue-100 text-blue-700',
+    Grievance: 'bg-red-100 text-red-700', Unclassified: 'bg-gray-100 text-gray-500',
+  }
+
+  return (
+    <div className="flex gap-4">
+      {/* Sender list */}
+      <div className="w-80 flex-shrink-0 space-y-2">
+        <h3 className="text-sm font-semibold text-gray-800">
+          Top Senders <span className="text-xs font-normal text-gray-400 ml-1">by email volume</span>
+        </h3>
+        {loading && <p className="text-xs text-gray-400">Loading…</p>}
+        {!loading && senders.length === 0 && (
+          <div className="text-center py-8 text-gray-400">
+            <Users size={32} className="mx-auto mb-2 opacity-20" />
+            <p className="text-sm">No sender data yet</p>
+          </div>
+        )}
+        {senders.map((s) => (
+          <button
+            key={s.sender}
+            onClick={() => setSelectedSender(s.sender)}
+            className={`w-full text-left p-3 rounded-xl border transition-all
+              ${selectedSender === s.sender
+                ? 'border-indigo-400 bg-indigo-50'
+                : 'border-gray-100 bg-white hover:border-gray-200'}`}
+          >
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                {(s.sender || '?')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-900 truncate">{s.sender}</p>
+                {s.lead_name && <p className="text-xs text-gray-400 truncate">{s.lead_name}</p>}
+                <div className="flex gap-1 mt-0.5 flex-wrap">
+                  {Object.entries(s.labels || {}).slice(0, 2).map(([lbl, n]) => (
+                    <span key={lbl} className={`text-xs px-1 py-0.5 rounded ${LABEL_BADGE[lbl] || 'bg-gray-100 text-gray-500'}`}>
+                      {lbl}: {n}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <span className="text-sm font-bold text-gray-700 flex-shrink-0">{s.total}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Conversation history */}
+      <div className="flex-1 min-w-0">
+        {!selectedSender ? (
+          <div className="flex flex-col items-center justify-center h-64 text-gray-300">
+            <Mail size={36} className="mb-2 opacity-30" />
+            <p className="text-sm">Select a sender to view their email history</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs font-bold">
+                {selectedSender[0].toUpperCase()}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{selectedSender}</p>
+                <p className="text-xs text-gray-400">{convData?.total || 0} emails · Full history</p>
+              </div>
+            </div>
+            {convLoading && <p className="text-xs text-gray-400 p-3">Loading…</p>}
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto">
+              {(convData?.items || []).map(e => (
+                <div key={e.id} className={`p-3 rounded-xl border text-xs
+                  ${e.direction === 'inbound' ? 'bg-white border-gray-200' : 'bg-indigo-50 border-indigo-100'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="font-medium text-gray-900 truncate">{e.subject || '(no subject)'}</p>
+                    <span className={`px-1.5 py-0.5 rounded text-xs ml-2 flex-shrink-0
+                      ${LABEL_BADGE[e.label] || 'bg-gray-100 text-gray-500'}`}>{e.label}</span>
+                  </div>
+                  <p className="text-gray-600 line-clamp-2">{e.body_text?.slice(0, 120) || '(empty)'}</p>
+                  <p className="text-gray-400 mt-1">{new Date(e.received_at).toLocaleString()} · {e.direction}</p>
+                  {e.detected_product_name && (
+                    <span className="mt-1 inline-block bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded text-xs">
+                      {e.detected_product_name}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function TabProducts({ data, loading }) {
   return (
     <div className="space-y-6">
-      {/* Revenue KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard icon={DollarSign}   label="Total Revenue"     value={loading ? '—' : `₹${Number(data?.revenue_total ?? 0).toLocaleString()}`} color="#10b981" loading={loading} sub="From orders & invoices" />
-        <KpiCard icon={ShoppingCart} label="Orders / Invoices" value={fmt(data?.order_count)}  color="#3b82f6" loading={loading} sub="Confirmed orders received" />
-        <KpiCard icon={Package}      label="POs Raised"        value={fmt(data?.po_count)}     color="#8b5cf6" loading={loading} sub="Purchase orders in emails" />
-        <KpiCard icon={TrendingUp}   label="Conversion Rate"   value={loading ? '—' : `${data?.conversion_rate_pct ?? 0}%`} color="#f59e0b" loading={loading} sub="Sales → replied" />
+      {/* Single KPI — Reply Rate only (revenue moved to Deals Analytics) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <KpiCard icon={TrendingUp} label="Sales Reply Rate" value={loading ? '—' : `${data?.conversion_rate_pct ?? 0}%`} color="#f59e0b" loading={loading} sub="Sales emails that received a reply" />
       </div>
 
       <ProductIntelligence data={data} loading={loading} />
@@ -1222,6 +1329,7 @@ export default function GmailAnalytics({ hideHeader = false }) {
           <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
             {activeTab === 'overview'   && <TabOverview   data={data} loading={loading} />}
             {activeTab === 'pipeline'   && <TabPipeline   data={data} loading={loading} />}
+            {activeTab === 'customers'  && <TabCustomers  data={data} loading={loading} />}
             {activeTab === 'products'   && <TabProducts   data={data} loading={loading} />}
             {activeTab === 'resolution' && <TabResolution data={data} loading={loading} />}
             {activeTab === 'salescrm'   && <TabSalesCRM />}

@@ -1,9 +1,28 @@
-version: '3.8'
-
-# Auto-merged by Docker Compose on `docker compose up`.
-# Contains all local dev overrides — ports, code mounts, env files, credentials.
+# Local dev only — must be passed explicitly:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+# NOT auto-merged (renamed from docker-compose.override.yaml intentionally).
+# Prod uses docker-compose.prod.yaml instead — no DB container there.
 
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rdl_db
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=rdl_sales
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - rdl_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin -d rdl_sales" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     ports:
       - "6379:6379"
@@ -22,12 +41,19 @@ services:
       - ./backend/.env.local
 
   backend:
+    # Build the development stage so uvicorn runs with --reload against the
+    # bind-mounted source below (the Dockerfile's default stage is production).
+    build:
+      target: development
     # Dev-only container name — avoids a stale 'rdl_backend' name registered in the
     # local Docker daemon. Inter-service DNS uses the 'backend' service name, and the
     # dev frontend reaches it via localhost:8001, so this rename is safe for local dev.
     container_name: rdl_backend_dev
     ports:
       - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       # Local dev talks to the standalone rdl_db container directly over the
       # compose network (rdl_db is attached to ai_sales_rdl_network at startup).
@@ -62,3 +88,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+
+volumes:
+  postgres_data:

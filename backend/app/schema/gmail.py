@@ -39,6 +39,7 @@ class EmailOut(BaseModel):
     detected_product_id: Optional[str] = None
     detected_product_name: Optional[str] = None
     needs_human: bool
+    is_read: bool = False
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
     account_id: Optional[UUID] = None
@@ -174,6 +175,9 @@ class EmailSLAAnalytics(BaseModel):
     total_volume_breakdown: dict = {}  # inbound/outbound/sales/support/grievance counts
     product_source_rows: list = []  # [{product, source, count, converted}] — product × source matrix
     product_company_rows: list = []  # [{company, source, email, products:[{name,count}]}] — company details
+    # Customer-level aggregations
+    top_senders: list = []         # [{sender, total, labels, last_at, lead_id, lead_name}] top 20 by volume
+    top_products: list = []        # [{name, inquiries, converted, conversion_pct}] alias for top_products_purchased
     opened_count: int = 0           # outbound emails with at least one confirmed open
     open_rate_pct: float = 0.0      # opened_count / total outbound Sales emails * 100
 

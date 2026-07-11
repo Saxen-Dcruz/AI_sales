@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Bell, Shield, Cpu, Globe, Key, Save, Mail, Plus,
+  Bell, Shield, Cpu, Key, Save, Mail, Plus,
   CheckCircle, Trash2, Star, AlertCircle, RefreshCw, ToggleLeft, ToggleRight,
-  Linkedin, Download
+  Download
 } from 'lucide-react'
 import {
   GetEmailAccountsService, GetEmailAccountAuthUrlService,
   UpdateEmailAccountService, SetPrimaryEmailAccountService, DeleteEmailAccountService,
-  GetLinkedInAccountsService, GetLinkedInAuthUrlService, DisconnectLinkedInAccountService,
+  GetCurrentUserService,
 } from '../services/ApiService'
 
 // ─── Static settings sections (unchanged) ────────────────────────────────────
@@ -22,15 +22,6 @@ const staticSections = [
       { label: 'Max Calls Per Hour',      type: 'number',  value: '120' },
       { label: 'AI Tone',                 type: 'select',  options: ['Professional', 'Friendly', 'Formal'], value: 'Professional' },
       { label: 'Auto-retry Failed Calls', type: 'toggle',  value: true },
-    ]
-  },
-  {
-    icon: Globe, title: 'LinkedIn Integration', color: '#0077b5',
-    fields: [
-      { label: 'API Key',                       type: 'password', value: 'sk-xxxx-yyyy-zzzz' },
-      { label: 'Scrape Rate Limit (per hour)',   type: 'number',   value: '200' },
-      { label: 'Auto-connect Requests',          type: 'toggle',   value: false },
-      { label: 'Post Generation',                type: 'toggle',   value: true },
     ]
   },
   {
@@ -78,6 +69,7 @@ function AccountBadge({ is_primary, is_active }) {
 function EmailAccountsSection() {
   const location = useLocation()
   const [accounts, setAccounts] = useState([])
+  const [me, setMe] = useState(null)
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(false)
   const [toast, setToast] = useState(null)
@@ -98,13 +90,20 @@ function EmailAccountsSection() {
 
   useEffect(() => {
     fetchAccounts()
+    GetCurrentUserService((data) => setMe(data), () => {})
     const params = new URLSearchParams(location.search)
     if (params.get('email_added')) showToast(`✓ ${params.get('email_added')} connected successfully`)
     if (params.get('email_error')) showToast('Failed to connect account — please try again', 'error')
   }, [location.search])
 
   const handleAddAccount = () => {
-    if (accounts.length >= 1) {
+    // Super-admins can connect any number of accounts; regular users are capped at
+    // one of THEIR OWN (mirrors the backend rule in exchange_code_and_save). A
+    // super-admin sees every account in the system here, so counting the whole
+    // list — instead of just the ones they themselves own — would wrongly block
+    // them from adding a second account the moment any other user has one.
+    const ownAccounts = me ? accounts.filter(a => a.owner_id === me.id) : []
+    if (!me?.is_superuser && ownAccounts.length >= 1) {
       showToast('You already have a Gmail account connected. Remove it before adding a new one.', 'error')
       return
     }
@@ -122,6 +121,18 @@ function EmailAccountsSection() {
     UpdateEmailAccountService(acct.id, { is_active: !acct.is_active },
       () => { fetchAccounts(); setActing(null); showToast(`${acct.email_address} ${acct.is_active ? 'deactivated — polling stopped' : 'activated — polling resumed'}`) },
       () => { setActing(null); showToast('Update failed', 'error') }
+    )
+  }
+
+  // Re-run the OAuth consent flow for an already-connected account so it can
+  // pick up scopes (e.g. Calendar) granted after the account first connected.
+  // The callback matches on email address and refreshes the existing row
+  // rather than creating a duplicate, so this is safe to call anytime.
+  const handleReconnect = (acct) => {
+    setActing(acct.id + '_reconnect')
+    GetEmailAccountAuthUrlService(
+      (data) => { window.location.href = data.url },
+      (_status, msg) => { setActing(null); showToast(msg || 'Could not get auth URL', 'error') }
     )
   }
 
@@ -223,10 +234,24 @@ function EmailAccountsSection() {
                 {acct.display_name && acct.display_name !== acct.email_address && (
                   <p className="text-[11px] text-gray-400 mt-0.5">{acct.display_name}</p>
                 )}
+                {!(acct.scopes || []).includes('https://www.googleapis.com/auth/calendar.events') && (
+                  <p className="text-[11px] text-amber-600 mt-0.5">
+                    No Calendar access — meetings for this rep's leads are skipped and flagged for manual scheduling. Reconnect to fix.
+                  </p>
+                )}
               </div>
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Reconnect (refresh token/scopes) */}
+                <button
+                  onClick={() => handleReconnect(acct)}
+                  disabled={!!acting}
+                  title="Reconnect — refreshes token and picks up newly added scopes (e.g. Calendar)"
+                  className="p-1.5 rounded-lg text-indigo-400 hover:bg-indigo-50 transition-all disabled:opacity-50">
+                  {acting === acct.id + '_reconnect' ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                </button>
+
                 {/* Auto-send toggle */}
                 <button
                   onClick={() => {
@@ -314,154 +339,6 @@ function EmailAccountsSection() {
   )
 }
 
-// ─── LinkedIn Accounts section ────────────────────────────────────────────────
-
-function LinkedInAccountsSection() {
-  const location = useLocation()
-  const [accounts, setAccounts] = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [authLoading, setAuthLoading] = useState(false)
-  const [acting, setActing]     = useState(null)
-  const [toast, setToast]       = useState(null)
-
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3500)
-  }
-
-  const fetchAccounts = () => {
-    setLoading(true)
-    GetLinkedInAccountsService(
-      (data) => { setAccounts(data.items || []); setLoading(false) },
-      () => setLoading(false),
-    )
-  }
-
-  useEffect(() => {
-    fetchAccounts()
-    const params = new URLSearchParams(location.search)
-    if (params.get('linkedin_added')) showToast(`✓ ${params.get('linkedin_added')} connected`)
-    if (params.get('linkedin_error')) showToast('Failed to connect LinkedIn — check client credentials', 'error')
-  }, [location.search])
-
-  const handleConnect = () => {
-    setAuthLoading(true)
-    GetLinkedInAuthUrlService(
-      (data) => { window.location.href = data.url },
-      () => { setAuthLoading(false); showToast('Could not get LinkedIn auth URL — is LINKEDIN_CLIENT_ID set?', 'error') },
-    )
-  }
-
-  const handleDisconnect = (acct) => {
-    if (!window.confirm(`Disconnect ${acct.name || acct.email}?`)) return
-    setActing(acct.id)
-    DisconnectLinkedInAccountService(acct.id,
-      () => { fetchAccounts(); setActing(null); showToast('LinkedIn account disconnected') },
-      () => { setActing(null); showToast('Failed to disconnect', 'error') },
-    )
-  }
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
-      <AnimatePresence>
-        {toast && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className={`fixed top-5 right-5 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg
-              ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>
-            {toast.msg}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5 pb-4 border-b border-gray-100">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl" style={{ background: '#0077b520' }}>
-            <Linkedin size={16} style={{ color: '#0077b5' }} />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">LinkedIn Accounts</h3>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              {accounts.length} account{accounts.length !== 1 ? 's' : ''} connected — used for outreach pipeline
-            </p>
-          </div>
-        </div>
-        <button onClick={handleConnect} disabled={authLoading}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-xs font-semibold hover:opacity-90 transition-all disabled:opacity-60"
-          style={{ background: '#0077b5' }}>
-          {authLoading ? <RefreshCw size={12} className="animate-spin" /> : <Plus size={12} />}
-          {authLoading ? 'Redirecting...' : 'Connect LinkedIn'}
-        </button>
-      </div>
-
-      {/* Account list */}
-      {loading ? (
-        <div className="space-y-3">
-          {[1].map(i => <div key={i} className="h-16 rounded-xl bg-gray-100 animate-pulse" />)}
-        </div>
-      ) : accounts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: '#0077b515' }}>
-            <Linkedin size={20} style={{ color: '#0077b5' }} />
-          </div>
-          <p className="text-sm font-semibold text-gray-700">No LinkedIn account connected</p>
-          <p className="text-xs text-gray-400 max-w-xs">
-            Click <strong>Connect LinkedIn</strong> to authorize via LinkedIn OAuth.
-            Your session is used for outreach and profile discovery.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {accounts.map(acct => (
-            <div key={acct.id}
-              className="flex items-center gap-4 px-4 py-3 rounded-xl border border-blue-100 bg-blue-50/20 transition-all">
-              {/* Avatar */}
-              {acct.picture ? (
-                <img src={acct.picture} alt={acct.name} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
-              ) : (
-                <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
-                  style={{ background: '#0077b5' }}>
-                  {(acct.name || 'L')[0].toUpperCase()}
-                </div>
-              )}
-
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-900 truncate">{acct.name || 'LinkedIn User'}</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700">
-                    Connected
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-400 mt-0.5 truncate">{acct.email}</p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                  onClick={() => handleDisconnect(acct)}
-                  disabled={!!acting}
-                  title="Disconnect"
-                  className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 transition-all disabled:opacity-50">
-                  {acting === acct.id ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* <p className="mt-4 text-[11px] text-gray-400 flex items-center gap-1.5">
-        <AlertCircle size={11} />
-        Requires <strong>LINKEDIN_CLIENT_ID</strong> + <strong>LINKEDIN_CLIENT_SECRET</strong> in .env.local.
-        Create an app at <strong>linkedin.com/developers</strong> → request "Sign In with LinkedIn using OpenID Connect".
-      </p> */}
-    </motion.div>
-  )
-}
-
-
-
 // ─── Main Settings page ───────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -470,9 +347,6 @@ export default function Settings() {
 
       {/* Email Accounts — live section */}
       <EmailAccountsSection />
-
-      {/* LinkedIn Accounts — live section */}
-      <LinkedInAccountsSection />
 
       {/* Static config sections */}
       {staticSections.map((section, si) => (

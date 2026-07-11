@@ -5,7 +5,6 @@ Each node takes (state, config) and returns a partial state dict.
 The DB session is passed via config["configurable"]["db"] — never in state.
 """
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional
@@ -23,6 +22,7 @@ from app.services.sales_gap_service import (
     extract_structured_gaps,
     fetch_rag_context,
     find_similar_products,
+    match_exact_product,
     sanitize_ai_response,
 )
 
@@ -129,12 +129,6 @@ _MEETING_KEYWORDS = [
     "talk to someone", "speak to someone", "connect with someone",
 ]
 
-_MONTH_MAP = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-}
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _parse_received_at(date_str: str) -> datetime:
@@ -168,89 +162,6 @@ def _get_fbt(product_id: Optional[str]) -> str:
         return f"\n\n---\nYou may also be interested in:\n{row[0]}" if row else ""
     except Exception:
         return ""
-
-
-_WEEKDAY_MAP = {
-    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1,
-    "wednesday": 2, "wed": 2, "thursday": 3, "thu": 3, "thurs": 3,
-    "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
-}
-
-
-def _parse_time_of_day(text: str) -> Optional[tuple[int, int]]:
-    """Extract HH:MM from text like 'at 4 pm', '4:30 PM', '16:00'. Returns (hour, minute) in 24h."""
-    m = re.search(r'(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)', text)
-    if m:
-        hour = int(m.group(1))
-        minute = int(m.group(2) or 0)
-        ampm = m.group(3)
-        if ampm == "pm" and hour != 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
-        return (hour, minute)
-    # 24-hour like "16:00" or "at 14:30"
-    m = re.search(r'(?:at\s+)?(\d{1,2}):(\d{2})\b', text)
-    if m:
-        return (int(m.group(1)), int(m.group(2)))
-    return None
-
-
-def _parse_requested_time(body: str) -> Optional[datetime]:
-    """Parse a meeting time from email body. Handles absolute dates, 'tomorrow', 'today', 'tonight', weekday names.
-    Common typos like 'tommorow', 'tommorrow', 'tmrw' are also accepted."""
-    from zoneinfo import ZoneInfo
-    ist = ZoneInfo("Asia/Kolkata")
-    b = body.lower()
-    now_ist = datetime.now(ist)
-
-    # 1) Absolute date: "at 4 pm on 26 May 2026"
-    m = re.search(
-        r'at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm).*?(\d{1,2})(?:st|nd|rd|th)?\s+'
-        r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s*(\d{4})?', b
-    )
-    if m:
-        hour, minute = int(m.group(1)), int(m.group(2) or 0)
-        ampm, day = m.group(3), int(m.group(4))
-        month = _MONTH_MAP.get(m.group(5)[:3], 1)
-        year = int(m.group(6)) if m.group(6) else now_ist.year
-        if ampm == "pm" and hour != 12: hour += 12
-        elif ampm == "am" and hour == 12: hour = 0
-        try:
-            return datetime(year, month, day, hour, minute, tzinfo=ist).astimezone(timezone.utc)
-        except ValueError:
-            pass
-
-    # 2) Relative date keywords — "tomorrow", "today", "tonight", typos
-    target_date = None
-    if re.search(r'\b(tomorrow|tomorow|tommorow|tommorrow|tmrw|tmr)\b', b):
-        target_date = (now_ist + timedelta(days=1)).date()
-    elif re.search(r'\btoday\b', b):
-        target_date = now_ist.date()
-    elif re.search(r'\b(tonight|this evening)\b', b):
-        target_date = now_ist.date()
-    else:
-        # 3) Weekday name — "monday", "next thursday", etc.
-        wm = re.search(r'(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thurs|fri|sat|sun)\b', b)
-        if wm:
-            target_weekday = _WEEKDAY_MAP[wm.group(1)]
-            days_ahead = (target_weekday - now_ist.weekday()) % 7
-            if days_ahead == 0:
-                days_ahead = 7  # "monday" said on monday = next monday
-            target_date = (now_ist + timedelta(days=days_ahead)).date()
-
-    if target_date:
-        tod = _parse_time_of_day(b)
-        if not tod:
-            # No time given — default to 10:00 AM IST
-            tod = (10, 0)
-        hour, minute = tod
-        try:
-            return datetime(target_date.year, target_date.month, target_date.day,
-                            hour, minute, tzinfo=ist).astimezone(timezone.utc)
-        except ValueError:
-            pass
-    return None
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
@@ -401,6 +312,37 @@ def node_upsert_lead(state: dict, config: RunnableConfig) -> dict:
 
 _THREAD_PRODUCT_TTL_DAYS = 5
 
+_CONTEXT_RESET_PHRASES = [
+    "forget the previous product", "forget that product", "forget the product",
+    "forget previous product", "forget that", "forget it",
+    "let's discuss another product", "lets discuss another product",
+    "discuss another product", "start over", "new enquiry", "new inquiry",
+]
+
+
+def _is_context_reset(text: str) -> bool:
+    """True when the customer explicitly wants to drop the thread's remembered product."""
+    t = text.lower()
+    return any(p in t for p in _CONTEXT_RESET_PHRASES)
+
+
+def _has_product_signal(db: Session, text: str) -> bool:
+    """
+    True when `text` shares keywords with at least one catalog product (even loosely) —
+    i.e. it references something concrete of its own, whether that's the same product
+    being discussed or a different one.
+
+    False for a purely generic follow-up ("what's the price?", "send the brochure",
+    "does it support Modbus" in most cases) that carries no product-identifying words at
+    all — safe to resolve via the thread's remembered product.
+
+    Deliberately reuses find_similar_products' loose keyword-overlap check (not the
+    stricter Phase-2 threshold in detect_product) — a single matching keyword is already
+    a strong enough signal that the message is about *something* specific, even if that
+    something can't be pinned to exactly one product yet.
+    """
+    return bool(find_similar_products(db, text, limit=1))
+
 
 def node_detect_product(state: dict, config: RunnableConfig) -> dict:
     """3-phase product detection from email subject + body.
@@ -410,55 +352,89 @@ def node_detect_product(state: dict, config: RunnableConfig) -> dict:
     product is not yet confirmed by the customer, so it must not show up in
     Product Intelligence analytics as a confirmed inquiry.
 
-    Thread-product inheritance: if a prior email in the same Gmail thread
-    already confirmed a product within the last 5 days, inherit it as
-    high-confidence and skip detection + clarification entirely.
+    Thread-product context: a purely generic follow-up ("what's the price?", "send the
+    brochure") inherits the product a prior email in this Gmail thread already confirmed
+    within the last 5 days. An explicit product mention in the CURRENT message always
+    overrides the inherited one; a message that shares keywords with some other catalog
+    product/category (e.g. "the sensor", "the biometric plc") is NOT treated as generic —
+    it falls through to normal detection instead of silently inheriting the wrong product,
+    even if the message also contains a generic word like "price" elsewhere. Reset phrases
+    like "forget that" / "start over" also drop the inherited product.
     """
     db = _get_db(config)
+    text = f"{state['subject']} {state['effective_body']}"
 
-    thread_id = state.get("gmail_thread_id")
-    if thread_id:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=_THREAD_PRODUCT_TTL_DAYS)
-        prior = (
-            db.query(Email)
-            .filter(
+    def _persist(product_id, product_name, confidence):
+        if state.get("email_id") and product_name and confidence == "high":
+            db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
+                {"detected_product_id": product_id, "detected_product_name": product_name},
+                synchronize_session=False,
+            )
+            db.flush()
+        return {
+            "product_id": product_id,
+            "product_name": product_name,
+            "product_confidence": confidence or "none",
+        }
+
+    if _is_context_reset(state["effective_body"]):
+        logger.info("[EMAIL WORKFLOW] Customer asked to reset product context — detecting fresh")
+    else:
+        # An explicit, exact product mention in this message always wins over thread history.
+        fresh_id, fresh_name = match_exact_product(db, text)
+        if fresh_id:
+            logger.info(f"[PRODUCT DETECT] Exact match: {fresh_name!r}")
+            return _persist(fresh_id, fresh_name, "high")
+
+        thread_id = state.get("gmail_thread_id")
+        if thread_id and not _has_product_signal(db, state["effective_body"]):
+            cutoff = datetime.now(timezone.utc) - timedelta(days=_THREAD_PRODUCT_TTL_DAYS)
+            thread_filters = [
                 Email.gmail_thread_id == thread_id,
                 Email.detected_product_id.isnot(None),
                 Email.received_at >= cutoff,
+            ]
+            # Scope to the same mailbox too — gmail_thread_id is a Gmail-internal id and,
+            # while collisions across two different accounts are effectively impossible in
+            # practice, this keeps two different clients/threads fully isolated by construction
+            # rather than relying on that assumption.
+            account_id = config["configurable"].get("account_id")
+            if account_id:
+                thread_filters.append(Email.account_id == UUID(account_id))
+            prior = (
+                db.query(Email)
+                .filter(*thread_filters)
+                .order_by(Email.received_at.desc())
+                .first()
             )
-            .order_by(Email.received_at.desc())
-            .first()
-        )
-        if prior:
-            logger.info(
-                f"[EMAIL WORKFLOW] Thread product inherited: {prior.detected_product_name} "
-                f"(thread={thread_id}, last_seen={prior.received_at.date()})"
-            )
-            return {
-                "product_id": prior.detected_product_id,
-                "product_name": prior.detected_product_name,
-                "product_confidence": "high",
-            }
+            if prior:
+                logger.info(
+                    f"[EMAIL WORKFLOW] Thread product inherited: {prior.detected_product_name} "
+                    f"(thread={thread_id}, last_seen={prior.received_at.date()})"
+                )
+                return {
+                    "product_id": prior.detected_product_id,
+                    "product_name": prior.detected_product_name,
+                    "product_confidence": "high",
+                }
 
-    text = f"{state['subject']} {state['effective_body']}"
     product_id, product_name, confidence = detect_product(db, text)
-    if state.get("email_id") and product_name and confidence == "high":
-        db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"detected_product_id": product_id, "detected_product_name": product_name},
-            synchronize_session=False,
-        )
-        db.flush()
-    return {
-        "product_id": product_id,
-        "product_name": product_name,
-        "product_confidence": confidence or "none",
-    }
+    return _persist(product_id, product_name, confidence)
 
 
 def node_fetch_rag(state: dict, config: RunnableConfig) -> dict:
-    """Fetch RAG context for the email body."""
+    """Fetch RAG context for the email body.
+
+    Anchors the retrieval query on the resolved product name (fresh or inherited from
+    thread context) when known — a vague follow-up like "what's the price?" has no
+    product-specific words of its own, so without the name the vector search has nothing
+    to key off and may retrieve irrelevant chunks even though the right product is known.
+    """
+    query = state["effective_body"]
+    if state.get("product_name"):
+        query = f"{state['product_name']}: {query}"
     try:
-        rag = fetch_rag_context(state["effective_body"])
+        rag = fetch_rag_context(query)
         return {"rag_context": rag or ""}
     except Exception as e:
         logger.warning(f"[EMAIL WORKFLOW] RAG fetch failed: {e}")
@@ -529,6 +505,49 @@ def node_extract_gaps(state: dict, config: RunnableConfig) -> dict:
     return {"gaps": gaps or []}
 
 
+def _build_voice_cta(db, lead_id, account_id, sender_email: str) -> str:
+    """
+    Create a LiveKit voice room for this email lead and return a CTA footer block.
+    Non-fatal — if room creation fails, returns an office-phone-only block.
+    """
+    from app.core.config import settings as _cfg
+
+    join_url   = None
+    owner_id   = None
+
+    try:
+        from app.models.email_account import EmailAccount
+        from uuid import UUID
+        acct = db.query(EmailAccount).filter(EmailAccount.id == UUID(str(account_id))).first() if account_id else None
+        owner_id = acct.owner_id if acct else None
+    except Exception:
+        pass
+
+    try:
+        if owner_id:
+            from app.services.voice_room_service import create_room
+            _lead_id = UUID(str(lead_id)) if lead_id else None
+            session, join_url = create_room(
+                db,
+                channel_origin="gmail",
+                owner_id=owner_id,
+                lead_id=_lead_id,
+            )
+    except Exception as exc:
+        logger.warning(f"[EMAIL VOICE CTA] Room creation failed: {exc}")
+
+    voice_line = (
+        f"🎙️ Talk to our AI right now (no app needed):\n{join_url}\n\n"
+        if join_url else ""
+    )
+    return (
+        "\n\n---\n"
+        f"{voice_line}"
+        f"📅 Schedule a Google Meet with an expert: Reply 'MEET' or visit rdltech.in/schedule\n"
+        f"📞 Call us directly: {_cfg.COMPANY_PHONE}"
+    )
+
+
 def node_auto_send(state: dict, config: RunnableConfig) -> dict:
     """Create Gmail draft and send immediately — no gaps, full confidence."""
     db = _get_db(config)
@@ -546,17 +565,21 @@ def node_auto_send(state: dict, config: RunnableConfig) -> dict:
         db.flush()
         return {"action": "pending_human_draft_failed"}
 
+    # Append voice CTA to every auto-sent Sales reply
+    voice_cta = _build_voice_cta(db, state.get("lead_id"), state.get("account_id"), sender_email)
+    full_body  = draft_text + voice_cta
+
     try:
         reply_subject = subject if subject.startswith("Re:") else f"Re: {subject}"
         draft = gmail_service.create_draft(
             gmail_svc, to=sender_email, subject=reply_subject,
-            body=draft_text, thread_id=state.get("gmail_thread_id"),
+            body=full_body, thread_id=state.get("gmail_thread_id"),
             reply_to_message_id=state.get("rfc_message_id") or None,
             references=state.get("rfc_references") or None,
         )
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"ai_draft": draft_text, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
+            {"ai_draft": full_body, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
              "tracking_token": draft.get("tracking_token")},
             synchronize_session=False,
         )
@@ -620,6 +643,43 @@ def node_hold_draft(state: dict, config: RunnableConfig) -> dict:
         return {"action": "pending_human_hold_failed"}
 
 
+_COMPANY_OVERVIEW = (
+    "RDL Technologies Pvt Ltd manufactures a wide range of Industrial IoT, automation, and embedded systems. "
+    "Our core hardware and software lineup includes smart data loggers, programmable cloud PLCs, RFID scanners, "
+    "and industrial development kits.\n\n"
+    "Our main product categories are:\n\n"
+    "**Industrial IoT & Industry 4.0**\n"
+    "- Data Loggers & PLCs — e.g. the RDL838 4G LTE Data Logger and Cloud PLC RDL826\n"
+    "- Factory Automation — energy monitoring systems (EMS), ESD workstation monitoring, and machine/cloud integration\n"
+    "- Biometric Authentication — access control and identification systems for manufacturing equipment\n\n"
+    "**Development Boards & Trainer Kits**\n"
+    "- Microcontroller kits (8051, PIC, ATmega16/32/64, and ATmega328)\n"
+    "- ARM Cortex and ESP32 IoT development boards\n"
+    "- Biomedical and motor/actuator interface kits\n\n"
+    "**Industrial Hardware Modules**\n"
+    "- Relay Boards — USB, RS485, and ESP32 WiFi-enabled relay modules\n"
+    "- RFID Readers — UHF Bluetooth and industrial mid-to-long-range readers\n"
+    "- Converters — USB to RS485 and FT245 breakout boards\n"
+    "- Sensors & Dimmer Modules — Visible Light Communication (LiFi) starter kits and digital dimmers"
+)
+
+_COMPANY_INQUIRY_KEYWORDS = [
+    "product list", "list of product", "list of your product", "your products",
+    "what products", "what do you sell", "what does rdl", "what rdl does",
+    "what are you specialized", "what you specialize", "your specialization",
+    "tell me about rdl", "tell me about your company", "about your company",
+    "your company profile", "range of products", "product range",
+    "product catalog", "catalog of products", "types of products", "kinds of products",
+    "what do you offer", "what you offer",
+]
+
+
+def _is_general_company_inquiry(text: str) -> bool:
+    """True when asking about RDL as a company / our product lineup — not a specific, unmatched product."""
+    t = text.lower()
+    return any(kw in t for kw in _COMPANY_INQUIRY_KEYWORDS)
+
+
 def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
     """Send a clarification email when product confidence is low/none."""
     db = _get_db(config)
@@ -636,6 +696,13 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
         intro = (
             "Thank you for reaching out! To point you to the right product and provide accurate details, "
             "could you confirm which product you're asking about? Here are some that may match:"
+        )
+    elif _is_general_company_inquiry(f"{state['subject']} {state['effective_body']}"):
+        intro = (
+            "Thank you for your inquiry.\n\n"
+            f"{_COMPANY_OVERVIEW}\n\n"
+            "To provide accurate information, could you please let us know the exact product name or order code? "
+            "You can browse our full catalog at https://rdltech.in/products"
         )
     else:
         intro = (
@@ -660,6 +727,17 @@ def node_send_clarification(state: dict, config: RunnableConfig) -> dict:
             reply_to_message_id=state.get("rfc_message_id") or None,
             references=state.get("rfc_references") or None,
         )
+
+        if not state.get("auto_send_enabled", True):
+            db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
+                {"ai_draft": clarification, "gmail_draft_id": draft["id"], "needs_human": True,
+                 "status": EmailStatus.DRAFT_READY, "tracking_token": draft.get("tracking_token")},
+                synchronize_session=False,
+            )
+            db.flush()
+            logger.info(f"[EMAIL WORKFLOW] Clarification drafted (draft mode) — held for review: {state['subject']}")
+            return {"action": "clarification_draft_held"}
+
         gmail_service.send_draft(gmail_svc, draft["id"])
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
             {"ai_draft": clarification, "gmail_draft_id": None, "status": EmailStatus.REPLIED,
@@ -739,7 +817,10 @@ def node_defer_human(state: dict, config: RunnableConfig) -> dict:
 
 
 def node_archive(state: dict, config: RunnableConfig) -> dict:
-    """Archive Transactional/Promotional/Personal emails."""
+    """Archive Transactional/Promotional/Personal emails.
+    For Transactional messages with sales-relevant types (invoice, order, receipt)
+    we also auto-create or update a Deal in the CRM pipeline.
+    """
     db = _get_db(config)
     gmail_svc = _get_gmail_svc(config)
     label = EmailLabel(state["label"])
@@ -753,6 +834,26 @@ def node_archive(state: dict, config: RunnableConfig) -> dict:
     )
     db.flush()
     logger.info(f"[EMAIL WORKFLOW] {state['label']} email archived: {state['subject']}")
+
+    # Auto-create/update Deal from invoice or purchase document
+    if label == EmailLabel.TRANSACTIONAL:
+        ttype = state.get("transactional_type")
+        tdata = state.get("transactional_data") or {}
+        lead_id = state.get("lead_id")
+        if ttype and lead_id:
+            try:
+                from app.services.transaction_deal_service import process_transaction_for_deal
+                process_transaction_for_deal(
+                    db            = db,
+                    lead_id       = lead_id,
+                    transactional_type = ttype,
+                    transactional_data = tdata,
+                    owner_id      = None,   # owner_id filled from lead's owner in service
+                    source_channel = "email",
+                )
+            except Exception as exc:
+                logger.warning(f"[EMAIL WORKFLOW] transaction→deal failed: {exc}")
+
     return {"action": "archived"}
 
 
@@ -838,80 +939,37 @@ def _format_slot(dt: datetime) -> str:
 
 
 def _build_slot_proposal_email(name: str, product: Optional[str], slots: list[datetime]) -> str:
-    """Follow-up email offering the customer a choice of free meeting slots."""
+    """Reply telling the customer sales has been notified, listing when our team is free."""
     first = name.split()[0].title() if name else "there"
     subject_line = f" about the {product}" if product else ""
     options = "\n".join(f"  {i+1}. {_format_slot(s)}" for i, s in enumerate(slots))
     return (
         f"Hi {first},\n\n"
         f"Thanks for your interest in scheduling a meeting{subject_line}. "
-        f"Here are a few available times:\n\n"
+        f"I've let our sales team know you'd like to set up a call, and they'll confirm and send "
+        f"the calendar invite themselves.\n\n"
+        f"Our team is currently free at these times:\n\n"
         f"{options}\n\n"
-        f"Just reply with the option that works best for you (or suggest another time), "
-        f"and we'll send a Google Meet calendar invite to confirm.\n\n"
+        f"Let us know which of these works for you, or suggest another time that suits you better.\n\n"
         f"Best regards,\nRDL Technologies Sales Team"
     )
 
 
 def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
     """
-    Handle meeting/demo intent on a Sales email:
+    Handle meeting/demo intent on a Sales email.
 
-    - Specific time given (parsed from body) → book it on Google Calendar with a
-      GMeet link + invite email. If the slot is taken, use the next free slot after it.
-    - Meeting intent but NO specific time → send a threaded follow-up email proposing
-      the next few free slots so the customer can pick one. (Previously this case did
-      nothing, leaving the "we'll follow up" promise unfulfilled.)
+    The AI never books the meeting itself — scheduling is done manually by the
+    sales team. This node only checks our calendar for open slots (so we don't
+    offer times that clash with an existing meeting), replies with those times,
+    and flags the email so a rep follows up and confirms manually.
     """
     body_lower = state["effective_body"].lower()
     if not any(kw in body_lower for kw in _MEETING_KEYWORDS):
         return {}
 
     db = _get_db(config)
-    lead_id = UUID(state["lead_id"]) if state.get("lead_id") else None
-    requested_time = _parse_requested_time(state["effective_body"])
 
-    # ── Case A: explicit time → book it ────────────────────────────────────────
-    if requested_time:
-        try:
-            from app.services.calendar_service import create_meeting, get_calendar_service, find_next_free_slot, _is_slot_free
-            from app.models.calendar_event import EventTrigger
-            cal_svc = get_calendar_service()
-            slot_end = requested_time + timedelta(minutes=30)
-            if not _is_slot_free(cal_svc, requested_time, slot_end):
-                hours_offset = max(1, int((requested_time - datetime.now(timezone.utc)).total_seconds() / 3600))
-                new_time = find_next_free_slot(hours_from_now=hours_offset)
-                logger.info(f"[EMAIL WORKFLOW] Requested slot {requested_time} taken — using {new_time}")
-                requested_time = new_time
-            # owner_id comes from the EmailAccount that received this message
-            from app.models.email_account import EmailAccount
-            _acc_id = config["configurable"].get("account_id")
-            _owner = None
-            if _acc_id:
-                _acc = db.query(EmailAccount).filter(EmailAccount.id == UUID(_acc_id)).first()
-                _owner = _acc.owner_id if _acc else None
-            if _owner is None:
-                logger.warning("[EMAIL WORKFLOW] No owner_id for meeting — skipping schedule")
-                return {}
-            event = create_meeting(
-                db=db,
-                attendee_email=state["sender_email"],
-                title=f"Sales Discussion — {state.get('product_name') or state['subject'] or 'Product Inquiry'}",
-                description=f"Meeting requested via email.\nSubject: {state['subject']}",
-                start_time=requested_time,
-                owner_id=_owner,
-                duration_minutes=30,
-                trigger=EventTrigger.MANUAL,
-                lead_id=lead_id,
-                gmail_svc=_get_gmail_svc(config),
-            )
-            logger.info(f"[EMAIL WORKFLOW] Meeting scheduled: {event.meet_link} @ {requested_time}")
-            return {"action": "meeting_scheduled"}
-        except Exception as e:
-            logger.warning(f"[EMAIL WORKFLOW] Meeting scheduling failed: {e}", exc_info=True)
-            return {}
-
-    # ── Case B: meeting intent, no time → propose free slots via follow-up ──────
     try:
         from app.services.calendar_service import find_free_slots
         slots = find_free_slots(count=3)
@@ -921,23 +979,25 @@ def node_try_schedule_meeting(state: dict, config: RunnableConfig) -> dict:
         body = _build_slot_proposal_email(
             state.get("sender_raw", ""), state.get("product_name"), slots
         )
-        subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
+        reply_subject = state["subject"] if state["subject"].startswith("Re:") else f"Re: {state['subject']}"
         gmail_svc = _get_gmail_svc(config)
-        sent = gmail_service.send_email(
-            gmail_svc,
-            to=state["sender_email"],
-            subject=subject,
-            body=body,
-            thread_id=state.get("gmail_thread_id"),
+        draft = gmail_service.create_draft(
+            gmail_svc, to=state["sender_email"], subject=reply_subject,
+            body=body, thread_id=state.get("gmail_thread_id"),
             reply_to_message_id=state.get("rfc_message_id") or None,
             references=state.get("rfc_references") or None,
         )
+        if state.get("auto_send_enabled", True):
+            gmail_service.send_draft(gmail_svc, draft["id"])
+
+        # A human must still reach out to lock in the time — flag for the
+        # sales team regardless of whether the reply itself was auto-sent.
         db.query(Email).filter(Email.id == UUID(state["email_id"])).update(
-            {"tracking_token": sent.get("tracking_token")},
+            {"needs_human": True, "tracking_token": draft.get("tracking_token")},
             synchronize_session=False,
         )
         db.flush()
-        logger.info(f"[EMAIL WORKFLOW] Proposed {len(slots)} meeting slots to {state['sender_email']}")
+        logger.info(f"[EMAIL WORKFLOW] Proposed {len(slots)} meeting slots to {state['sender_email']} — flagged for sales team")
         return {"action": "meeting_slots_proposed"}
     except Exception as e:
         logger.warning(f"[EMAIL WORKFLOW] Slot proposal failed: {e}", exc_info=True)

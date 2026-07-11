@@ -1,11 +1,12 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 logger = logging.getLogger("rdl_app_logger")
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,13 @@ from app.services.workflows.email_workflow import run_email_workflow
 from app.services.workflows.email_nodes import generate_sales_draft as _gen_draft
 
 router = APIRouter(prefix="/gmail", tags=["Gmail"])
+
+# Dedicated pool for Gmail Pub/Sub processing — kept separate from Starlette's shared
+# threadpool (which is also where every plain `def` route, including login and the
+# health check, runs). A backlog of webhook deliveries can hold threads for minutes
+# at a time (Gmail API + LLM calls per message); on the shared pool that starves out
+# unrelated sync endpoints across the whole app.
+_webhook_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gmail-webhook")
 
 
 def _check_email_access(db: Session, email: Email, user: User) -> None:
@@ -596,29 +604,34 @@ def get_email_analytics(
         reverse=True,
     )[:15]
 
-    # ── Revenue & order analytics (from transactional emails) ─────────────────
+    # ── Transactional email analytics ─────────────────────────────────────────
+    # NOTE: revenue_total is extracted from ANY Transactional-labelled email
+    # (bank alerts, e-commerce invoices, etc.) — not just RDL product sales.
+    # order_count = Transactional emails that have a detected amount OR a
+    # sales-relevant type (invoice/order/receipt) — whichever is non-empty.
     revenue_total = 0.0
-    order_count = 0
-    po_count = 0
+    order_count   = 0
+    po_count      = 0  # kept for schema compat — always 0 (PO tracking not implemented)
     for e in all_emails:
         if e.label != EmailLabel.TRANSACTIONAL:
             continue
         tdata = e.transactional_data or {}
         ttype = (e.transactional_type or "").lower()
         raw_amount = tdata.get("amount") or tdata.get("total") or tdata.get("value")
+        has_amount = False
         if raw_amount:
             try:
                 cleaned = str(raw_amount).replace(",", "").replace("₹", "").replace("Rs", "").strip()
-                revenue_total += float("".join(c for c in cleaned if c.isdigit() or c == "."))
+                val = float("".join(c for c in cleaned if c.isdigit() or c == "."))
+                revenue_total += val
+                has_amount = True
             except (ValueError, TypeError):
                 pass
-        if "order" in ttype or "invoice" in ttype or "receipt" in ttype:
+        # Count as a transaction if it has an amount OR a recognised order/invoice type
+        if has_amount or any(k in ttype for k in ("order", "invoice", "receipt", "payment")):
             order_count += 1
-        ref = (tdata.get("reference_number") or "").upper()
-        if "PO" in ref or "P.O" in ref or "purchase" in ttype:
-            po_count += 1
 
-    # ── Conversion rate ───────────────────────────────────────────────────────
+    # ── Reply rate (not true conversion — counts Sales emails that got a reply) ──
     conversion_rate_pct = round(
         sum(1 for e in sales if e.status == EmailStatus.REPLIED) / len(sales) * 100, 1
     ) if sales else 0.0
@@ -797,6 +810,43 @@ def get_email_analytics(
                     by_owner[user_email]["gmail_accounts"].append(gmail_addr)
                 by_owner[user_email]["email_count"] += 1
 
+    # ── Top senders (inbound emails, grouped by sender) ───────────────────────
+    sender_map: dict = {}   # sender_email → {total, labels: {}, last_at, lead_id, lead_name}
+    for e in inbound_all:
+        s = e.sender or "unknown"
+        if s not in sender_map:
+            sender_map[s] = {
+                "sender": s, "total": 0, "labels": {},
+                "last_at": None, "lead_id": None, "lead_name": None,
+            }
+        rec = sender_map[s]
+        rec["total"] += 1
+        lbl = (e.label.value if hasattr(e.label, "value") else str(e.label)) if e.label else "Unclassified"
+        rec["labels"][lbl] = rec["labels"].get(lbl, 0) + 1
+        if e.received_at and (rec["last_at"] is None or e.received_at > rec["last_at"]):
+            rec["last_at"] = e.received_at
+        if e.lead_id and not rec["lead_id"]:
+            rec["lead_id"] = str(e.lead_id)
+
+    # Resolve lead names in one query
+    lead_ids = [v["lead_id"] for v in sender_map.values() if v["lead_id"]]
+    if lead_ids:
+        from uuid import UUID as _UUID
+        from app.models.leads import Lead as _Lead
+        leads_q = db.query(_Lead.id, _Lead.name).filter(
+            _Lead.id.in_([_UUID(lid) for lid in lead_ids])
+        ).all()
+        lead_name_map = {str(r.id): r.name for r in leads_q}
+        for rec in sender_map.values():
+            if rec["lead_id"]:
+                rec["lead_name"] = lead_name_map.get(rec["lead_id"])
+
+    top_senders = sorted(sender_map.values(), key=lambda x: x["total"], reverse=True)[:20]
+    # Serialize last_at for JSON
+    for rec in top_senders:
+        if rec["last_at"]:
+            rec["last_at"] = rec["last_at"].isoformat()
+
     return EmailSLAAnalytics(
         total_emails=len(all_emails),
         total_inbound=len(inbound_all),
@@ -835,6 +885,8 @@ def get_email_analytics(
         total_volume_breakdown=total_volume_breakdown,
         product_source_rows=product_source_rows,
         product_company_rows=product_company_rows,
+        top_senders=top_senders,
+        top_products=top_products_purchased,
         opened_count=opened_count,
         open_rate_pct=open_rate_pct,
     )
@@ -973,6 +1025,24 @@ def get_email(
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")
     _check_email_access(db, email, current_user)
+    return email
+
+
+@router.post("/{email_id}/read", response_model=EmailOut)
+def mark_email_read(
+    email_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark an email as opened/viewed by a human, independent of its workflow status."""
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+    _check_email_access(db, email, current_user)
+    if not email.is_read:
+        email.is_read = True
+        db.commit()
+        db.refresh(email)
     return email
 
 
@@ -1277,3 +1347,102 @@ def send_email(
     db.commit()
     db.refresh(email_row)
     return email_row
+
+
+@router.get("/conversations/{sender_email}", response_model=EmailListResponse)
+def get_sender_conversation(
+    sender_email: str,
+    page:  int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    db:    Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """All emails from/to a specific sender — full conversation history for that contact."""
+    from app.models.email_account import EmailAccount
+    if not current_user.is_superuser:
+        allowed = [a.id for a in db.query(EmailAccount.id).filter(
+            EmailAccount.owner_id == current_user.id
+        ).all()]
+        q = db.query(Email).filter(
+            Email.account_id.in_(allowed),
+            Email.sender == sender_email,
+        )
+    else:
+        q = db.query(Email).filter(Email.sender == sender_email)
+
+    total = q.count()
+    items = q.order_by(Email.received_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    return EmailListResponse(items=items, total=total, page=page, limit=limit)
+
+
+# ── Gmail Pub/Sub Push Webhook ────────────────────────────────────────────────
+# Google Cloud Pub/Sub calls this endpoint when Gmail detects a new message.
+# No auth guard — Google calls this directly (security via JWT verification).
+
+@router.post("/webhook", status_code=200, include_in_schema=False)
+async def gmail_pubsub_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Receive Gmail push notifications from Google Cloud Pub/Sub.
+    Pub/Sub sends an OIDC Bearer token in the Authorization header for verification.
+    The payload identifies the mailbox + historyId; we fetch new messages via history API.
+    """
+    import asyncio
+    from app.services.gmail_webhook_service import verify_pubsub_token, process_pubsub_notification
+    from app.core.config import settings as _cfg
+
+    # Verify Pub/Sub OIDC token
+    auth_header = request.headers.get("Authorization", "")
+    if not verify_pubsub_token(auth_header, _cfg.GMAIL_PUBSUB_AUDIENCE):
+        logger.warning("[GMAIL WEBHOOK] Rejected request — invalid Pub/Sub JWT")
+        raise HTTPException(status_code=403, detail="Invalid Pub/Sub token")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Offloaded to a dedicated worker pool (not Starlette's shared threadpool, which
+    # every plain sync route including login also relies on) — this can process
+    # dozens of messages (Gmail API + LLM calls) and previously blocked the event
+    # loop, or starved other sync endpoints, for as long as it took.
+    loop = asyncio.get_running_loop()
+    processed = await loop.run_in_executor(_webhook_executor, process_pubsub_notification, db, payload)
+    return {"status": "ok", "processed": processed}
+
+
+# ── Live updates (WebSocket) ───────────────────────────────────────────────────
+# Frontend connects here to receive a push the moment the webhook above processes
+# a new message, instead of polling GET /gmail/ on an interval.
+
+@router.websocket("/ws")
+async def gmail_live_updates(websocket: WebSocket, db: Session = Depends(get_db)):
+    from app.core.socket_manager import manager
+    from app.services.auth_service import decode_token
+
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            raise ValueError("not an access token")
+        user = db.query(User).filter(User.email == payload["sub"]).first()
+        if not user or not user.is_active:
+            raise ValueError("inactive or unknown user")
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
+    await manager.connect(user.id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # client sends nothing meaningful; just keeps the socket alive
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(user.id, websocket)

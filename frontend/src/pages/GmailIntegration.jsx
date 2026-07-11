@@ -6,6 +6,7 @@ import {
   Briefcase,
   Building2,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
   Clock,
   FileText,
@@ -26,9 +27,9 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
+import { ApproveDraftService, DiscardDraftService, GenerateDraftService, GetEmailByIdService, GetEmailCrmContextService, GetGmailMessagesService, GetGmailThreadService, MarkEmailReadService, ResolveEmailService, ResolveEmailGapService, SendEmailService, SyncGmailService, GetEmailAccountsService, ListUsersService, UpdateLeadService, UpdateDealService, GetEmailTemplatesService, CreateEmailTemplateService, DeleteEmailTemplateService } from '../services/ApiService'
 import GapResolveForm from '../components/GapResolveForm'
 
 // ─── Account color palette — cycles through these for each connected account ─
@@ -38,6 +39,79 @@ const ACCOUNT_COLORS = [
   { bg: 'bg-rose-100',   text: 'text-rose-700',   dot: 'bg-rose-500',   pill: 'bg-rose-100 text-rose-700 border-rose-200'   },
   { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-500',  pill: 'bg-amber-100 text-amber-700 border-amber-200'  },
 ]
+
+// ─── Account selector dropdown ───────────────────────────────────────────────
+function AccountDropdown({ accounts, activeAccount, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [open])
+
+  const current = accounts.find(a => a.id === activeAccount)
+  const currentIdx = accounts.findIndex(a => a.id === activeAccount)
+  const currentColor = currentIdx >= 0 ? ACCOUNT_COLORS[currentIdx % ACCOUNT_COLORS.length] : null
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border
+          ${activeAccount ? 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50' : 'bg-gray-800 text-white border-transparent shadow-sm'}`}>
+        {current ? (
+          <>
+            <span className={`w-2 h-2 rounded-full ${currentColor.dot}`}></span>
+            {current.email_address.split('@')[0]}
+            {current.is_primary && <span className="text-[8px] opacity-60">★</span>}
+          </>
+        ) : (
+          <>
+            <Inbox size={11} />
+            All accounts
+          </>
+        )}
+        <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute right-0 mt-1.5 w-52 z-50 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden py-1">
+            <button
+              onClick={() => { onSelect(''); setOpen(false) }}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors
+                ${!activeAccount ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <Inbox size={12} />
+              All accounts
+            </button>
+            {accounts.map((a, i) => {
+              const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
+              const isActive = activeAccount === a.id
+              return (
+                <button key={a.id}
+                  onClick={() => { onSelect(a.id); setOpen(false) }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors
+                    ${isActive ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color.dot}`}></span>
+                  <span className="truncate">{a.email_address}</span>
+                  {a.is_primary && <span className="text-[9px] opacity-60 ml-auto flex-shrink-0">★</span>}
+                </button>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -62,13 +136,18 @@ const STATUS_CONFIG = {
 }
 
 const TABS = [
-  { key: '',             label: 'Inbox',       icon: Mail,        businessOnly: true  },
-  { key: 'Sales',        label: 'Sales',       icon: Zap,         businessOnly: true  },
-  { key: 'Support',      label: 'Support',     icon: Users,       businessOnly: true  },
-  { key: 'Grievance',    label: 'Grievance',   icon: AlertCircle, businessOnly: true  },
-  { key: 'needs_human',  label: 'Needs Review',icon: AlertCircle, businessOnly: true  },
-  { key: 'draft_ready',  label: 'Drafts',      icon: Star,        businessOnly: true  },
-  { key: 'other',        label: 'Other',       icon: Archive,     businessOnly: false },
+  // Business pipeline labels
+  { key: '',               label: 'Inbox',          icon: Mail,        businessOnly: true,  color: '#6172f3' },
+  { key: 'Sales',          label: 'Sales',           icon: Zap,         businessOnly: true,  color: '#10b981' },
+  { key: 'Support',        label: 'Support',         icon: Users,       businessOnly: true,  color: '#3b82f6' },
+  { key: 'Grievance',      label: 'Grievance',       icon: AlertCircle, businessOnly: true,  color: '#ef4444' },
+  { key: 'needs_human',    label: 'Needs Review',    icon: AlertCircle, businessOnly: true,  color: '#f59e0b' },
+  { key: 'draft_ready',    label: 'Drafts',          icon: Star,        businessOnly: true,  color: '#f59e0b' },
+  // Non-business labels (individual)
+  { key: 'Transactional',  label: 'Transactional',   icon: Archive,     businessOnly: false, color: '#f97316' },
+  { key: 'Promotional',    label: 'Promotional',     icon: Tag,         businessOnly: false, color: '#8b5cf6' },
+  { key: 'Personal',       label: 'Personal',        icon: Users,       businessOnly: false, color: '#ec4899' },
+  { key: 'Unclassified',   label: 'Unclassified',    icon: Mail,        businessOnly: false, color: '#9ca3af' },
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -110,9 +189,9 @@ function EmailRow({ email, selected, onClick, accountColorMap = {}, acctOwnerMap
   const labelCfg = LABEL_CONFIG[email.label] || LABEL_CONFIG.Unclassified
   const statusCfg = STATUS_CONFIG[email.status] || STATUS_CONFIG.classified
   const StatusIcon = statusCfg.icon
-  // "Unread" = anything still needing human attention (not auto-replied/archived/ignored).
-  // Mirrors the backend's unread_priority ordering so the bold cue lines up with the sort.
-  const isUnread = ['new', 'draft_ready', 'pending_human'].includes(email.status)
+  // "Unread" = a human hasn't opened this email yet in the dashboard. Independent of
+  // `status` (AI pipeline progress) — the row un-bolds as soon as it's viewed.
+  const isUnread = !email.is_read
   const isGrievance = email.label === 'Grievance'
   const unresolvedGaps = (email.followup_gaps || []).filter(g => !(typeof g === 'object' ? g.resolved : false)).length
   const acctColor = email.account_email ? accountColorMap[email.account_email] : null
@@ -552,8 +631,10 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                           )}
                         </div>
                       </div>
-                      {/* Fill / collapse button — only when draft exists */}
-                      {!resolved && email.status === 'draft_ready' && (
+                      {/* Fill / collapse button — the backend always accepts a gap answer
+                          (it embeds it into the knowledge base regardless of email status;
+                          draft regeneration is simply skipped when there's no draft to redo) */}
+                      {!resolved && (
                         <button
                           onClick={() => setActiveGapIndex(isOpen ? null : i)}
                           className={`flex-shrink-0 text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all
@@ -584,10 +665,12 @@ function EmailDetail({ email, onRefresh, accountColorMap = {} }) {
                               () => {
                                 setGapResolving(false)
                                 setActiveGapIndex(null)
-                                if (isLastGap) {
-                                  // All gaps filled — backend regenerates draft (RAG + LLM).
-                                  // Poll every 2s until the email's draft_id or status changes,
-                                  // so we never show a stale or broken state.
+                                if (isLastGap && email.gmail_draft_id) {
+                                  // All gaps filled and a draft still exists — backend regenerates
+                                  // it (RAG + LLM). Poll every 2s until the draft_id or status
+                                  // changes, so we never show a stale or broken state.
+                                  // (If the draft was discarded there's nothing to regenerate —
+                                  // just refresh immediately, see the else branch below.)
                                   setRegenerating(true)
                                   let attempts = 0
                                   const poll = () => {
@@ -793,7 +876,7 @@ function initials(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?'
 }
 
-function CrmPanel({ email, onSelectEmail }) {
+function CrmPanel({ email, onSelectEmail, onClose }) {
   const [crm, setCrm] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingStatus, setSavingStatus] = useState(false)
@@ -838,9 +921,14 @@ function CrmPanel({ email, onSelectEmail }) {
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-gray-50/40 overflow-y-auto">
-      <div className="px-4 py-3 border-b border-gray-100">
+    <div className="w-80 flex-shrink-0 border-l border-gray-100 bg-white h-full overflow-y-auto">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
         <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">CRM Record</p>
+        {onClose && (
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+            <X size={15} />
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -1256,6 +1344,7 @@ export default function GmailIntegration() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(null)
+  const [crmOpen, setCrmOpen] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
@@ -1277,7 +1366,11 @@ export default function GmailIntegration() {
     const emailId = location.state?.selectEmailId
     if (!emailId) return
     GetEmailByIdService(emailId,
-      (data) => { setDirectEmail(data); setSelected(data.id) },
+      (data) => {
+        setDirectEmail(data)
+        setSelected(data.id)
+        if (!data.is_read) MarkEmailReadService(data.id, () => {}, () => {})
+      },
       () => { }
     )
   }, [location.state])
@@ -1331,12 +1424,17 @@ export default function GmailIntegration() {
     const params = { page, limit: PAGE_SIZE }
     if (activeTab === 'needs_human') params.needs_human = true
     else if (activeTab === 'draft_ready') params.status = 'draft_ready'
-    else if (activeTab === 'other') {
-      params.business_only = false
-    } else if (activeTab) {
-      params.label = activeTab
+    else {
+      const tabCfg = TABS.find(t => t.key === activeTab)
+      const isBusinessOnly = tabCfg ? tabCfg.businessOnly : true
+      params.business_only = isBusinessOnly
+      // For specific non-pipeline labels, pass the label filter explicitly
+      if (activeTab && activeTab !== 'other' && !isBusinessOnly) {
+        params.label = activeTab
+      } else if (activeTab && isBusinessOnly) {
+        params.label = activeTab
+      }
     }
-    if (activeTab !== 'other') params.business_only = true
     if (activeAccount) params.account_id = activeAccount
     if (filterDateFrom) params.date_from = new Date(filterDateFrom).toISOString()
     if (filterDateTo) { const d = new Date(filterDateTo); d.setHours(23,59,59,999); params.date_to = d.toISOString() }
@@ -1357,6 +1455,65 @@ export default function GmailIntegration() {
   useEffect(() => { fetchGlobalCounts() }, [fetchGlobalCounts])
   useEffect(() => { setPage(1); setSelected(null) }, [activeTab])
   useEffect(() => { setPage(1); setSelected(null) }, [activeAccount])
+
+  // Keep latest fetchers in refs so the socket effect below (mount-only) always
+  // calls the current versions without needing to reconnect when filters change.
+  const fetchEmailsRef = useRef(fetchEmails)
+  const fetchGlobalCountsRef = useRef(fetchGlobalCounts)
+  useEffect(() => { fetchEmailsRef.current = fetchEmails }, [fetchEmails])
+  useEffect(() => { fetchGlobalCountsRef.current = fetchGlobalCounts }, [fetchGlobalCounts])
+
+  // Live updates — the backend pushes a message here the moment the Gmail Pub/Sub
+  // webhook processes a new email, so the inbox refreshes instantly instead of
+  // waiting for the user to manually sync or reload.
+  useEffect(() => {
+    const { accessToken } = ApplicationStore().getStorage('userDetails') || {}
+    if (!accessToken) return
+
+    let socket
+    let reconnectTimer
+    let closedByEffect = false
+    const wsBase = (import.meta.env.VITE_API_URL || '').replace(/^http/, 'ws')
+
+    const connect = () => {
+      socket = new WebSocket(`${wsBase}gmail/ws?token=${encodeURIComponent(accessToken)}`)
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'new_email') {
+            // New mail sorts to the top of page 1 (backend orders unread-first, newest-first) —
+            // reset there so it's visible even if the user had paged forward.
+            setPage(1)
+            fetchEmailsRef.current()
+            fetchGlobalCountsRef.current()
+          }
+        } catch {
+          // ignore malformed frames
+        }
+      }
+      socket.onclose = () => {
+        if (!closedByEffect) reconnectTimer = setTimeout(connect, 5000)
+      }
+      socket.onerror = () => socket.close()
+    }
+    connect()
+
+    return () => {
+      closedByEffect = true
+      clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [])
+
+  const openEmail = (email) => {
+    setCrmOpen(false)
+    setSelected(selected === email.id ? null : email.id)
+    if (!email.is_read) {
+      // Optimistic — un-bold immediately rather than waiting on the round trip.
+      setEmails(prev => prev.map(e => e.id === email.id ? { ...e, is_read: true } : e))
+      MarkEmailReadService(email.id, () => {}, () => {})
+    }
+  }
 
   const handleSync = () => {
     setSyncing(true)
@@ -1413,31 +1570,13 @@ export default function GmailIntegration() {
             </span>
           )}
 
-          {/* Account selector pills — shown when multiple accounts */}
+          {/* Account selector dropdown — shown when multiple accounts */}
           {accounts.length > 1 && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => { setActiveAccount(''); setPage(1); setSelected(null) }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all
-                  ${!activeAccount ? 'bg-gray-800 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                <Inbox size={11} />
-                All
-              </button>
-              {accounts.map((a, i) => {
-                const color = ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]
-                const isActive = activeAccount === a.id
-                return (
-                  <button key={a.id}
-                    onClick={() => { setActiveAccount(a.id); setPage(1); setSelected(null) }}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border
-                      ${isActive ? `${color.bg} ${color.text} border-transparent shadow-sm` : 'bg-white text-gray-600 hover:bg-gray-50 border-gray-200'}`}>
-                    <span className={`w-2 h-2 rounded-full ${color.dot}`}></span>
-                    {a.email_address.split('@')[0]}
-                    {a.is_primary && <span className="text-[8px] opacity-60">★</span>}
-                  </button>
-                )
-              })}
-            </div>
+            <AccountDropdown
+              accounts={accounts}
+              activeAccount={activeAccount}
+              onSelect={(id) => { setActiveAccount(id); setPage(1); setSelected(null) }}
+            />
           )}
 
           <button onClick={fetchEmails}
@@ -1549,7 +1688,7 @@ export default function GmailIntegration() {
                     <EmailRow
                       email={email}
                       selected={selected === email.id}
-                      onClick={() => setSelected(selected === email.id ? null : email.id)}
+                      onClick={() => openEmail(email)}
                       accountColorMap={accountColorMap}
                       acctOwnerMap={acctOwnerMap}
                     />
@@ -1583,12 +1722,42 @@ export default function GmailIntegration() {
         <div className="flex-1 min-w-0 flex">
           <AnimatePresence mode="wait">
             {selectedEmail ? (
-              <motion.div key={selectedEmail.id} className="h-full flex-1 min-w-0 flex"
+              <motion.div key={selectedEmail.id} className="relative h-full flex-1 min-w-0 flex"
                 initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
                 <div className="flex-1 min-w-0">
                   <EmailDetail email={selectedEmail} onRefresh={() => { fetchEmails(); fetchGlobalCounts(); setSelected(null) }} accountColorMap={accountColorMap} acctOwnerMap={acctOwnerMap} />
                 </div>
-                <CrmPanel email={selectedEmail} onSelectEmail={(id) => setSelected(id)} />
+
+                {/* CRM toggle button — opens the record as a slide-in drawer */}
+                {!crmOpen && (
+                  <button
+                    onClick={() => setCrmOpen(true)}
+                    className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-200 shadow-sm text-xs font-semibold text-gray-600 hover:text-blue-600 hover:border-blue-300 transition-colors">
+                    <Users size={13} />
+                    CRM Record
+                  </button>
+                )}
+
+                {/* Slide-in CRM drawer (overlays on top, doesn't cramp the reply area) */}
+                <AnimatePresence>
+                  {crmOpen && (
+                    <>
+                      <motion.div
+                        className="absolute inset-0 z-30 bg-black/20"
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        onClick={() => setCrmOpen(false)} />
+                      <motion.div
+                        className="absolute top-0 right-0 z-40 h-full shadow-2xl"
+                        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+                        transition={{ type: 'tween', duration: 0.22 }}>
+                        <CrmPanel
+                          email={selectedEmail}
+                          onSelectEmail={(id) => { setSelected(id); setCrmOpen(false) }}
+                          onClose={() => setCrmOpen(false)} />
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
               </motion.div>
             ) : (
               <motion.div key="empty" className="flex-1 flex flex-col items-center justify-center h-full gap-4 text-center p-10"

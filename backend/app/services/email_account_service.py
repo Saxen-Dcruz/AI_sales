@@ -30,6 +30,15 @@ GMAIL_SCOPES = [
     "openid",
 ]
 
+CALENDAR_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
+
+# Requested together so a rep only has to go through the consent screen once
+# to unlock both Gmail sending and Calendar invites under their own identity.
+OAUTH_SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES
+
 
 # ── Token encoding ────────────────────────────────────────────────────────────
 
@@ -124,7 +133,7 @@ def _get_flow(redirect_uri: str) -> Flow:
             "token_uri":     "https://oauth2.googleapis.com/token",
         }
     }
-    return Flow.from_client_config(client_config, scopes=GMAIL_SCOPES, redirect_uri=redirect_uri)
+    return Flow.from_client_config(client_config, scopes=OAUTH_SCOPES, redirect_uri=redirect_uri)
 
 
 def _redis_client():
@@ -161,8 +170,9 @@ def exchange_code_and_save(
     """Exchange OAuth authorization code for credentials, fetch email, store in DB.
 
     `owner_id` must be the UUID of the app user who connected this Gmail account.
-    Required when owner_id is enforced NOT NULL.  Each user may connect at most one
-    Gmail account; a second attempt raises ValueError.
+    Required when owner_id is enforced NOT NULL. Each regular user may connect at
+    most one Gmail account (a second attempt raises ValueError); super-admins are
+    exempt and may connect any number.
     """
     flow = _get_flow(redirect_uri)
     # Retrieve PKCE code_verifier from Redis
@@ -201,14 +211,18 @@ def exchange_code_and_save(
         logger.info(f"[EMAIL ACCOUNTS] Token refreshed for {email_address}")
         return existing
 
-    # 1-account-per-user cap: regular users may not connect more than one account
+    # 1-account-per-user cap: regular users may not connect more than one account.
+    # Super-admins are exempt — they can connect and manage every account.
     if owner_id is not None:
-        owns = db.query(EmailAccount).filter(EmailAccount.owner_id == owner_id).count()
-        if owns >= 1:
-            raise ValueError(
-                f"Each user may connect at most one Gmail account. "
-                f"Remove your existing account first."
-            )
+        from app.models.user import User
+        owner = db.query(User).filter(User.id == owner_id).first()
+        if not (owner and owner.is_superuser):
+            owns = db.query(EmailAccount).filter(EmailAccount.owner_id == owner_id).count()
+            if owns >= 1:
+                raise ValueError(
+                    f"Each user may connect at most one Gmail account. "
+                    f"Remove your existing account first."
+                )
 
     is_first = db.query(EmailAccount).count() == 0
     account = EmailAccount(
@@ -278,3 +292,24 @@ def get_gmail_service_for_account(db: Session, account: EmailAccount):
     from googleapiclient.discovery import build
     creds = load_credentials_for_account(db, account)
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def get_calendar_service_for_account(db: Session, account: EmailAccount):
+    """
+    Build a Calendar service using this account's own OAuth credentials, so
+    events are created on (and invites organized by) the connected rep's own
+    Google account rather than the shared legacy calendar_token.json.
+
+    Raises ValueError if the account was connected before Calendar scopes were
+    requested — the caller should catch this and fall back to the legacy
+    shared calendar, and the rep should reconnect their account to pick up
+    Calendar access.
+    """
+    from googleapiclient.discovery import build
+    if not account.scopes or "https://www.googleapis.com/auth/calendar.events" not in account.scopes:
+        raise ValueError(
+            f"{account.email_address} has not granted Calendar access — "
+            f"reconnect this account to enable Calendar invites from it."
+        )
+    creds = load_credentials_for_account(db, account)
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)

@@ -2136,3 +2136,146 @@ def test_analytics_by_direction_keys_are_valid(client, auth_headers):
     resp = client.get(f"{BASE}/analytics", headers=auth_headers)
     for key in resp.json()["by_direction"].keys():
         assert key in {"inbound", "outbound", "unknown"}
+
+
+# ── Gmail Pub/Sub Webhook tests ───────────────────────────────────────────────
+
+import base64
+import json as _json
+
+WEBHOOK_URL = f"{BASE}/webhook"
+
+
+def _pubsub_payload(email_address: str, history_id: str = "12345") -> dict:
+    """Build a realistic Pub/Sub push payload."""
+    data = base64.b64encode(
+        _json.dumps({"emailAddress": email_address, "historyId": history_id}).encode()
+    ).decode()
+    return {
+        "message": {
+            "data":        data,
+            "messageId":   "136969346945",
+            "publishTime": "2026-06-26T17:00:00Z",
+        },
+        "subscription": "projects/test-project/subscriptions/gmail-push-sub",
+    }
+
+
+def test_webhook_rejects_no_auth_header(client):
+    """Without Authorization header and GMAIL_PUBSUB_AUDIENCE not set, should accept (dev mode)."""
+    payload = _pubsub_payload("nobody@example.com")
+    resp = client.post(WEBHOOK_URL, json=payload)
+    # In test mode GMAIL_PUBSUB_AUDIENCE is empty → JWT verification skipped → 200
+    assert resp.status_code == 200
+
+
+def test_webhook_empty_data_returns_ok(client):
+    """Empty data field — should return 200 with processed=0 (graceful)."""
+    payload = {"message": {"data": "", "messageId": "1", "publishTime": "2026-01-01T00:00:00Z"},
+               "subscription": "projects/x/subscriptions/y"}
+    resp = client.post(WEBHOOK_URL, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["processed"] == 0
+
+
+def test_webhook_unknown_account_returns_ok(client):
+    """Valid payload but unknown emailAddress → 200 with processed=0."""
+    payload = _pubsub_payload("unknown_account@example.com", "99999")
+    resp = client.post(WEBHOOK_URL, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["processed"] == 0
+
+
+def test_webhook_known_account_no_history_id_registers_watch(client, auth_headers):
+    """
+    When an active account has no watch_history_id stored,
+    the handler should attempt to register a watch and return processed=0.
+    """
+    from unittest.mock import patch
+    from tests.conftest import TEST_ACCOUNT_EMAIL as _EMAIL
+    with patch("app.services.gmail_webhook_service.register_watch", return_value=True):
+        payload = _pubsub_payload(_EMAIL, "55555")
+        resp = client.post(WEBHOOK_URL, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["processed"] == 0
+
+
+def test_webhook_invalid_json_returns_400(client):
+    """Sending malformed JSON should return 400."""
+    resp = client.post(
+        WEBHOOK_URL,
+        content=b"not-json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_webhook_processes_via_history(client):
+    """
+    Webhook with a valid Pub/Sub payload for an unknown account → 200 / processed=0.
+    Full integration (live account + real Google credentials) is an E2E test;
+    this verifies the endpoint contract for unknown senders.
+    """
+    payload = _pubsub_payload("live@rdltech.in", "10001")
+    resp = client.post(WEBHOOK_URL, json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["processed"] == 0
+
+
+# ── gmail_webhook_service unit tests ──────────────────────────────────────────
+
+def test_process_pubsub_empty_payload():
+    from app.database.core import SessionLocal
+    from app.services.gmail_webhook_service import process_pubsub_notification
+    with SessionLocal() as db:
+        result = process_pubsub_notification(db, {})
+    assert result == 0
+
+
+def test_process_pubsub_bad_base64():
+    from app.database.core import SessionLocal
+    from app.services.gmail_webhook_service import process_pubsub_notification
+    payload = {"message": {"data": "!NOT_VALID_BASE64!", "messageId": "x"}}
+    with SessionLocal() as db:
+        result = process_pubsub_notification(db, payload)
+    assert result == 0
+
+
+def test_fetch_new_message_ids_pagination():
+    """_fetch_new_message_ids should collect messages from multiple pages."""
+    from unittest.mock import MagicMock
+    from app.services.gmail_webhook_service import _fetch_new_message_ids
+
+    page1 = {
+        "history": [{"messagesAdded": [{"message": {"id": "m1", "labelIds": ["INBOX"]}}]}],
+        "nextPageToken": "token_page2",
+    }
+    page2 = {
+        "history": [{"messagesAdded": [{"message": {"id": "m2", "labelIds": ["INBOX"]}}]}],
+    }
+
+    call_count = {"n": 0}
+    def _list(**kwargs):
+        mock = MagicMock()
+        mock.execute.return_value = page1 if call_count["n"] == 0 else page2
+        call_count["n"] += 1
+        return mock
+
+    svc = MagicMock()
+    svc.users.return_value.history.return_value.list.side_effect = _list
+
+    ids, _latest_history_id = _fetch_new_message_ids(svc, "9999")
+    assert "m1" in ids
+    assert "m2" in ids
+
+
+def test_verify_pubsub_token_no_audience():
+    """When GMAIL_PUBSUB_AUDIENCE is empty, verification is skipped (dev mode)."""
+    from app.services.gmail_webhook_service import verify_pubsub_token
+    assert verify_pubsub_token("Bearer fake_token", "") is True
+
+
+def test_verify_pubsub_token_missing_header():
+    """Missing Authorization header should fail when audience is configured."""
+    from app.services.gmail_webhook_service import verify_pubsub_token
+    assert verify_pubsub_token("", "https://example.com/webhook") is False

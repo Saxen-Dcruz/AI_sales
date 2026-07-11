@@ -1,0 +1,13 @@
+# Keep the build context small. Deps are installed fresh from package-lock.json.
+node_modules
+dist
+.git
+.gitignore
+*.log
+.env
+.env.*
+.mcp.json
+.jcodemunch.jsonc
+.vscode
+.idea
+.DS_Store

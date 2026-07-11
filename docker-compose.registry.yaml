@@ -1,0 +1,30 @@
+version: '3.8'
+
+# =============================================================================
+# Production REGISTRY overlay.
+# Pulls pre-built, immutable images from GHCR instead of building on the server.
+#
+# Usage (on the server, via deploy/deploy.sh):
+#   IMAGE_TAG=sha-abc1234 docker compose \
+#     -f docker-compose.yaml \
+#     -f docker-compose.prod.yaml \
+#     -f docker-compose.registry.yaml \
+#     pull backend frontend
+#   ... up -d --no-build
+#
+# IMAGE_TAG is injected by the deploy script (a git SHA tag). Defaults to "dev".
+# =============================================================================
+
+services:
+  backend:
+    image: ghcr.io/saxen-dcruz/ai_sales-backend:${IMAGE_TAG:-dev}
+    pull_policy: always
+
+  frontend:
+    image: ghcr.io/saxen-dcruz/ai_sales-frontend:${IMAGE_TAG:-dev}
+    pull_policy: always
+
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in server .env}

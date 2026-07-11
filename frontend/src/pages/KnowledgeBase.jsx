@@ -11,10 +11,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   AddProductKnowledgeService,
+  DeleteProductChunkService,
   DeleteProductKnowledgeService,
   GetProductEmbeddingsService,
   GetProductKnowledgeService,
   ShowOneProductService,
+  UpdateProductChunkService,
   UpdateProductKnowledgeService,
 } from '../services/ApiService'
 
@@ -134,6 +136,66 @@ function EntryDialog({ open, entry, productId, onClose, onSaved }) {
   )
 }
 
+function ChunkEditDialog({ open, chunk, productId, onClose, onSaved }) {
+  const [content, setContent] = useState(chunk?.document || '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (open) setContent(chunk?.document || '')
+  }, [open, chunk])
+
+  const handleSave = () => {
+    if (!content.trim()) return
+    setSaving(true)
+    UpdateProductChunkService(productId, chunk.chunk_id, { content },
+      () => { setSaving(false); onSaved(content) },
+      (_s, err) => { setSaving(false); alert('Save failed: ' + err) }
+    )
+  }
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.96, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96 }} transition={{ type: 'spring', damping: 28 }}
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg z-10 overflow-hidden">
+
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-bold text-gray-900">
+            Edit Chunk {chunk?.chunk_type ? `— ${chunk.chunk_type.replace(/_/g, ' ')}` : ''}
+          </h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 block">
+              Chunk Text <span className="text-red-400">*</span>
+            </label>
+            <textarea value={content} onChange={e => setContent(e.target.value)} rows={9}
+              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl px-4 py-3 resize-none focus:outline-none focus:border-blue-400 transition-all leading-relaxed font-mono" />
+            <p className="text-[10px] text-gray-400 mt-1">{content.length} chars · Re-embedded into the RAG vector store immediately on save.</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/60">
+          <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button onClick={handleSave} disabled={!content.trim() || saving}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-50">
+            <Save size={13} />
+            {saving ? 'Saving...' : 'Update Chunk'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 const CHUNK_COLORS = {
   description: 'bg-blue-50 text-blue-700',
   features: 'bg-emerald-50 text-emerald-700',
@@ -187,6 +249,8 @@ export default function KnowledgeBase() {
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState(null)
+  const [chunkDialogOpen, setChunkDialogOpen] = useState(false)
+  const [editingChunk, setEditingChunk] = useState(null)
 
   const fetchAll = () => {
     setLoading(true)
@@ -219,13 +283,21 @@ export default function KnowledgeBase() {
   }
 
   const handleEditChunk = (chunk) => {
-    alert(`Editing chunk: ${chunk.chunk_id}\n\n(Backend implementation needed)`);
+    setEditingChunk(chunk)
+    setChunkDialogOpen(true)
+  }
+
+  const onChunkSaved = (newContent) => {
+    setChunks(prev => prev.map(c => c.chunk_id === editingChunk.chunk_id ? { ...c, document: newContent } : c))
+    setChunkDialogOpen(false)
   }
 
   const handleDeleteChunk = (chunk) => {
-    if (window.confirm(`Delete this chunk?\n\n"${(chunk.document || '').slice(0, 80)}..."`)) {
-      alert(`Deleted chunk: ${chunk.chunk_id}\n\n(Backend implementation needed)`);
-    }
+    if (!window.confirm(`Delete this chunk?\n\n"${(chunk.document || '').slice(0, 80)}..."`)) return
+    DeleteProductChunkService(id, chunk.chunk_id,
+      () => setChunks(prev => prev.filter(c => c.chunk_id !== chunk.chunk_id)),
+      (_s, err) => alert('Delete failed: ' + err)
+    )
   }
 
   const openAdd = () => { setEditingEntry(null); setDialogOpen(true) }
@@ -394,6 +466,15 @@ export default function KnowledgeBase() {
             productId={id}
             onClose={() => setDialogOpen(false)}
             onSaved={onSaved}
+          />
+        )}
+        {chunkDialogOpen && (
+          <ChunkEditDialog
+            open={chunkDialogOpen}
+            chunk={editingChunk}
+            productId={id}
+            onClose={() => setChunkDialogOpen(false)}
+            onSaved={onChunkSaved}
           />
         )}
       </AnimatePresence>

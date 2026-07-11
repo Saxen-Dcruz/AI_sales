@@ -11,9 +11,10 @@ import {
   GetAvailabilityService,
   UpdateAvailabilityDayService,
   GetSchedulingConfigService,
-  GetEmailAccountsService,
   UpdateSchedulingConfigService,
   ScheduleMeetingService,
+  CancelEventService,
+  RescheduleEventService,
 } from '../services/ApiService'
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -107,7 +108,7 @@ function EventChip({ event, onClick }) {
 
 // ─── Event Detail Panel ─────────────────────────────────────────────────────
 
-function EventDetail({ event, onClose }) {
+function EventDetail({ event, onClose, onRefresh }) {
   const cfg = TRIGGER_CONFIG[event.trigger] || TRIGGER_CONFIG.manual
   const stCfg = STATUS_CONFIG[event.status] || STATUS_CONFIG.scheduled
   const Icon = cfg.icon
@@ -235,6 +236,38 @@ function EventDetail({ event, onClose }) {
           <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 p-2.5 rounded-xl">
             <CheckCircle size={14} />
             Invite email sent
+          </div>
+        )}
+
+        {/* Actions — only for non-cancelled events */}
+        {event.status !== 'cancelled' && (
+          <div className="flex gap-2 pt-1 border-t border-gray-100">
+            <button
+              onClick={() => {
+                if (!confirm('Reschedule to next available slot?')) return
+                RescheduleEventService(event.id, {},
+                  () => { onRefresh(); onClose() },
+                  (_, e) => alert('Reschedule failed: ' + e)
+                )
+              }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-indigo-200 text-indigo-600 text-xs font-semibold hover:bg-indigo-50 transition-all"
+            >
+              <RefreshCw size={12} />
+              Reschedule
+            </button>
+            <button
+              onClick={() => {
+                if (!confirm(`Cancel "${event.title}"? This will notify the attendee.`)) return
+                CancelEventService(event.id,
+                  () => { onRefresh(); onClose() },
+                  (_, e) => alert('Cancel failed: ' + e)
+                )
+              }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 transition-all"
+            >
+              <X size={12} />
+              Cancel Meeting
+            </button>
           </div>
         )}
       </div>
@@ -421,27 +454,23 @@ export default function CalendarIntegration() {
   const [loading, setLoading] = useState(true)
   const [selectedDay, setSelectedDay] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
-  const [accounts, setAccounts] = useState([])
-  const [activeAccount, setActiveAccount] = useState('')
-
-  useEffect(() => {
-    GetEmailAccountsService(
-      (data) => setAccounts(data?.items || []),
-      () => {}
-    )
-  }, [])
+  const [newMeetingOpen, setNewMeetingOpen] = useState(false)
+  const [meetingForm, setMeetingForm] = useState({
+    attendee_email: '', title: '', description: '',
+    start_time: '', duration_minutes: 30,
+  })
+  const [schedulingMeeting, setSchedulingMeeting] = useState(false)
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
   const fetchEvents = () => {
     setLoading(true)
-    const params = { limit: 100 }
-    if (activeAccount) params.account_email = activeAccount
-    GetCalendarEventsService(params,
+    GetCalendarEventsService({ limit: 100 },
       (data) => { setEvents(data?.items || []); setLoading(false) },
       () => setLoading(false)
     )
   }
 
-  useEffect(() => { fetchEvents() }, [activeAccount])
+  useEffect(() => { fetchEvents() }, [])
 
   const eventsByDate = useMemo(() => {
     const map = {}
@@ -499,20 +528,14 @@ export default function CalendarIntegration() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Account selector */}
-            {accounts.length > 1 && (
-              <select
-                value={activeAccount}
-                onChange={e => setActiveAccount(e.target.value)}
-                className="text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white text-gray-700 shadow-sm focus:outline-none focus:border-indigo-400">
-                <option value="">All accounts</option>
-                {accounts.map(a => (
-                  <option key={a.id} value={a.email_address}>
-                    {a.email_address}{a.is_primary ? ' ★' : ''}
-                  </option>
-                ))}
-              </select>
-            )}
+            {/* New Meeting button */}
+            <button
+              onClick={() => setNewMeetingOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm"
+            >
+              <Plus size={14} />
+              New Meeting
+            </button>
             {/* Tab switcher */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-white border border-gray-200 shadow-sm">
               <button onClick={() => setActiveTab('calendar')}
@@ -676,7 +699,7 @@ export default function CalendarIntegration() {
           <div className="w-full lg:w-80 flex-shrink-0">
             <AnimatePresence mode="wait">
               {selectedEvent ? (
-                <EventDetail key="detail" event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+                <EventDetail key="detail" event={selectedEvent} onClose={() => setSelectedEvent(null)} onRefresh={fetchEvents} />
               ) : selectedDay ? (
                 <motion.div
                   key="day"
@@ -762,6 +785,120 @@ export default function CalendarIntegration() {
         </div>} {/* end calendar tab */}
 
       </div>
+
+      {/* ── New Meeting Modal ── */}
+      {newMeetingOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Schedule New Meeting</h2>
+                <p className="text-xs text-gray-400 mt-0.5">A Google Meet link will be created and invite sent</p>
+              </div>
+              <button onClick={() => setNewMeetingOpen(false)}>
+                <X size={16} className="text-gray-400 hover:text-gray-600" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Attendee Email *</label>
+                <input
+                  type="email"
+                  value={meetingForm.attendee_email}
+                  onChange={e => setMeetingForm(f => ({ ...f, attendee_email: e.target.value }))}
+                  placeholder="customer@example.com"
+                  className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400"
+                />
+                {meetingForm.attendee_email && !EMAIL_RE.test(meetingForm.attendee_email.trim()) && (
+                  <p className="text-[10px] text-red-500 mt-1">Enter a valid email address</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Meeting Title *</label>
+                <input
+                  value={meetingForm.title}
+                  onChange={e => setMeetingForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder="e.g. Product Demo — Industrial Data Logger"
+                  className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Start Date & Time *</label>
+                <input
+                  type="datetime-local"
+                  value={meetingForm.start_time}
+                  onChange={e => setMeetingForm(f => ({ ...f, start_time: e.target.value }))}
+                  className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Duration</label>
+                <select
+                  value={meetingForm.duration_minutes}
+                  onChange={e => setMeetingForm(f => ({ ...f, duration_minutes: Number(e.target.value) }))}
+                  className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-indigo-400"
+                >
+                  {[15, 20, 30, 45, 60, 90].map(m => (
+                    <option key={m} value={m}>{m} minutes</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Description (optional)</label>
+                <textarea
+                  value={meetingForm.description}
+                  onChange={e => setMeetingForm(f => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  placeholder="Agenda, notes, products to discuss..."
+                  className="w-full mt-1 px-3 py-2 text-sm border border-gray-200 rounded-xl resize-none focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setNewMeetingOpen(false)}
+                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={
+                  schedulingMeeting || !meetingForm.attendee_email || !meetingForm.title ||
+                  !meetingForm.start_time || !EMAIL_RE.test(meetingForm.attendee_email.trim())
+                }
+                onClick={() => {
+                  setSchedulingMeeting(true)
+                  ScheduleMeetingService({
+                    attendee_email: meetingForm.attendee_email.trim(),
+                    title: meetingForm.title,
+                    description: meetingForm.description,
+                    start_time: new Date(meetingForm.start_time).toISOString(),
+                    duration_minutes: meetingForm.duration_minutes,
+                  },
+                    () => {
+                      setSchedulingMeeting(false)
+                      setNewMeetingOpen(false)
+                      setMeetingForm({ attendee_email: '', title: '', description: '', start_time: '', duration_minutes: 30 })
+                      fetchEvents()
+                    },
+                    (_s, err) => { setSchedulingMeeting(false); alert('Failed to schedule: ' + err) }
+                  )
+                }}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all"
+              >
+                <Video size={14} />
+                {schedulingMeeting ? 'Scheduling…' : 'Create Meeting'}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }
