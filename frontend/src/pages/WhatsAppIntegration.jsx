@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
-  GetWhatsAppMessagesService, GetWhatsAppMessageService,
+  GetWhatsAppMessagesService, GetWhatsAppMessageService, MarkWhatsAppMessageReadService,
   ApproveWhatsAppDraftService, DiscardWhatsAppDraftService,
   ResolveWhatsAppMessageService, ResolveWhatsAppGapService,
   SendWhatsAppMessageService,
@@ -223,6 +223,18 @@ export default function WhatsAppIntegration() {
     if (msg) setDraftEdit(msg.ai_draft || '')
   }, [msg])
 
+  const selectMessage = (m) => {
+    setSelectedId(m.id)
+    if (m.human_status === 'unread') {
+      // Optimistic — un-bold immediately rather than waiting on the round trip.
+      qc.setQueryData(['wa-messages', filterLabel, filterStatus], (prev) => prev && ({
+        ...prev,
+        items: prev.items.map(item => item.id === m.id ? { ...item, human_status: 'read' } : item),
+      }))
+      MarkWhatsAppMessageReadService(m.id, () => {}, () => {})
+    }
+  }
+
   // ── Add account form state ────────────────────────────────────────────────────
 
   const [addForm, setAddForm] = useState({
@@ -368,10 +380,11 @@ export default function WhatsAppIntegration() {
                 const scfg = STATUS_CONFIG[m.status] || STATUS_CONFIG.new
                 const StatusIcon = scfg.icon
                 const isSelected = m.id === selectedId
+                const isUnread = m.human_status === 'unread'
                 return (
                   <div
                     key={m.id}
-                    onClick={() => setSelectedId(m.id)}
+                    onClick={() => selectMessage(m)}
                     className={`p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors border-l-[3px]
                       ${isSelected
                         ? 'bg-emerald-50 border-l-[#25D366]'
@@ -385,13 +398,17 @@ export default function WhatsAppIntegration() {
                         </div>
                         {/* Label dot in corner */}
                         <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${cfg.dot}`} />
+                        {/* Unread dot */}
+                        {isUnread && (
+                          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#25D366] border-2 border-white" />
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-gray-900 truncate">{m.from_number}</span>
+                          <span className={`text-xs truncate ${isUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-700'}`}>{m.from_number}</span>
                           <span className="text-xs text-gray-400 flex-shrink-0 ml-1">{fmtTime(m.received_at)}</span>
                         </div>
-                        <p className="text-xs text-gray-500 truncate mt-0.5">{m.body || '(no text)'}</p>
+                        <p className={`text-xs truncate mt-0.5 ${isUnread ? 'font-medium text-gray-700' : 'text-gray-500'}`}>{m.body || '(no text)'}</p>
                         <div className="flex items-center gap-1.5 mt-1">
                           {/* Label badge — prominent, same as Gmail */}
                           <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${cfg.badge}`}>

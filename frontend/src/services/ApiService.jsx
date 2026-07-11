@@ -614,6 +614,9 @@ export const GetWhatsAppMessagesService = (params, success, error) => {
 export const GetWhatsAppMessageService = (id, success, error) =>
     _fetchService(`whatsapp/${id}`, "GET", null, success, error);
 
+export const MarkWhatsAppMessageReadService = (id, success, error) =>
+    _fetchService(`whatsapp/${id}/read`, "POST", {}, success, error);
+
 export const ApproveWhatsAppDraftService = (id, data, success, error) =>
     _fetchService(`whatsapp/${id}/approve-draft`, "POST", data, success, error);
 
