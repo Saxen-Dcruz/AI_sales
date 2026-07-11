@@ -62,7 +62,7 @@ export default function LoginForm() {
           setIsLoading(false)
         }
       )
-    } catch (err) {
+    } catch {
       setError('Network error or server unavailable')
       setIsLoading(false)
     }

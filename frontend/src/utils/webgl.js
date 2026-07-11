@@ -9,7 +9,7 @@ export function isWebGLAvailable() {
       window.WebGLRenderingContext &&
       (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
     );
-  } catch (e) {
+  } catch {
     return false;
   }
 }
