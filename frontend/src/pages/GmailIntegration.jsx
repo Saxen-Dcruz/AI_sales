@@ -1464,15 +1464,22 @@ export default function GmailIntegration() {
   // webhook processes a new email, so the inbox refreshes instantly instead of
   // waiting for the user to manually sync or reload.
   useEffect(() => {
-    const { accessToken } = ApplicationStore().getStorage('userDetails') || {}
-    if (!accessToken) return
-
     let socket
     let reconnectTimer
     let closedByEffect = false
     const wsBase = (import.meta.env.VITE_API_URL || '').replace(/^http/, 'ws')
+    // Backend close code for an invalid/expired token (see gmail_live_updates
+    // in app/routers/gmail.py). Re-read the token fresh on every attempt
+    // instead of capturing it once at mount, so a token refreshed elsewhere
+    // (the app's normal silent-refresh flow) gets picked up on the next
+    // reconnect — and stop entirely once auth genuinely fails, rather than
+    // hammering the backend forever with a dead token every 5s.
+    const AUTH_FAILED_CODE = 4401
 
     const connect = () => {
+      const { accessToken } = ApplicationStore().getStorage('userDetails') || {}
+      if (!accessToken) return
+
       socket = new WebSocket(`${wsBase}gmail/ws?token=${encodeURIComponent(accessToken)}`)
       socket.onmessage = (event) => {
         try {
@@ -1488,8 +1495,10 @@ export default function GmailIntegration() {
           // ignore malformed frames
         }
       }
-      socket.onclose = () => {
-        if (!closedByEffect) reconnectTimer = setTimeout(connect, 5000)
+      socket.onclose = (event) => {
+        if (!closedByEffect && event.code !== AUTH_FAILED_CODE) {
+          reconnectTimer = setTimeout(connect, 5000)
+        }
       }
       socket.onerror = () => socket.close()
     }

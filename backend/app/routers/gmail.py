@@ -1426,8 +1426,14 @@ async def gmail_live_updates(websocket: WebSocket, db: Session = Depends(get_db)
     from app.core.socket_manager import manager
     from app.services.auth_service import decode_token
 
+    # Closing before accept() only produces an HTTP 403 on the opening handshake —
+    # the browser never completes the WS upgrade, so it can't see our close code and
+    # reports the generic 1006 (abnormal closure) instead. The frontend needs to tell
+    # "token is dead, stop retrying" apart from "transient blip, keep retrying", which
+    # requires a real WS-level close frame — so accept() first in the failure paths too.
     token = websocket.query_params.get("token")
     if not token:
+        await websocket.accept()
         await websocket.close(code=4401)
         return
 
@@ -1439,6 +1445,7 @@ async def gmail_live_updates(websocket: WebSocket, db: Session = Depends(get_db)
         if not user or not user.is_active:
             raise ValueError("inactive or unknown user")
     except Exception:
+        await websocket.accept()
         await websocket.close(code=4401)
         return
 

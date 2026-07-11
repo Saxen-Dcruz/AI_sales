@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from starlette.websockets import WebSocketDisconnect
 
 from app.database.core import SessionLocal
 from app.models.communication import Email, EmailLabel, EmailStatus
@@ -2279,6 +2280,35 @@ def test_verify_pubsub_token_missing_header():
     """Missing Authorization header should fail when audience is configured."""
     from app.services.gmail_webhook_service import verify_pubsub_token
     assert verify_pubsub_token("", "https://example.com/webhook") is False
+
+
+# ── /gmail/ws: reject with a real close code, not a bare 403 ──────────────────
+#
+# Closing before accept() only produces an HTTP 403 on the opening handshake —
+# the browser never completes the WS upgrade, so it can't see any close code
+# and reports the generic 1006 (abnormal closure) instead, indistinguishable
+# from a transient network blip. The frontend needs "token is dead, stop
+# retrying" apart from that, which requires accept()-then-close so the client
+# actually receives code 4401.
+
+def test_ws_missing_token_closes_with_4401(client):
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"{BASE}/ws") as ws:
+            ws.receive_text()
+    assert exc_info.value.code == 4401
+
+
+def test_ws_invalid_token_closes_with_4401(client):
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"{BASE}/ws?token=not-a-real-jwt") as ws:
+            ws.receive_text()
+    assert exc_info.value.code == 4401
+
+
+def test_ws_valid_token_connects(client, auth_headers):
+    token = auth_headers["Authorization"].removeprefix("Bearer ")
+    with client.websocket_connect(f"{BASE}/ws?token={token}") as ws:
+        ws.close()
 
 
 # ── register_watch: stop()-then-retry on conflicting watch ────────────────────
