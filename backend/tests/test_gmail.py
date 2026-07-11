@@ -2270,6 +2270,59 @@ def test_fetch_new_message_ids_pagination():
     assert "m2" in ids
 
 
+# ── _notify_owner_async: must cross from the webhook worker thread ────────────
+#
+# process_pubsub_notification runs on _webhook_executor (a plain ThreadPoolExecutor,
+# see app/routers/gmail.py), not the asyncio event loop thread. asyncio.get_running_loop()
+# raises RuntimeError on a worker thread, so without the loop being threaded through
+# and scheduled via run_coroutine_threadsafe, the "new_email" push was silently
+# dropped by the blanket `except RuntimeError: pass` — the email would land in the
+# DB correctly but the frontend would never see it without a manual refresh.
+
+def test_notify_owner_async_delivers_across_threads():
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock
+    from app.services.gmail_webhook_service import _notify_owner_async
+    from app.core.socket_manager import manager
+
+    async def _runner():
+        loop = asyncio.get_running_loop()
+        with patch.object(manager, "notify_user", AsyncMock()) as mock_notify:
+            def _from_worker_thread():
+                _notify_owner_async("owner-1", {"type": "new_email"}, loop)
+            t = threading.Thread(target=_from_worker_thread)
+            t.start()
+            t.join(timeout=5)
+            # run_coroutine_threadsafe just schedules the coroutine onto this
+            # loop — give it a turn to actually execute.
+            await asyncio.sleep(0.05)
+        mock_notify.assert_awaited_once_with("owner-1", {"type": "new_email"})
+
+    asyncio.run(_runner())
+
+
+def test_notify_owner_async_no_loop_from_worker_thread_is_silent():
+    """Without a loop, calling off the event loop thread must not raise —
+    this is the pre-fix behavior (silently dropped), kept safe as a fallback
+    for callers with no captured loop (e.g. tests, manual scripts)."""
+    import threading
+    from app.services.gmail_webhook_service import _notify_owner_async
+
+    errors = []
+
+    def _from_worker_thread():
+        try:
+            _notify_owner_async("owner-1", {"type": "new_email"})
+        except Exception as e:
+            errors.append(e)
+
+    t = threading.Thread(target=_from_worker_thread)
+    t.start()
+    t.join(timeout=5)
+    assert errors == []
+
+
 def test_verify_pubsub_token_no_audience():
     """When GMAIL_PUBSUB_AUDIENCE is empty, verification is skipped (dev mode)."""
     from app.services.gmail_webhook_service import verify_pubsub_token

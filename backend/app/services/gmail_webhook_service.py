@@ -246,25 +246,33 @@ def verify_pubsub_token(auth_header: str, expected_audience: str) -> bool:
         return False
 
 
-def _notify_owner_async(owner_id, message: dict) -> None:
+def _notify_owner_async(owner_id, message: dict, loop=None) -> None:
     """Fire-and-forget push to the account owner's open WebSocket(s), if any.
-    The webhook endpoint calls this synchronously while already running on the
-    event loop (FastAPI awaits the endpoint, which calls us directly rather than
-    via a threadpool), so a running loop is normally available to schedule on.
+    process_pubsub_notification runs on a _webhook_executor worker thread (see
+    app/routers/gmail.py), not the asyncio event loop thread, so
+    asyncio.get_running_loop() raises here — the caller must pass the loop it
+    captured back on the event-loop thread so we can schedule onto it via
+    run_coroutine_threadsafe instead.
     """
+    import asyncio
+    from app.core.socket_manager import manager
     try:
-        import asyncio
-        from app.core.socket_manager import manager
-        asyncio.get_running_loop().create_task(manager.notify_user(owner_id, message))
+        if loop is not None:
+            asyncio.run_coroutine_threadsafe(manager.notify_user(owner_id, message), loop)
+        else:
+            asyncio.get_running_loop().create_task(manager.notify_user(owner_id, message))
     except RuntimeError:
         pass  # no running loop (e.g. tests, manual scripts) — skip silently
 
 
-def process_pubsub_notification(db: Session, payload: dict) -> int:
+def process_pubsub_notification(db: Session, payload: dict, loop=None) -> int:
     """
     Handle one Pub/Sub push payload — decode it, fetch new messages via history API,
     run each through the email workflow.
     Returns the number of new messages processed.
+
+    `loop`: the asyncio event loop captured on the webhook route before this was
+    handed off to a worker thread — see _notify_owner_async.
     """
     from app.services.gmail_service import get_gmail_service
     from app.services.email_account_service import get_gmail_service_for_account
@@ -370,7 +378,7 @@ def process_pubsub_notification(db: Session, payload: dict) -> int:
                 "type": "new_email",
                 "account": account.email_address,
                 "count": processed,
-            })
+            }, loop)
 
         logger.info(f"[GMAIL WEBHOOK] {email_address}: {processed}/{len(message_ids)} messages processed")
         return processed
