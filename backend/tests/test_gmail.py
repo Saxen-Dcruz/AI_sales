@@ -10,7 +10,7 @@ from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
 
 from app.database.core import SessionLocal
-from app.models.communication import Email, EmailLabel, EmailStatus
+from app.models.communication import Email, EmailLabel, EmailStatus, EmailHumanStatus
 
 BASE = "/api/v1/gmail"
 
@@ -213,27 +213,30 @@ def test_list_emails_pagination_respects_limit(client, auth_headers):
     assert body["page"] == 1
 
 
-# A thread the AI auto-replied to (no knowledge gaps) flips straight to REPLIED,
-# which isn't an "unread" status — so without also checking is_read, it sorts
-# behind every older thread still awaiting human review (there can be hundreds
-# on a busy account) and never surfaces on page 1, even though nobody in the
-# dashboard has actually seen it yet (is_read=False).
-def test_list_emails_unread_replied_thread_outranks_older_pending_one(client, auth_headers):
+# A thread the AI auto-replied to (no knowledge gaps) flips `status` straight to
+# REPLIED without any human involvement. Sort priority is driven by human_status
+# (not `status`), so a brand-new, nobody's-looked-at-it-yet thread always outranks
+# one a human has already fully handled — regardless of what AI status either
+# ended up in, and regardless of which is actually older.
+def test_list_emails_unread_thread_outranks_human_resolved_older_one(client, auth_headers):
     from datetime import timedelta
-    older_pending = _insert_email(
+    older_resolved = _insert_email(
         status=EmailStatus.PENDING_HUMAN,
-        is_read=False,
+        human_status=EmailHumanStatus.RESOLVED,
         received_at=datetime.now(timezone.utc) - timedelta(hours=1),
     )
-    newer_auto_replied = _insert_email(
+    newer_auto_replied_unread = _insert_email(
         status=EmailStatus.REPLIED,
-        is_read=False,
+        human_status=EmailHumanStatus.UNREAD,
         received_at=datetime.now(timezone.utc),
     )
-    resp = client.get(f"{BASE}/?limit=50", headers=auth_headers)
+    # Scoped to the test account — the shared dev DB can have hundreds of
+    # genuinely-unread backlog emails on other accounts competing for page 1.
+    from tests.conftest import TEST_ACCOUNT_ID
+    resp = client.get(f"{BASE}/?limit=300&account_id={TEST_ACCOUNT_ID}", headers=auth_headers)
     assert resp.status_code == 200
     ids = [item["id"] for item in resp.json()["items"]]
-    assert ids.index(str(newer_auto_replied)) < ids.index(str(older_pending))
+    assert ids.index(str(newer_auto_replied_unread)) < ids.index(str(older_resolved))
 
 
 def test_list_emails_page_beyond_total(client, auth_headers):
@@ -294,6 +297,37 @@ def test_get_email_no_auth(client):
     assert resp.status_code == 401
 
 
+# ── POST /{id}/read ───────────────────────────────────────────────────────────
+
+def test_mark_email_read_flips_unread_to_read(client, auth_headers):
+    eid = _insert_email(human_status=EmailHumanStatus.UNREAD, is_read=False)
+    resp = client.post(f"{BASE}/{eid}/read", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_read"] is True
+    assert body["human_status"] == "read"
+
+
+def test_mark_email_read_does_not_downgrade_already_actioned(client, auth_headers):
+    """Opening an already-replied thread must not regress it back to READ."""
+    eid = _insert_email(human_status=EmailHumanStatus.REPLIED, is_read=True)
+    resp = client.post(f"{BASE}/{eid}/read", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["human_status"] == "replied"
+
+
+def test_mark_email_read_not_found(client, auth_headers):
+    resp = client.post(f"{BASE}/{uuid.uuid4()}/read", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+def test_mark_email_read_no_auth(client):
+    eid = _insert_email()
+    with _no_auth(client):
+        resp = client.post(f"{BASE}/{eid}/read")
+    assert resp.status_code == 401
+
+
 # ── POST /{id}/resolve ────────────────────────────────────────────────────────
 
 def test_resolve_email_success(client, auth_headers):
@@ -309,6 +343,9 @@ def test_resolve_email_success(client, auth_headers):
     assert body["needs_human"] is False
     assert body["resolved_by"] == "agent@rdltech.in"
     assert body["resolved_at"] is not None
+    # Resolved without an AI-drafted reply — human_status tracks that distinctly
+    # from `status` (see EmailHumanStatus), so it's RESOLVED, not REPLIED.
+    assert body["human_status"] == "resolved"
 
 
 def test_resolve_email_empty_resolved_by_uses_current_user(client, auth_headers):
@@ -376,6 +413,7 @@ def test_approve_draft_success(client, auth_headers):
     body = resp.json()
     assert body["status"] == "replied"
     assert body["resolved_at"] is not None
+    assert body["human_status"] == "replied"
 
 
 def test_approve_draft_with_edit_body(client, auth_headers):
@@ -440,6 +478,9 @@ def test_discard_draft_success(client, auth_headers):
     assert body["ai_draft"] is None
     assert body["needs_human"] is True
     assert body["status"] == "pending_human"
+    # A manual reply is still owed (needs_human above) — a human has seen it and
+    # decided to handle it themselves, but nothing's resolved/replied yet.
+    assert body["human_status"] == "read"
 
 
 def test_discard_draft_no_existing_draft_id(client, auth_headers):
@@ -542,6 +583,7 @@ def test_send_email_threaded_reply_inherits_account_and_marks_original(client, a
         orig = db.query(Email).filter(Email.id == eid).first()
         assert orig.status == EmailStatus.REPLIED
         assert orig.needs_human is False
+        assert orig.human_status == EmailHumanStatus.REPLIED
         db.delete(orig)
         # clean up the outbound row too
         db.query(Email).filter(Email.gmail_thread_id == "th_orig",

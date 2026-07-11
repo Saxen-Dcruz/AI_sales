@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, Any, Union
 from uuid import UUID
 from pydantic import BaseModel, field_validator
-from app.models.communication import EmailLabel, EmailStatus
+from app.models.communication import EmailLabel, EmailStatus, EmailHumanStatus
 
 
 class GapItem(BaseModel):
@@ -40,6 +40,7 @@ class EmailOut(BaseModel):
     detected_product_name: Optional[str] = None
     needs_human: bool
     is_read: bool = False
+    human_status: EmailHumanStatus = EmailHumanStatus.UNREAD
     resolved_by: Optional[str]
     resolved_at: Optional[datetime]
     account_id: Optional[UUID] = None

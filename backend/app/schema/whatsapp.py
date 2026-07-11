@@ -74,6 +74,7 @@ class WhatsAppMessageOut(BaseModel):
     needs_human:           bool
     resolved_by:           Optional[str]
     resolved_at:           Optional[datetime]
+    human_status:          str = "unread"
     # Phase 1: delivery tracking + message sub-type
     wa_sent_message_id:    Optional[str]    = None
     delivery_status:       Optional[str]    = None

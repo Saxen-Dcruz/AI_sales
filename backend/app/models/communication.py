@@ -27,6 +27,20 @@ class EmailStatus(str, enum.Enum):
     IGNORED = "ignored"
 
 
+class EmailHumanStatus(str, enum.Enum):
+    """Tracks what a human has actually done with this thread in the dashboard —
+    independent of `status`, which only reflects AI pipeline progress. An AI
+    auto-reply (no knowledge gaps) flips `status` straight to REPLIED without any
+    human involvement, so `status` alone can't tell "already handled" apart from
+    "nobody has even looked at this yet". Only set by human-driven endpoints
+    (mark-read, approve-draft, resolve, discard-draft, manual send) — never by
+    the automated workflow."""
+    UNREAD = "unread"      # default — nobody has opened this thread in the dashboard
+    READ = "read"          # opened, but no reply/resolution recorded yet
+    REPLIED = "replied"    # a human sent or approved a reply
+    RESOLVED = "resolved"  # a human resolved it without a reply (or discarded the draft)
+
+
 class Email(Base):
     __tablename__ = "emails"
 
@@ -71,7 +85,12 @@ class Email(Base):
 
     # Whether a human has opened this email in the dashboard — independent of
     # `status`, which only reflects AI pipeline progress, not human viewing.
+    # Kept in sync with human_status (True once human_status != UNREAD) for
+    # backward compatibility with existing API consumers.
     is_read = Column(Boolean, default=False, nullable=False)
+
+    # See EmailHumanStatus — the human-driven counterpart to `status`.
+    human_status = Column(Enum(EmailHumanStatus), default=EmailHumanStatus.UNREAD, nullable=False, index=True)
 
     # Open tracking: tracking_token is embedded in a 1×1 pixel in outbound emails.
     # opened_at and open_count are updated by the unauthenticated /gmail/track/open/ endpoint

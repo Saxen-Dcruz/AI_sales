@@ -11,6 +11,7 @@ Endpoints:
     GET  /whatsapp/gaps             — Messages with unresolved RAG gaps (dashboard feed)
     GET  /whatsapp/analytics        — Aggregate stats
     GET  /whatsapp/{id}             — Get single message
+    POST /whatsapp/{id}/read        — Mark opened/viewed by a human
     POST /whatsapp/{id}/approve-draft — Send AI draft via WhatsApp
     POST /whatsapp/{id}/discard-draft — Discard draft, flag for human
     POST /whatsapp/{id}/resolve     — Mark Support/Grievance resolved
@@ -24,7 +25,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -32,7 +33,7 @@ from app.api.scoping import scope_query, assert_can_access
 from app.database.core import get_db
 from app.models.user import User
 from app.models.whatsapp_account import WhatsAppAccount
-from app.models.whatsapp_message import WhatsAppMessage, WALabel, WAStatus
+from app.models.whatsapp_message import WhatsAppMessage, WALabel, WAStatus, WAHumanStatus
 from app.schema.whatsapp import (
     WAAnalytics, WAApproveDraftRequest, WAGapResolveRequest,
     WASendRequest, WhatsAppGapNotificationListResponse, WhatsAppGapNotificationOut,
@@ -231,7 +232,22 @@ def list_messages(
         q = q.filter(WhatsAppMessage.direction == direction)
 
     total = q.count()
-    items = q.order_by(WhatsAppMessage.received_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    # Sort priority is driven by human_status, not the AI's own `status` — an AI
+    # auto-reply flips `status` straight to REPLIED without any human involvement,
+    # so `status` alone can't distinguish "already handled" from "nobody has even
+    # looked at this yet" (see WAHumanStatus). A message nobody has opened always
+    # outranks the rest; within each tier, ordering is reverse-chronological.
+    unread_priority = case(
+        (WhatsAppMessage.human_status == WAHumanStatus.UNREAD.value, 2),
+        (WhatsAppMessage.human_status == WAHumanStatus.READ.value, 1),
+        else_=0,
+    )
+    items = (
+        q.order_by(unread_priority.desc(), WhatsAppMessage.received_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
     return WhatsAppMessageListResponse(items=items, total=total, page=page, limit=limit)
 
 
@@ -874,6 +890,26 @@ def get_message(
     return msg
 
 
+@router.post("/{message_id}/read", response_model=WhatsAppMessageOut)
+def mark_message_read(
+    message_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """Mark a message as opened/viewed by a human, independent of its workflow status."""
+    msg = db.query(WhatsAppMessage).filter(WhatsAppMessage.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    allowed = _allowed_accounts(db, current_user)
+    if allowed is not None and msg.account_id not in allowed:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.human_status == WAHumanStatus.UNREAD:
+        msg.human_status = WAHumanStatus.READ
+        db.commit()
+        db.refresh(msg)
+    return msg
+
+
 @router.post("/{message_id}/approve-draft", response_model=WhatsAppMessageOut)
 def approve_draft(
     message_id:   UUID,
@@ -907,8 +943,9 @@ def approve_draft(
         logger.error(f"[WA APPROVE_DRAFT] send failed: {e}")
         raise HTTPException(status_code=500, detail=f"WhatsApp send failed: {e}")
 
-    msg.status    = WAStatus.REPLIED
-    msg.ai_draft  = body  # store the final sent version
+    msg.status       = WAStatus.REPLIED
+    msg.ai_draft     = body  # store the final sent version
+    msg.human_status = WAHumanStatus.REPLIED
     db.commit()
     db.refresh(msg)
     return msg
@@ -930,6 +967,10 @@ def discard_draft(
     msg.ai_draft   = None
     msg.status     = WAStatus.PENDING_HUMAN
     msg.needs_human = True
+    # Discarding still leaves a manual reply owed (needs_human=True above) — not
+    # resolved/replied yet, just acknowledged, so READ (not RESOLVED/REPLIED).
+    if msg.human_status == WAHumanStatus.UNREAD:
+        msg.human_status = WAHumanStatus.READ
     db.commit()
     db.refresh(msg)
     return msg
@@ -950,10 +991,11 @@ def resolve_message(
         raise HTTPException(status_code=404, detail="Message not found")
 
     from datetime import datetime, timezone
-    msg.needs_human = False
-    msg.resolved_by = current_user.email
-    msg.resolved_at = datetime.now(timezone.utc)
-    msg.status      = WAStatus.REPLIED
+    msg.needs_human  = False
+    msg.resolved_by  = current_user.email
+    msg.resolved_at  = datetime.now(timezone.utc)
+    msg.status       = WAStatus.REPLIED
+    msg.human_status = WAHumanStatus.RESOLVED
     db.commit()
     db.refresh(msg)
     return msg

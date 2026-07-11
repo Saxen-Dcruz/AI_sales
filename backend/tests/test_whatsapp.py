@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from app.database.core import SessionLocal
 from app.models.whatsapp_account import WhatsAppAccount
-from app.models.whatsapp_message import WhatsAppMessage, WALabel, WAStatus
+from app.models.whatsapp_message import WhatsAppMessage, WALabel, WAStatus, WAHumanStatus
 
 
 SETTINGS_BASE = "/api/v1/settings"
@@ -370,6 +370,86 @@ class TestInbox:
         resp = _no_auth_get(client, f"{WA_BASE}/{wa_message}")
         assert resp.status_code == 401
 
+    def test_mark_message_read_flips_unread_to_read(self, client, auth_headers, wa_message):
+        resp = client.post(f"{WA_BASE}/{wa_message}/read", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["human_status"] == "read"
+
+    def test_mark_message_read_does_not_downgrade_already_actioned(self, client, auth_headers, wa_account):
+        from datetime import datetime, timezone
+        with SessionLocal() as db:
+            msg = WhatsAppMessage(
+                wa_message_id = f"wamid.readtest_{uuid.uuid4().hex}",
+                account_id    = uuid.UUID(wa_account["id"]),
+                direction     = "inbound",
+                from_number   = "+919800000006",
+                to_number     = wa_account["display_phone"],
+                body          = "Already handled",
+                received_at   = datetime.now(timezone.utc),
+                label         = WALabel.SALES,
+                status        = WAStatus.REPLIED,
+                human_status  = WAHumanStatus.REPLIED,
+            )
+            db.add(msg)
+            db.commit()
+            msg_id = str(msg.id)
+
+        resp = client.post(f"{WA_BASE}/{msg_id}/read", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["human_status"] == "replied"
+
+        with SessionLocal() as db:
+            db.query(WhatsAppMessage).filter(WhatsAppMessage.id == uuid.UUID(msg_id)).delete()
+            db.commit()
+
+    def test_mark_message_read_not_found(self, client, auth_headers):
+        resp = client.post(f"{WA_BASE}/{uuid.uuid4()}/read", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_list_messages_unread_outranks_human_resolved_older_one(self, client, auth_headers, wa_account):
+        """Sort priority is driven by human_status, not `status` — a message nobody's
+        opened always outranks one a human already fully handled, regardless of age."""
+        from datetime import datetime, timedelta, timezone
+        with SessionLocal() as db:
+            older_resolved = WhatsAppMessage(
+                wa_message_id = f"wamid.sort_old_{uuid.uuid4().hex}",
+                account_id    = uuid.UUID(wa_account["id"]),
+                direction     = "inbound",
+                from_number   = "+919800000007",
+                to_number     = wa_account["display_phone"],
+                body          = "Old handled message",
+                received_at   = datetime.now(timezone.utc) - timedelta(hours=1),
+                label         = WALabel.SUPPORT,
+                status        = WAStatus.PENDING_HUMAN,
+                human_status  = WAHumanStatus.RESOLVED,
+            )
+            newer_unread = WhatsAppMessage(
+                wa_message_id = f"wamid.sort_new_{uuid.uuid4().hex}",
+                account_id    = uuid.UUID(wa_account["id"]),
+                direction     = "inbound",
+                from_number   = "+919800000008",
+                to_number     = wa_account["display_phone"],
+                body          = "New auto-replied message",
+                received_at   = datetime.now(timezone.utc),
+                label         = WALabel.SALES,
+                status        = WAStatus.REPLIED,
+                human_status  = WAHumanStatus.UNREAD,
+            )
+            db.add_all([older_resolved, newer_unread])
+            db.commit()
+            older_id, newer_id = str(older_resolved.id), str(newer_unread.id)
+
+        resp = client.get(f"{WA_BASE}/?limit=100&account_id={wa_account['id']}", headers=auth_headers)
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()["items"]]
+        assert ids.index(newer_id) < ids.index(older_id)
+
+        with SessionLocal() as db:
+            db.query(WhatsAppMessage).filter(
+                WhatsAppMessage.id.in_([uuid.UUID(older_id), uuid.UUID(newer_id)])
+            ).delete(synchronize_session=False)
+            db.commit()
+
     def test_approve_draft_success(self, client, auth_headers, wa_account):
         """Create a fresh draft_ready message and approve it."""
         from datetime import datetime, timezone
@@ -403,6 +483,7 @@ class TestInbox:
 
         assert resp.status_code == 200
         assert resp.json()["status"] == "replied"
+        assert resp.json()["human_status"] == "replied"
         mock_send.assert_called_once()
 
         with SessionLocal() as db:
@@ -492,6 +573,8 @@ class TestInbox:
         assert body["status"] == "pending_human"
         assert body["needs_human"] is True
         assert body["ai_draft"] is None
+        # Manual reply still owed (needs_human above) — seen but not resolved/replied.
+        assert body["human_status"] == "read"
 
     def test_resolve_message(self, client, auth_headers, wa_account):
         from datetime import datetime, timezone
@@ -518,6 +601,7 @@ class TestInbox:
         assert body["needs_human"] is False
         assert body["status"] == "replied"
         assert body["resolved_by"] is not None
+        assert body["human_status"] == "resolved"
 
         with SessionLocal() as db:
             db.query(WhatsAppMessage).filter(

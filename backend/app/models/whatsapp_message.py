@@ -27,6 +27,18 @@ class WAStatus(str, enum.Enum):
     IGNORED        = "ignored"
 
 
+class WAHumanStatus(str, enum.Enum):
+    """Tracks what a human has actually done with this message in the dashboard —
+    independent of `status`, which only reflects AI pipeline progress. See
+    EmailHumanStatus in app/models/communication.py for the Gmail counterpart and
+    full rationale. Only set by human-driven endpoints — never by the automated
+    workflow."""
+    UNREAD = "unread"      # default — nobody has opened this message in the dashboard
+    READ = "read"          # opened, but no reply/resolution recorded yet
+    REPLIED = "replied"    # a human sent or approved a reply
+    RESOLVED = "resolved"  # a human resolved it without a reply (or discarded the draft)
+
+
 class WhatsAppMessage(Base):
     __tablename__ = "whatsapp_messages"
 
@@ -69,6 +81,9 @@ class WhatsAppMessage(Base):
     needs_human     = Column(Boolean, default=False, index=True)
     resolved_by     = Column(String, nullable=True)
     resolved_at     = Column(DateTime(timezone=True), nullable=True)
+
+    # See WAHumanStatus — the human-driven counterpart to `status`.
+    human_status    = Column(Enum(WAHumanStatus), default=WAHumanStatus.UNREAD, nullable=False, index=True)
 
     # Delivery tracking (updated via status webhooks from Meta)
     wa_sent_message_id = Column(String, nullable=True, index=True)  # wamid from Meta send response

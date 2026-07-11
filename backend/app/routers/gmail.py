@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user, get_db
-from app.models.communication import Email, EmailLabel, EmailStatus
+from app.models.communication import Email, EmailLabel, EmailStatus, EmailHumanStatus
 from app.models.user import User
 from app.schema.gmail import (
     ApproveDraftRequest,
@@ -222,22 +222,17 @@ def list_emails(
     ).label("rn")
     sub = q.add_columns(rn).subquery()
 
-    # "Unread" = the latest message in the thread either still needs human attention
-    # (new arrival, draft awaiting approval, or pending human reply) OR simply hasn't
-    # been opened in the dashboard yet (is_read=False) — e.g. a Sales email the AI
-    # auto-replied to with no gaps flips straight to REPLIED, which isn't in
-    # unread_statuses, so without the is_read check it would sort behind every
-    # older pending thread (there can be hundreds) and never surface on page 1
-    # despite being brand new. These sort to the top; within each group, ordering
-    # is reverse-chronological.
-    unread_statuses = (
-        EmailStatus.NEW.value,
-        EmailStatus.DRAFT_READY.value,
-        EmailStatus.PENDING_HUMAN.value,
-    )
+    # Sort priority is driven by human_status (see EmailHumanStatus), not the AI's
+    # own `status` — an AI auto-reply (no knowledge gaps) flips `status` straight to
+    # REPLIED without any human involvement, so `status` alone can't distinguish
+    # "already handled" from "nobody has even looked at this yet". A thread nobody
+    # has opened always outranks the rest, regardless of how the AI pipeline left
+    # it; a thread that's been opened but not yet actioned ranks above one a human
+    # has already replied to or resolved. Within each tier, ordering is
+    # reverse-chronological.
     unread_priority = case(
-        (sub.c.status.in_(unread_statuses), 1),
-        (sub.c.is_read.is_(False), 1),
+        (sub.c.human_status == EmailHumanStatus.UNREAD.value, 2),
+        (sub.c.human_status == EmailHumanStatus.READ.value, 1),
         else_=0,
     )
 
@@ -1054,6 +1049,8 @@ def mark_email_read(
     _check_email_access(db, email, current_user)
     if not email.is_read:
         email.is_read = True
+        if email.human_status == EmailHumanStatus.UNREAD:
+            email.human_status = EmailHumanStatus.READ
         db.commit()
         db.refresh(email)
     return email
@@ -1137,6 +1134,8 @@ def resolve_email(
     email.resolved_by = payload.resolved_by or current_user.email
     email.resolved_at = datetime.now(timezone.utc)
     email.status = EmailStatus.REPLIED
+    email.is_read = True
+    email.human_status = EmailHumanStatus.RESOLVED
     db.commit()
     db.refresh(email)
 
@@ -1239,6 +1238,8 @@ def approve_draft(
     email.status = EmailStatus.REPLIED
     email.resolved_by = current_user.email
     email.resolved_at = datetime.now(timezone.utc)
+    email.is_read = True
+    email.human_status = EmailHumanStatus.REPLIED
     db.commit()
     db.refresh(email)
     return email
@@ -1267,6 +1268,11 @@ def discard_draft(
     email.ai_draft = None
     email.needs_human = True
     email.status = EmailStatus.PENDING_HUMAN
+    email.is_read = True
+    # Discarding still leaves a manual reply owed (needs_human=True above) — not
+    # resolved/replied yet, just acknowledged, so READ (not RESOLVED/REPLIED).
+    if email.human_status == EmailHumanStatus.UNREAD:
+        email.human_status = EmailHumanStatus.READ
     db.commit()
     db.refresh(email)
     return email
@@ -1356,6 +1362,8 @@ def send_email(
     if original and original.status != EmailStatus.REPLIED:
         original.status = EmailStatus.REPLIED
         original.needs_human = False
+        original.is_read = True
+        original.human_status = EmailHumanStatus.REPLIED
 
     db.commit()
     db.refresh(email_row)
