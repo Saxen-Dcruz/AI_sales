@@ -80,7 +80,7 @@ jobs:
       LIVEKIT_WS_URL: ws://localhost:7880
       PYTHONPATH: .
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
