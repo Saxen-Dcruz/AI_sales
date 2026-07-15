@@ -120,7 +120,7 @@ proto-plus==1.26.1
 protobuf==6.32.1
 psutil==7.1.0
 psycopg==3.3.3
-psycopg-binary==3.3.3
+psycopg-binary==3.3.4
 psycopg-pool==3.3.0
 psycopg2-binary==2.9.11
 pyasn1==0.6.1
