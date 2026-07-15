@@ -119,7 +119,7 @@ propcache==0.3.2
 proto-plus==1.26.1
 protobuf==6.32.1
 psutil==7.1.0
-psycopg==3.3.3
+psycopg==3.3.4
 psycopg-binary==3.3.3
 psycopg-pool==3.3.0
 psycopg2-binary==2.9.11
